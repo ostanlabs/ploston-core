@@ -233,7 +233,7 @@ class TestModeAwareMCPFrontend:
 
     async def test_notification_format(self, frontend_config_mode):
         """Test the notification message format."""
-        with patch('ael.mcp_frontend.server.write_message', new_callable=AsyncMock) as mock_write:
+        with patch('ploston_core.mcp_frontend.server.write_message', new_callable=AsyncMock) as mock_write:
             await frontend_config_mode._send_tools_changed_notification()
             
             mock_write.assert_called_once()
