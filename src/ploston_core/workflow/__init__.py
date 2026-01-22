@@ -1,6 +1,7 @@
 """Workflow types for Ploston Core."""
 
 from .parser import parse_workflow_yaml
+from .registry import WorkflowRegistry
 from .types import (
     InputDefinition,
     OutputDefinition,
@@ -10,6 +11,7 @@ from .types import (
     WorkflowDefinition,
     WorkflowEntry,
 )
+from .validator import WorkflowValidator
 
 __all__ = [
     "WorkflowDefinition",
@@ -20,5 +22,7 @@ __all__ = [
     "StepDefinition",
     "PackagesConfig",
     "parse_workflow_yaml",
+    "WorkflowRegistry",
+    "WorkflowValidator",
 ]
 
