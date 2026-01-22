@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ploston_core.config import MCPHTTPConfig, Mode, ModeManager
 from ploston_core.engine import WorkflowEngine
@@ -12,7 +12,9 @@ from ploston_core.invoker import ToolInvoker
 from ploston_core.logging import AELLogger
 from ploston_core.registry import ToolRegistry
 from ploston_core.types import ExecutionStatus, MCPTransport
-from ploston_core.workflow import WorkflowRegistry
+
+if TYPE_CHECKING:
+    from ploston.workflow import WorkflowRegistry
 
 from .http_transport import HTTPTransport
 from .stdio import read_message, write_message
@@ -34,7 +36,7 @@ class MCPFrontend:
         self,
         workflow_engine: WorkflowEngine,
         tool_registry: ToolRegistry,
-        workflow_registry: WorkflowRegistry,
+        workflow_registry: "WorkflowRegistry",
         tool_invoker: ToolInvoker,
         config: MCPServerConfig | None = None,
         logger: AELLogger | None = None,
