@@ -1,17 +1,9 @@
 """AEL Telemetry - OpenTelemetry-based observability."""
 
-from .metrics import AELMetrics, MetricLabels
-from .setup import (
-    TelemetryConfig,
-    OTLPExporterConfig,
-    setup_telemetry,
-    get_telemetry,
-    reset_telemetry,
-)
 from .instrumentation import (
-    instrument_workflow,
     instrument_step,
     instrument_tool_call,
+    instrument_workflow,
     record_tool_result,
 )
 from .logging import (
@@ -19,6 +11,14 @@ from .logging import (
     StructuredLogFormatter,
     get_logger,
     reset_loggers,
+)
+from .metrics import AELMetrics, MetricLabels
+from .setup import (
+    OTLPExporterConfig,
+    TelemetryConfig,
+    get_telemetry,
+    reset_telemetry,
+    setup_telemetry,
 )
 
 __all__ = [

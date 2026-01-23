@@ -9,8 +9,6 @@ from ploston_core.errors import create_error
 from ploston_core.logging import AELLogger
 from ploston_core.sandbox import SandboxContext
 from ploston_core.telemetry import (
-    MetricLabels,
-    get_telemetry,
     instrument_step,
     instrument_workflow,
     record_tool_result,
@@ -189,9 +187,7 @@ class WorkflowEngine:
             except Exception as e:
                 status = ExecutionStatus.FAILED
                 error = e
-                record_tool_result(
-                    telemetry_result, success=False, error_code=type(e).__name__
-                )
+                record_tool_result(telemetry_result, success=False, error_code=type(e).__name__)
 
             # Compute outputs
             outputs = self._compute_outputs(workflow, context)
@@ -412,7 +408,9 @@ class WorkflowEngine:
                 workflow_id=context.workflow.name,
                 execution_id=context.execution_id,
                 step_id=step.id,
-                step_type=step.step_type.value if hasattr(step.step_type, "value") else str(step.step_type),
+                step_type=step.step_type.value
+                if hasattr(step.step_type, "value")
+                else str(step.step_type),
                 step_index=step_index,
                 total_steps=total_steps,
                 tool_name=step.tool if hasattr(step, "tool") else None,
@@ -444,7 +442,9 @@ class WorkflowEngine:
                         workflow_id=context.workflow.name,
                         execution_id=context.execution_id,
                         step_id=step.id,
-                        step_type=step.step_type.value if hasattr(step.step_type, "value") else str(step.step_type),
+                        step_type=step.step_type.value
+                        if hasattr(step.step_type, "value")
+                        else str(step.step_type),
                         success=True,
                         output=output,
                         duration_ms=duration_ms,
@@ -465,9 +465,7 @@ class WorkflowEngine:
                 # Failure
                 completed_at = datetime.now()
                 duration_ms = int((time.time() - start_time) * 1000)
-                record_tool_result(
-                    telemetry_result, success=False, error_code=type(e).__name__
-                )
+                record_tool_result(telemetry_result, success=False, error_code=type(e).__name__)
 
                 # Execute STEP_AFTER plugin hook for failure
                 if self._plugin_registry:
@@ -477,7 +475,9 @@ class WorkflowEngine:
                         workflow_id=context.workflow.name,
                         execution_id=context.execution_id,
                         step_id=step.id,
-                        step_type=step.step_type.value if hasattr(step.step_type, "value") else str(step.step_type),
+                        step_type=step.step_type.value
+                        if hasattr(step.step_type, "value")
+                        else str(step.step_type),
                         success=False,
                         error=e,
                         duration_ms=duration_ms,

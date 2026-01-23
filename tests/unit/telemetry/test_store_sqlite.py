@@ -1,14 +1,12 @@
 """Tests for SQLite telemetry store."""
 
-import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from ploston_core.telemetry.store.sqlite import SQLiteTelemetryStore
 from ploston_core.telemetry.store.types import (
-    ErrorRecord,
     ExecutionMetrics,
     ExecutionRecord,
     ExecutionStatus,
@@ -36,7 +34,7 @@ def store(db_path: str) -> SQLiteTelemetryStore:
 @pytest.fixture
 def sample_record() -> ExecutionRecord:
     """Create a sample execution record with steps and tool calls."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return ExecutionRecord(
         execution_id="exec-123",
         execution_type=ExecutionType.WORKFLOW,
@@ -134,7 +132,7 @@ class TestSQLiteTelemetryStore:
     @pytest.mark.asyncio
     async def test_delete_before(self, store: SQLiteTelemetryStore) -> None:
         """Test deleting records before a cutoff."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(5):
             record = ExecutionRecord(
                 execution_id=f"exec-{i}",
@@ -164,4 +162,3 @@ class TestSQLiteTelemetryStore:
         """Test closing the store."""
         await store.close()
         # Should not raise
-

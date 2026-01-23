@@ -5,7 +5,6 @@ from typing import Any
 
 from ploston_core.config import StagedConfig
 
-
 # Patterns that might indicate plaintext secrets
 SECRET_PATTERNS = [
     (r"password", "password"),
@@ -34,11 +33,13 @@ def detect_plaintext_secrets(path: str, value: Any) -> list[dict[str, str]]:
         if re.search(pattern, path_lower):
             # Check if value looks like plaintext (not env var reference)
             if isinstance(value, str) and not value.startswith("${"):
-                warnings.append({
-                    "path": path,
-                    "warning": f"Potential plaintext {name} detected",
-                    "suggestion": f"Consider using environment variable: ${{{path.upper().replace('.', '_')}}}",
-                })
+                warnings.append(
+                    {
+                        "path": path,
+                        "warning": f"Potential plaintext {name} detected",
+                        "suggestion": f"Consider using environment variable: ${{{path.upper().replace('.', '_')}}}",
+                    }
+                )
             break
 
     return warnings
@@ -74,7 +75,9 @@ async def handle_config_set(
 
     # Convert ValidationIssue objects to dicts
     errors = [{"path": e.path, "error": e.message} for e in validation_result.errors]
-    validation_warnings = [{"path": w.path, "warning": w.message} for w in validation_result.warnings]
+    validation_warnings = [
+        {"path": w.path, "warning": w.message} for w in validation_result.warnings
+    ]
 
     # Check for plaintext secrets
     warnings = detect_plaintext_secrets(path, value)

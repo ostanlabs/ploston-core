@@ -158,10 +158,7 @@ class MCPFrontend:
 
     async def _send_tools_changed_notification(self) -> None:
         """Send MCP notification that tools list has changed."""
-        notification = {
-            "jsonrpc": "2.0",
-            "method": "notifications/tools/list_changed"
-        }
+        notification = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
         if self._transport == MCPTransport.HTTP and self._http_transport:
             await self._http_transport.send_notification(notification)
         else:
@@ -302,7 +299,7 @@ class MCPFrontend:
                     tool_name=name,
                     http_status=503,
                 )
-            workflow_id = name[len("workflow:"):]
+            workflow_id = name[len("workflow:") :]
             return await self._execute_workflow(workflow_id, arguments)
 
         # Regular tool calls

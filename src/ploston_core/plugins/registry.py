@@ -179,19 +179,13 @@ class PluginRegistry:
         """Find AELPlugin subclass in a module."""
         for name in dir(module):
             obj = getattr(module, name)
-            if (
-                isinstance(obj, type)
-                and issubclass(obj, AELPlugin)
-                and obj is not AELPlugin
-            ):
+            if isinstance(obj, type) and issubclass(obj, AELPlugin) and obj is not AELPlugin:
                 return obj
         return None
 
     # Hook execution methods
 
-    def execute_request_received(
-        self, context: RequestContext
-    ) -> HookResult[RequestContext]:
+    def execute_request_received(self, context: RequestContext) -> HookResult[RequestContext]:
         """Execute on_request_received hook chain."""
         return self._execute_chain("on_request_received", context)
 
@@ -199,15 +193,11 @@ class PluginRegistry:
         """Execute on_step_before hook chain."""
         return self._execute_chain("on_step_before", context)
 
-    def execute_step_after(
-        self, context: StepResultContext
-    ) -> HookResult[StepResultContext]:
+    def execute_step_after(self, context: StepResultContext) -> HookResult[StepResultContext]:
         """Execute on_step_after hook chain."""
         return self._execute_chain("on_step_after", context)
 
-    def execute_response_ready(
-        self, context: ResponseContext
-    ) -> HookResult[ResponseContext]:
+    def execute_response_ready(self, context: ResponseContext) -> HookResult[ResponseContext]:
         """Execute on_response_ready hook chain."""
         return self._execute_chain("on_response_ready", context)
 

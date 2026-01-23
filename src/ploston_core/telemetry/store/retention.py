@@ -2,8 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from .base import TelemetryStore
 from .config import RetentionConfig
@@ -30,7 +29,7 @@ class RetentionManager:
         """
         self._store = store
         self._config = config
-        self._task: Optional[asyncio.Task[None]] = None
+        self._task: asyncio.Task[None] | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -73,7 +72,7 @@ class RetentionManager:
 
     async def _cleanup(self) -> None:
         """Perform cleanup of old records."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self._config.retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=self._config.retention_days)
         deleted = await self._store.delete_before(cutoff)
 
         if deleted > 0:
@@ -89,6 +88,5 @@ class RetentionManager:
         Returns:
             Number of records deleted
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self._config.retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=self._config.retention_days)
         return await self._store.delete_before(cutoff)
-

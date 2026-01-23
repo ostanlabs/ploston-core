@@ -231,7 +231,9 @@ class SQLiteExecutionStore(ExecutionStore):
             workflow_id=row["workflow_id"],
             status=ExecutionStatus(row["status"]),
             started_at=datetime.fromisoformat(row["started_at"]),
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            completed_at=datetime.fromisoformat(row["completed_at"])
+            if row["completed_at"]
+            else None,
             duration_ms=row["duration_ms"],
             inputs=json.loads(row["inputs"]) if row["inputs"] else {},
             outputs=json.loads(row["outputs"]) if row["outputs"] else {},
@@ -317,4 +319,3 @@ class SQLiteExecutionStore(ExecutionStore):
             ).fetchall()
 
             return [dict(row) for row in rows]
-

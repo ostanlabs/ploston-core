@@ -6,4 +6,3 @@ Contains no tier-specific code—only extension points that tier packages hook i
 
 __version__ = "1.0.0"
 __all__ = ["__version__"]
-

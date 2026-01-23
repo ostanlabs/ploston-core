@@ -40,4 +40,3 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             request_id_var.reset(token)
-

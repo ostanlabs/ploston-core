@@ -80,14 +80,14 @@ __all__ += [
 ]
 
 # Staged config
-from .staged_config import StagedConfig
+from .staged_config import StagedConfig  # noqa: E402
 
 __all__ += [
     "StagedConfig",
 ]
 
 # Config tools
-from .tools import (
+from .tools import (  # noqa: E402
     CONFIG_TOOL_SCHEMAS,
     CONFIGURE_TOOL_SCHEMA,
     ConfigToolRegistry,

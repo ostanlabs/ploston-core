@@ -153,7 +153,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "mcp_http_client: MCP HTTP client integration tests")
     config.addinivalue_line("markers", "frontend: MCP frontend tests")
     config.addinivalue_line("markers", "homelab: Homelab K3s deployment integration tests")
-    config.addinivalue_line("markers", "requires_running_mode: Tests that require AEL to be in running mode (not configuration mode)")
+    config.addinivalue_line(
+        "markers",
+        "requires_running_mode: Tests that require AEL to be in running mode (not configuration mode)",
+    )
 
 
 def pytest_addoption(parser):

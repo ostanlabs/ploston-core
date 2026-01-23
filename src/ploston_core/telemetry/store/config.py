@@ -2,7 +2,6 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -25,7 +24,7 @@ class RedactionConfig:
     enabled: bool = True
 
     # Field names to always redact (case-insensitive)
-    fields: List[str] = field(
+    fields: list[str] = field(
         default_factory=lambda: [
             "password",
             "secret",
@@ -38,7 +37,7 @@ class RedactionConfig:
     )
 
     # Regex patterns to redact
-    patterns: List[RedactionPattern] = field(default_factory=list)
+    patterns: list[RedactionPattern] = field(default_factory=list)
 
     @classmethod
     def default(cls) -> "RedactionConfig":
@@ -55,9 +54,7 @@ class RedactionConfig:
                     replacement="[REDACTED_CARD]",
                 ),
                 RedactionPattern(
-                    regex=re.compile(
-                        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-                    ),
+                    regex=re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
                     replacement="[REDACTED_EMAIL]",
                 ),
             ],
@@ -80,7 +77,7 @@ class OTLPExportConfig:
     enabled: bool = False
     endpoint: str = "http://localhost:4317"
     protocol: str = "grpc"  # "grpc" | "http"
-    headers: Dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
     traces: bool = True
     metrics: bool = True
 
@@ -98,7 +95,7 @@ class TelemetryStoreConfig:
     sqlite_path: str = "./data/telemetry.db"
 
     # PostgreSQL settings (Premium)
-    postgres_connection_string: Optional[str] = None
+    postgres_connection_string: str | None = None
 
     # Memory settings
     max_memory_records: int = 1000
@@ -111,4 +108,3 @@ class TelemetryStoreConfig:
 
     # Export
     otlp: OTLPExportConfig = field(default_factory=OTLPExportConfig)
-

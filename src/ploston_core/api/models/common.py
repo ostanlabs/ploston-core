@@ -83,4 +83,3 @@ class ServerInfo(BaseModel):
     edition: str = "oss"
     features: dict[str, bool]
     mcp: dict[str, Any]
-

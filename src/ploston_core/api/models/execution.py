@@ -91,4 +91,3 @@ class ExecutionLogsResponse(BaseModel):
 
     execution_id: str
     logs: list[LogEntry]
-

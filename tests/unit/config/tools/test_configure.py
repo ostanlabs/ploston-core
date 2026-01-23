@@ -1,7 +1,8 @@
 """Unit tests for ael:configure tool."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from ploston_core.config import Mode
 from ploston_core.config.tools.configure import handle_configure

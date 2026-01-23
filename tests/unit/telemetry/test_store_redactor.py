@@ -1,7 +1,5 @@
 """Tests for telemetry store redactor."""
 
-import pytest
-
 from ploston_core.telemetry.store.config import RedactionConfig, RedactionPattern
 from ploston_core.telemetry.store.redactor import Redactor
 
@@ -121,4 +119,3 @@ class TestRedactor:
         assert redactor.redact(123) == 123
         assert redactor.redact(None) is None
         assert redactor.redact(True) is True
-

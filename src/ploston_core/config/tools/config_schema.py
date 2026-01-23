@@ -2,7 +2,6 @@
 
 from typing import Any
 
-
 # Schema documentation for each config section
 CONFIG_SCHEMA = {
     "server": {

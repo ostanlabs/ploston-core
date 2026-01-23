@@ -1,11 +1,9 @@
 """Unit tests for AEL telemetry instrumentation."""
 
 import pytest
-from unittest.mock import MagicMock, patch
 
 from ploston_core.telemetry import (
     MetricLabels,
-    get_telemetry,
     instrument_step,
     instrument_tool_call,
     instrument_workflow,

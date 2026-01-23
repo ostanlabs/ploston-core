@@ -1,6 +1,6 @@
 """Tests for in-memory telemetry store."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,11 +9,6 @@ from ploston_core.telemetry.store.types import (
     ExecutionRecord,
     ExecutionStatus,
     ExecutionType,
-    StepRecord,
-    StepStatus,
-    StepType,
-    ToolCallRecord,
-    ToolCallSource,
 )
 
 
@@ -31,7 +26,7 @@ def sample_record() -> ExecutionRecord:
         execution_type=ExecutionType.WORKFLOW,
         workflow_id="wf-1",
         status=ExecutionStatus.COMPLETED,
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
         inputs={"key": "value"},
     )
 
@@ -79,7 +74,7 @@ class TestMemoryTelemetryStore:
             record = ExecutionRecord(
                 execution_id=f"exec-{i}",
                 execution_type=ExecutionType.WORKFLOW,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             await store.save_execution(record)
 
@@ -101,7 +96,7 @@ class TestMemoryTelemetryStore:
                 execution_id=f"exec-{i}",
                 execution_type=ExecutionType.WORKFLOW,
                 workflow_id="wf-1",
-                started_at=datetime.now(timezone.utc) - timedelta(hours=i),
+                started_at=datetime.now(UTC) - timedelta(hours=i),
             )
             await store.save_execution(record)
 
@@ -116,13 +111,11 @@ class TestMemoryTelemetryStore:
             record = ExecutionRecord(
                 execution_id=f"exec-{i}",
                 execution_type=ExecutionType.WORKFLOW if i < 3 else ExecutionType.DIRECT,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             await store.save_execution(record)
 
-        records, total = await store.list_executions(
-            execution_type=ExecutionType.WORKFLOW
-        )
+        records, total = await store.list_executions(execution_type=ExecutionType.WORKFLOW)
         assert total == 3
 
     @pytest.mark.asyncio
@@ -132,7 +125,7 @@ class TestMemoryTelemetryStore:
             record = ExecutionRecord(
                 execution_id=f"exec-{i}",
                 execution_type=ExecutionType.WORKFLOW,
-                started_at=datetime.now(timezone.utc) - timedelta(hours=i),
+                started_at=datetime.now(UTC) - timedelta(hours=i),
             )
             await store.save_execution(record)
 
@@ -161,7 +154,7 @@ class TestMemoryTelemetryStore:
     @pytest.mark.asyncio
     async def test_delete_before(self, store: MemoryTelemetryStore) -> None:
         """Test deleting records before a cutoff."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(5):
             record = ExecutionRecord(
                 execution_id=f"exec-{i}",
@@ -176,4 +169,3 @@ class TestMemoryTelemetryStore:
 
         records, total = await store.list_executions()
         assert total == 3
-

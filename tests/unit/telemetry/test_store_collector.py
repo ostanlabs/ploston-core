@@ -1,19 +1,15 @@
 """Tests for telemetry collector."""
 
-from datetime import datetime
-
 import pytest
 
 from ploston_core.telemetry.store.collector import TelemetryCollector
 from ploston_core.telemetry.store.config import RedactionConfig, TelemetryStoreConfig
 from ploston_core.telemetry.store.memory import MemoryTelemetryStore
 from ploston_core.telemetry.store.types import (
-    ErrorRecord,
     ExecutionStatus,
     ExecutionType,
     StepStatus,
     StepType,
-    ToolCallSource,
 )
 
 
@@ -33,9 +29,7 @@ def config() -> TelemetryStoreConfig:
 
 
 @pytest.fixture
-def collector(
-    store: MemoryTelemetryStore, config: TelemetryStoreConfig
-) -> TelemetryCollector:
+def collector(store: MemoryTelemetryStore, config: TelemetryStoreConfig) -> TelemetryCollector:
     """Create a collector for testing."""
     return TelemetryCollector(store=store, config=config)
 
@@ -165,4 +159,3 @@ class TestTelemetryCollector:
         assert record is not None
         assert len(record.steps[0].tool_calls) == 1
         assert record.steps[0].tool_calls[0].tool_name == "file_read"
-

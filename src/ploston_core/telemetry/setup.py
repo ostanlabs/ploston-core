@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from opentelemetry import metrics, trace
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
 
 from .metrics import AELMetrics
 
@@ -35,6 +35,7 @@ class OTLPExporterConfig:
         protocol: Protocol (grpc or http)
         headers: Additional headers
     """
+
     enabled: bool = False
     endpoint: str = "http://localhost:4317"
     insecure: bool = True
@@ -56,6 +57,7 @@ class TelemetryConfig:
         logs_enabled: Whether logs are enabled
         otlp: OTLP exporter configuration
     """
+
     enabled: bool = True
     service_name: str = "ael"
     service_version: str = "1.0.0"
@@ -85,12 +87,14 @@ def _create_otlp_span_exporter(otlp_config: OTLPExporterConfig):
     """
     if otlp_config.protocol == "http":
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
         return OTLPSpanExporter(
             endpoint=f"{otlp_config.endpoint}/v1/traces",
             headers=otlp_config.headers or None,
         )
     else:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
         return OTLPSpanExporter(
             endpoint=otlp_config.endpoint,
             insecure=otlp_config.insecure,
@@ -109,12 +113,14 @@ def _create_otlp_log_exporter(otlp_config: OTLPExporterConfig):
     """
     if otlp_config.protocol == "http":
         from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
         return OTLPLogExporter(
             endpoint=f"{otlp_config.endpoint}/v1/logs",
             headers=otlp_config.headers or None,
         )
     else:
         from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+
         return OTLPLogExporter(
             endpoint=otlp_config.endpoint,
             insecure=otlp_config.insecure,
@@ -156,11 +162,13 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
         return _telemetry
 
     # Create resource with service info
-    resource = Resource.create({
-        SERVICE_NAME: config.service_name,
-        SERVICE_VERSION: config.service_version,
-        **config.attributes,
-    })
+    resource = Resource.create(
+        {
+            SERVICE_NAME: config.service_name,
+            SERVICE_VERSION: config.service_version,
+            **config.attributes,
+        }
+    )
 
     # Set up metrics with Prometheus exporter
     if config.metrics_enabled:
@@ -186,7 +194,7 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
     otel_logger = None
     if config.logs_enabled and config.otlp.enabled:
         from opentelemetry._logs import set_logger_provider
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs import LoggerProvider
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 
         logger_provider = LoggerProvider(resource=resource)
@@ -225,7 +233,7 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
 
 def get_telemetry() -> dict[str, Any] | None:
     """Get the current telemetry instance.
-    
+
     Returns:
         Telemetry dictionary or None if not initialized
     """

@@ -46,4 +46,3 @@ class RESTConfig:
     # Execution store
     execution_store_max_records: int = 1000
     execution_store_sqlite_path: str | None = None
-

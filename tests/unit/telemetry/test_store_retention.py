@@ -1,7 +1,7 @@
 """Tests for retention manager."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -27,9 +27,7 @@ def config() -> RetentionConfig:
 
 
 @pytest.fixture
-def manager(
-    store: MemoryTelemetryStore, config: RetentionConfig
-) -> RetentionManager:
+def manager(store: MemoryTelemetryStore, config: RetentionConfig) -> RetentionManager:
     """Create a retention manager for testing."""
     return RetentionManager(store=store, config=config)
 
@@ -42,7 +40,7 @@ class TestRetentionManager:
         self, manager: RetentionManager, store: MemoryTelemetryStore
     ) -> None:
         """Test immediate cleanup."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Add old and new records
         for i in range(10):
@@ -75,7 +73,7 @@ class TestRetentionManager:
         self, manager: RetentionManager, store: MemoryTelemetryStore
     ) -> None:
         """Test that cleanup loop runs periodically."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Add an old record
         record = ExecutionRecord(
@@ -109,4 +107,3 @@ class TestRetentionManager:
         await manager.stop()
         await manager.stop()  # Should not raise
         assert manager._running is False
-

@@ -7,7 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ploston_core.api.config import RESTConfig
 from ploston_core.api.errors import setup_error_handlers
-from ploston_core.api.middleware import APIKeyAuthMiddleware, RateLimitMiddleware, RequestIDMiddleware
+from ploston_core.api.middleware import (
+    APIKeyAuthMiddleware,
+    RateLimitMiddleware,
+    RequestIDMiddleware,
+)
 from ploston_core.api.routers import (
     capabilities_router,
     execution_router,
@@ -111,4 +115,3 @@ def create_rest_app(
     app.include_router(tool_router, prefix=config.prefix)
 
     return app
-

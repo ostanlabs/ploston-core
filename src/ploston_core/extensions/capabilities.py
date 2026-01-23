@@ -14,16 +14,16 @@ from ploston_core.extensions.plugins import PluginRegistry
 class Capabilities:
     """
     Server capabilities response.
-    
+
     Returned by GET /api/v1/capabilities endpoint.
     """
-    
+
     tier: str  # "community" or "enterprise"
     version: str
     features: dict[str, Any] = field(default_factory=dict)
     limits: dict[str, Any] = field(default_factory=dict)
     license: dict[str, Any] | None = None  # Enterprise only
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON response."""
         result = {
@@ -40,11 +40,11 @@ class Capabilities:
 class CapabilitiesProvider(Protocol):
     """
     Protocol for capabilities provider.
-    
+
     OSS provides CommunityCapabilitiesProvider.
     Enterprise provides EnterpriseCapabilitiesProvider.
     """
-    
+
     def get_capabilities(self) -> Capabilities:
         """Return server capabilities."""
         ...
@@ -53,17 +53,17 @@ class CapabilitiesProvider(Protocol):
 class DefaultCapabilitiesProvider:
     """
     Default (community) capabilities provider.
-    
+
     Used when no override is registered.
     """
-    
+
     def __init__(self, version: str = "1.0.0") -> None:
         self._version = version
-    
+
     def get_capabilities(self) -> Capabilities:
         flags = FeatureFlagRegistry.flags()
         plugins = PluginRegistry.get().get_enabled_features()
-        
+
         return Capabilities(
             tier="community",
             version=self._version,
@@ -107,4 +107,3 @@ def reset_capabilities_provider() -> None:
     """Reset the capabilities provider (for testing)."""
     global _capabilities_provider
     _capabilities_provider = None
-

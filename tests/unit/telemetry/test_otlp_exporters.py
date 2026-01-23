@@ -3,12 +3,12 @@
 import pytest
 
 from ploston_core.telemetry import (
-    TelemetryConfig,
     OTLPExporterConfig,
-    setup_telemetry,
+    TelemetryConfig,
     reset_telemetry,
+    setup_telemetry,
 )
-from ploston_core.telemetry.setup import _create_otlp_span_exporter, _create_otlp_log_exporter
+from ploston_core.telemetry.setup import _create_otlp_log_exporter, _create_otlp_span_exporter
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def reset_telemetry_state():
 
 class TestOTLPExporterConfig:
     """Tests for OTLPExporterConfig."""
-    
+
     def test_default_config(self):
         """Test default OTLP config values."""
         config = OTLPExporterConfig()
@@ -30,7 +30,7 @@ class TestOTLPExporterConfig:
         assert config.insecure is True
         assert config.protocol == "grpc"
         assert config.headers == {}
-    
+
     def test_custom_config(self):
         """Test custom OTLP config values."""
         config = OTLPExporterConfig(
@@ -49,7 +49,7 @@ class TestOTLPExporterConfig:
 
 class TestCreateOTLPSpanExporter:
     """Tests for _create_otlp_span_exporter."""
-    
+
     def test_grpc_exporter_created(self):
         """Test gRPC exporter is created."""
         config = OTLPExporterConfig(
@@ -61,7 +61,7 @@ class TestCreateOTLPSpanExporter:
         assert exporter is not None
         # Check it's the gRPC exporter type
         assert "grpc" in type(exporter).__module__
-    
+
     def test_http_exporter_created(self):
         """Test HTTP exporter is created."""
         config = OTLPExporterConfig(
@@ -77,7 +77,7 @@ class TestCreateOTLPSpanExporter:
 
 class TestCreateOTLPLogExporter:
     """Tests for _create_otlp_log_exporter."""
-    
+
     def test_grpc_log_exporter_created(self):
         """Test gRPC log exporter is created."""
         config = OTLPExporterConfig(
@@ -88,7 +88,7 @@ class TestCreateOTLPLogExporter:
         exporter = _create_otlp_log_exporter(config)
         assert exporter is not None
         assert "grpc" in type(exporter).__module__
-    
+
     def test_http_log_exporter_created(self):
         """Test HTTP log exporter is created."""
         config = OTLPExporterConfig(
@@ -103,12 +103,12 @@ class TestCreateOTLPLogExporter:
 
 class TestTelemetryConfigWithOTLP:
     """Tests for TelemetryConfig with OTLP settings."""
-    
+
     def test_default_otlp_disabled(self):
         """Test OTLP is disabled by default."""
         config = TelemetryConfig()
         assert config.otlp.enabled is False
-    
+
     def test_traces_enabled_with_otlp(self):
         """Test traces can be enabled with OTLP export."""
         config = TelemetryConfig(
@@ -117,7 +117,7 @@ class TestTelemetryConfigWithOTLP:
         )
         assert config.traces_enabled is True
         assert config.otlp.enabled is True
-    
+
     def test_logs_enabled_with_otlp(self):
         """Test logs can be enabled with OTLP export."""
         config = TelemetryConfig(
@@ -130,7 +130,7 @@ class TestTelemetryConfigWithOTLP:
 
 class TestSetupTelemetryWithOTLP:
     """Tests for setup_telemetry with OTLP configuration."""
-    
+
     def test_setup_without_otlp(self):
         """Test setup works without OTLP enabled."""
         config = TelemetryConfig(
@@ -142,7 +142,7 @@ class TestSetupTelemetryWithOTLP:
         assert telemetry["meter"] is not None
         assert telemetry["tracer"] is not None
         assert telemetry["metrics"] is not None
-    
+
     def test_setup_with_traces_but_no_otlp(self):
         """Test setup with traces enabled but OTLP disabled."""
         config = TelemetryConfig(
@@ -152,13 +152,13 @@ class TestSetupTelemetryWithOTLP:
         telemetry = setup_telemetry(config)
         assert telemetry["tracer"] is not None
         assert telemetry["tracer_provider"] is not None
-    
+
     def test_setup_returns_logger_none_when_logs_disabled(self):
         """Test logger is None when logs are disabled."""
         config = TelemetryConfig(logs_enabled=False)
         telemetry = setup_telemetry(config)
         assert telemetry["logger"] is None
-    
+
     def test_telemetry_dict_has_expected_keys(self):
         """Test telemetry dict has all expected keys."""
         config = TelemetryConfig()

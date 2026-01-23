@@ -15,10 +15,10 @@ router = APIRouter(prefix="/api/v1", tags=["capabilities"])
 async def get_capabilities() -> dict:
     """
     Get server capabilities.
-    
+
     Returns tier information, enabled features, and limits.
     CLI uses this to determine which commands are available.
-    
+
     Returns:
         dict: Server capabilities including:
             - tier: "community" or "enterprise"
@@ -30,4 +30,3 @@ async def get_capabilities() -> dict:
     provider = get_capabilities_provider()
     capabilities = provider.get_capabilities()
     return capabilities.to_dict()
-

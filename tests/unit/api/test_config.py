@@ -1,7 +1,5 @@
 """Tests for REST API configuration."""
 
-import pytest
-
 from ploston_core.api.config import APIKeyConfig, RESTConfig
 
 
@@ -72,4 +70,3 @@ class TestRESTConfig:
         )
         assert config.execution_store_max_records == 500
         assert config.execution_store_sqlite_path == "/tmp/executions.db"
-

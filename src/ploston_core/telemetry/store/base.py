@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from .types import ExecutionRecord, ExecutionStatus, ExecutionType
 
@@ -29,7 +29,7 @@ class TelemetryStore(ABC):
         ...
 
     @abstractmethod
-    async def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
+    async def get_execution(self, execution_id: str) -> ExecutionRecord | None:
         """Get execution by ID.
 
         Args:
@@ -43,17 +43,17 @@ class TelemetryStore(ABC):
     @abstractmethod
     async def list_executions(
         self,
-        execution_type: Optional[ExecutionType] = None,
-        workflow_id: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        status: Optional[ExecutionStatus] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-        caller_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        execution_type: ExecutionType | None = None,
+        workflow_id: str | None = None,
+        tool_name: str | None = None,
+        status: ExecutionStatus | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        caller_id: str | None = None,
+        session_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Tuple[List[ExecutionRecord], int]:
+    ) -> tuple[list[ExecutionRecord], int]:
         """List executions with filtering.
 
         Args:
@@ -100,9 +100,9 @@ class TelemetryStore(ABC):
     @abstractmethod
     async def get_tool_call_stats(
         self,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> Dict[str, Dict[str, int]]:
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict[str, dict[str, int]]:
         """Get tool call statistics.
 
         Args:
@@ -148,4 +148,3 @@ def create_telemetry_store(config: "TelemetryStoreConfig") -> TelemetryStore:
         raise NotImplementedError("PostgreSQL store is a Premium feature")
     else:
         raise ValueError(f"Unknown storage type: {config.storage_type}")
-

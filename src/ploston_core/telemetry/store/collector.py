@@ -2,8 +2,8 @@
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from .base import TelemetryStore
 from .config import TelemetryStoreConfig
@@ -45,7 +45,7 @@ class TelemetryCollector:
         self._store = store
         self._config = config
         self._redactor = Redactor(config.redaction)
-        self._active_executions: Dict[str, ExecutionRecord] = {}
+        self._active_executions: dict[str, ExecutionRecord] = {}
 
     # ─────────────────────────────────────────────────────────────────
     # Execution lifecycle
@@ -54,13 +54,13 @@ class TelemetryCollector:
     async def start_execution(
         self,
         execution_type: ExecutionType,
-        workflow_id: Optional[str] = None,
-        workflow_version: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        inputs: Optional[Dict[str, Any]] = None,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        tool_name: str | None = None,
+        inputs: dict[str, Any] | None = None,
         source: str = "mcp",
-        caller_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        caller_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Start tracking a new execution.
 
@@ -78,7 +78,7 @@ class TelemetryCollector:
             Execution ID
         """
         execution_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         record = ExecutionRecord(
             execution_id=execution_id,
@@ -103,8 +103,8 @@ class TelemetryCollector:
         self,
         execution_id: str,
         status: ExecutionStatus,
-        outputs: Optional[Dict[str, Any]] = None,
-        error: Optional[ErrorRecord] = None,
+        outputs: dict[str, Any] | None = None,
+        error: ErrorRecord | None = None,
     ) -> None:
         """End an execution.
 
@@ -118,7 +118,7 @@ class TelemetryCollector:
         if not record:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         record.status = status
         record.completed_at = now
         record.outputs = self._redactor.redact(outputs or {})
@@ -142,9 +142,9 @@ class TelemetryCollector:
         execution_id: str,
         step_id: str,
         step_type: StepType,
-        tool_name: Optional[str] = None,
-        tool_params: Optional[Dict[str, Any]] = None,
-        code: Optional[str] = None,
+        tool_name: str | None = None,
+        tool_params: dict[str, Any] | None = None,
+        code: str | None = None,
         max_attempts: int = 1,
     ) -> None:
         """Start tracking a step.
@@ -166,7 +166,7 @@ class TelemetryCollector:
             step_id=step_id,
             step_type=step_type,
             status=StepStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             tool_name=tool_name,
             tool_params=self._redactor.redact(tool_params) if tool_params else None,
             code_hash=hashlib.sha256(code.encode()).hexdigest() if code else None,
@@ -180,9 +180,9 @@ class TelemetryCollector:
         execution_id: str,
         step_id: str,
         status: StepStatus,
-        tool_result: Optional[Dict[str, Any]] = None,
-        error: Optional[ErrorRecord] = None,
-        skip_reason: Optional[str] = None,
+        tool_result: dict[str, Any] | None = None,
+        error: ErrorRecord | None = None,
+        skip_reason: str | None = None,
     ) -> None:
         """End a step.
 
@@ -202,7 +202,7 @@ class TelemetryCollector:
         if not step:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         step.status = status
         step.completed_at = now
         step.tool_result = self._redactor.redact(tool_result) if tool_result else None
@@ -221,7 +221,7 @@ class TelemetryCollector:
         execution_id: str,
         step_id: str,
         tool_name: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         source: ToolCallSource = ToolCallSource.TOOL_STEP,
     ) -> str:
         """Start tracking a tool call.
@@ -248,7 +248,7 @@ class TelemetryCollector:
         call = ToolCallRecord(
             call_id=call_id,
             tool_name=tool_name,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             params=self._redactor.redact(params) if params else None,
             execution_id=execution_id,
             step_id=step_id,
@@ -264,8 +264,8 @@ class TelemetryCollector:
         execution_id: str,
         step_id: str,
         call_id: str,
-        result: Optional[Dict[str, Any]] = None,
-        error: Optional[ErrorRecord] = None,
+        result: dict[str, Any] | None = None,
+        error: ErrorRecord | None = None,
     ) -> None:
         """End a tool call.
 
@@ -288,7 +288,7 @@ class TelemetryCollector:
         if not call:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         call.completed_at = now
         call.result = self._redactor.redact(result) if result else None
         call.error = error
@@ -300,16 +300,14 @@ class TelemetryCollector:
     # Helper methods
     # ─────────────────────────────────────────────────────────────────
 
-    def _find_step(self, record: ExecutionRecord, step_id: str) -> Optional[StepRecord]:
+    def _find_step(self, record: ExecutionRecord, step_id: str) -> StepRecord | None:
         """Find step by ID."""
         for step in record.steps:
             if step.step_id == step_id:
                 return step
         return None
 
-    def _find_tool_call(
-        self, step: StepRecord, call_id: str
-    ) -> Optional[ToolCallRecord]:
+    def _find_tool_call(self, step: StepRecord, call_id: str) -> ToolCallRecord | None:
         """Find tool call by ID."""
         for call in step.tool_calls:
             if call.call_id == call_id:

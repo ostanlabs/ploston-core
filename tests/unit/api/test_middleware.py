@@ -1,14 +1,11 @@
 """Tests for REST API middleware."""
 
-import pytest
-from starlette.testclient import TestClient
 from fastapi import FastAPI, Request
-from starlette.responses import JSONResponse
+from starlette.testclient import TestClient
 
-from ploston_core.api.config import APIKeyConfig, RESTConfig
+from ploston_core.api.config import APIKeyConfig
 from ploston_core.api.middleware import (
     APIKeyAuthMiddleware,
-    RateLimitMiddleware,
     RequestIDMiddleware,
 )
 
@@ -142,4 +139,3 @@ class TestAPIKeyAuthMiddleware:
 
         response = client.get("/custom-public")
         assert response.status_code == 200
-

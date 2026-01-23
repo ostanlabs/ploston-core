@@ -1,8 +1,6 @@
 """Tests for telemetry store types."""
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from ploston_core.telemetry.store.types import (
     ErrorRecord,
@@ -89,7 +87,7 @@ class TestToolCallRecord:
 
     def test_create_tool_call_record(self) -> None:
         """Test creating a tool call record."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         call = ToolCallRecord(
             call_id="call-123",
             tool_name="file_read",
@@ -153,4 +151,3 @@ class TestExecutionRecord:
         assert record.status == ExecutionStatus.PENDING
         assert record.steps == []
         assert record.source == "mcp"
-

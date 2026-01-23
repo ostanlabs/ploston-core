@@ -1,6 +1,6 @@
 """Workflow router."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query, Request, Response
@@ -26,7 +26,7 @@ workflow_router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
 def _workflow_to_summary(workflow: WorkflowDefinition) -> WorkflowSummary:
     """Convert WorkflowDefinition to WorkflowSummary."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return WorkflowSummary(
         id=workflow.name,
         name=workflow.name,
@@ -42,7 +42,7 @@ def _workflow_to_summary(workflow: WorkflowDefinition) -> WorkflowSummary:
 
 def _workflow_to_detail(workflow: WorkflowDefinition, yaml_content: str) -> WorkflowDetail:
     """Convert WorkflowDefinition to WorkflowDetail."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return WorkflowDetail(
         id=workflow.name,
         name=workflow.name,
@@ -125,7 +125,7 @@ async def create_workflow(
             name=workflow.name,
             version=workflow.version,
             status=WorkflowStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
     except AELError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
@@ -211,7 +211,7 @@ async def update_workflow(
             name=workflow.name,
             version=workflow.version,
             status=WorkflowStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
     except AELError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
@@ -278,4 +278,3 @@ async def execute_workflow(
 
     except AELError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
-

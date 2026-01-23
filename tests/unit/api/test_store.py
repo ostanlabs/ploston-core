@@ -1,6 +1,6 @@
 """Tests for execution store."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -14,7 +14,7 @@ def _create_execution(
     status: ExecutionStatus = ExecutionStatus.COMPLETED,
 ) -> ExecutionDetail:
     """Create a test execution."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return ExecutionDetail(
         execution_id=execution_id,
         workflow_id=workflow_id,
@@ -164,4 +164,3 @@ class TestInMemoryExecutionStore:
         await store.save(_create_execution("exec-1"))
         logs = await store.get_logs("exec-1")
         assert logs == []
-

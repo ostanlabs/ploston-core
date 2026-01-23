@@ -123,4 +123,3 @@ async def get_execution_logs(
             for log in logs
         ],
     )
-

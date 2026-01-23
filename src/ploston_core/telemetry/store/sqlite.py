@@ -6,7 +6,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import TelemetryStore
 from .config import RedactionConfig
@@ -33,7 +33,7 @@ class SQLiteTelemetryStore(TelemetryStore):
     def __init__(
         self,
         db_path: str,
-        redaction: Optional[RedactionConfig] = None,
+        redaction: RedactionConfig | None = None,
     ) -> None:
         """Initialize SQLite store.
 
@@ -44,7 +44,7 @@ class SQLiteTelemetryStore(TelemetryStore):
         self._db_path = db_path
         self._redaction = redaction
         self._executor = ThreadPoolExecutor(max_workers=1)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -171,12 +171,8 @@ class SQLiteTelemetryStore(TelemetryStore):
         )
 
         # Delete existing steps and tool calls (for updates)
-        cursor.execute(
-            "DELETE FROM steps WHERE execution_id = ?", (record.execution_id,)
-        )
-        cursor.execute(
-            "DELETE FROM tool_calls WHERE execution_id = ?", (record.execution_id,)
-        )
+        cursor.execute("DELETE FROM steps WHERE execution_id = ?", (record.execution_id,))
+        cursor.execute("DELETE FROM tool_calls WHERE execution_id = ?", (record.execution_id,))
 
         # Insert steps
         for step in record.steps:
@@ -227,11 +223,7 @@ class SQLiteTelemetryStore(TelemetryStore):
                         call.duration_ms,
                         json.dumps(call.params) if call.params else None,
                         json.dumps(call.result) if call.result else None,
-                        (
-                            json.dumps(self._error_to_dict(call.error))
-                            if call.error
-                            else None
-                        ),
+                        (json.dumps(self._error_to_dict(call.error)) if call.error else None),
                         call.source.value,
                         call.sequence,
                     ),
@@ -239,12 +231,12 @@ class SQLiteTelemetryStore(TelemetryStore):
 
         self._conn.commit()
 
-    async def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
+    async def get_execution(self, execution_id: str) -> ExecutionRecord | None:
         """Get execution by ID."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self._executor, self._get_sync, execution_id)
 
-    def _get_sync(self, execution_id: str) -> Optional[ExecutionRecord]:
+    def _get_sync(self, execution_id: str) -> ExecutionRecord | None:
         """Synchronous get."""
         if not self._conn:
             return None
@@ -279,20 +271,19 @@ class SQLiteTelemetryStore(TelemetryStore):
 
         return record
 
-
     async def list_executions(
         self,
-        execution_type: Optional[ExecutionType] = None,
-        workflow_id: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        status: Optional[ExecutionStatus] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-        caller_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        execution_type: ExecutionType | None = None,
+        workflow_id: str | None = None,
+        tool_name: str | None = None,
+        status: ExecutionStatus | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        caller_id: str | None = None,
+        session_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Tuple[List[ExecutionRecord], int]:
+    ) -> tuple[list[ExecutionRecord], int]:
         """List executions with filtering."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -312,17 +303,17 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     def _list_sync(
         self,
-        execution_type: Optional[ExecutionType],
-        workflow_id: Optional[str],
-        tool_name: Optional[str],
-        status: Optional[ExecutionStatus],
-        since: Optional[datetime],
-        until: Optional[datetime],
-        caller_id: Optional[str],
-        session_id: Optional[str],
+        execution_type: ExecutionType | None,
+        workflow_id: str | None,
+        tool_name: str | None,
+        status: ExecutionStatus | None,
+        since: datetime | None,
+        until: datetime | None,
+        caller_id: str | None,
+        session_id: str | None,
         page: int,
         page_size: int,
-    ) -> Tuple[List[ExecutionRecord], int]:
+    ) -> tuple[list[ExecutionRecord], int]:
         """Synchronous list."""
         if not self._conn:
             return [], 0
@@ -330,7 +321,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
         # Build query
         conditions = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if execution_type:
             conditions.append("execution_type = ?")
@@ -378,9 +369,7 @@ class SQLiteTelemetryStore(TelemetryStore):
     async def delete_execution(self, execution_id: str) -> bool:
         """Delete an execution."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._executor, self._delete_sync, execution_id
-        )
+        return await loop.run_in_executor(self._executor, self._delete_sync, execution_id)
 
     def _delete_sync(self, execution_id: str) -> bool:
         """Synchronous delete."""
@@ -394,44 +383,38 @@ class SQLiteTelemetryStore(TelemetryStore):
     async def delete_before(self, cutoff: datetime) -> int:
         """Delete executions before cutoff."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._executor, self._delete_before_sync, cutoff
-        )
+        return await loop.run_in_executor(self._executor, self._delete_before_sync, cutoff)
 
     def _delete_before_sync(self, cutoff: datetime) -> int:
         """Synchronous delete before."""
         if not self._conn:
             return 0
         cursor = self._conn.cursor()
-        cursor.execute(
-            "DELETE FROM executions WHERE started_at < ?", (cutoff.isoformat(),)
-        )
+        cursor.execute("DELETE FROM executions WHERE started_at < ?", (cutoff.isoformat(),))
         self._conn.commit()
         return cursor.rowcount
 
     async def get_tool_call_stats(
         self,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> Dict[str, Dict[str, int]]:
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict[str, dict[str, int]]:
         """Get tool call statistics."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._executor, self._stats_sync, since, until
-        )
+        return await loop.run_in_executor(self._executor, self._stats_sync, since, until)
 
     def _stats_sync(
         self,
-        since: Optional[datetime],
-        until: Optional[datetime],
-    ) -> Dict[str, Dict[str, int]]:
+        since: datetime | None,
+        until: datetime | None,
+    ) -> dict[str, dict[str, int]]:
         """Synchronous stats."""
         if not self._conn:
             return {}
         cursor = self._conn.cursor()
 
         conditions = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if since:
             conditions.append("started_at >= ?")
@@ -464,7 +447,6 @@ class SQLiteTelemetryStore(TelemetryStore):
             for row in rows
         }
 
-
     async def close(self) -> None:
         """Close database connection."""
         if self._conn:
@@ -476,7 +458,7 @@ class SQLiteTelemetryStore(TelemetryStore):
     # Helper methods
     # ─────────────────────────────────────────────────────────────────
 
-    def _error_to_dict(self, error: ErrorRecord) -> Dict[str, Any]:
+    def _error_to_dict(self, error: ErrorRecord) -> dict[str, Any]:
         """Convert ErrorRecord to dict."""
         return {
             "code": error.code,
@@ -489,7 +471,7 @@ class SQLiteTelemetryStore(TelemetryStore):
             "cause": self._error_to_dict(error.cause) if error.cause else None,
         }
 
-    def _dict_to_error(self, data: Dict[str, Any]) -> ErrorRecord:
+    def _dict_to_error(self, data: dict[str, Any]) -> ErrorRecord:
         """Convert dict to ErrorRecord."""
         return ErrorRecord(
             code=data["code"],
@@ -502,7 +484,7 @@ class SQLiteTelemetryStore(TelemetryStore):
             cause=self._dict_to_error(data["cause"]) if data.get("cause") else None,
         )
 
-    def _metrics_to_dict(self, metrics: ExecutionMetrics) -> Dict[str, Any]:
+    def _metrics_to_dict(self, metrics: ExecutionMetrics) -> dict[str, Any]:
         """Convert ExecutionMetrics to dict."""
         return {
             "total_steps": metrics.total_steps,
@@ -515,7 +497,7 @@ class SQLiteTelemetryStore(TelemetryStore):
             "step_durations_ms": metrics.step_durations_ms,
         }
 
-    def _dict_to_metrics(self, data: Dict[str, Any]) -> ExecutionMetrics:
+    def _dict_to_metrics(self, data: dict[str, Any]) -> ExecutionMetrics:
         """Convert dict to ExecutionMetrics."""
         return ExecutionMetrics(
             total_steps=data.get("total_steps", 0),
@@ -537,20 +519,14 @@ class SQLiteTelemetryStore(TelemetryStore):
             workflow_version=row["workflow_version"],
             tool_name=row["tool_name"],
             status=ExecutionStatus(row["status"]),
-            started_at=(
-                datetime.fromisoformat(row["started_at"]) if row["started_at"] else None
-            ),
+            started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
             completed_at=(
-                datetime.fromisoformat(row["completed_at"])
-                if row["completed_at"]
-                else None
+                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
             ),
             duration_ms=row["duration_ms"],
             inputs=json.loads(row["inputs"]) if row["inputs"] else {},
             outputs=json.loads(row["outputs"]) if row["outputs"] else {},
-            error=(
-                self._dict_to_error(json.loads(row["error"])) if row["error"] else None
-            ),
+            error=(self._dict_to_error(json.loads(row["error"])) if row["error"] else None),
             metrics=(
                 self._dict_to_metrics(json.loads(row["metrics"]))
                 if row["metrics"]
@@ -569,22 +545,16 @@ class SQLiteTelemetryStore(TelemetryStore):
             step_type=StepType(row["step_type"]),
             status=StepStatus(row["status"]),
             skip_reason=row["skip_reason"],
-            started_at=(
-                datetime.fromisoformat(row["started_at"]) if row["started_at"] else None
-            ),
+            started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
             completed_at=(
-                datetime.fromisoformat(row["completed_at"])
-                if row["completed_at"]
-                else None
+                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
             ),
             duration_ms=row["duration_ms"],
             tool_name=row["tool_name"],
             tool_params=json.loads(row["tool_params"]) if row["tool_params"] else None,
             tool_result=json.loads(row["tool_result"]) if row["tool_result"] else None,
             code_hash=row["code_hash"],
-            error=(
-                self._dict_to_error(json.loads(row["error"])) if row["error"] else None
-            ),
+            error=(self._dict_to_error(json.loads(row["error"])) if row["error"] else None),
             attempt=row["attempt"],
             max_attempts=row["max_attempts"],
         )
@@ -596,16 +566,12 @@ class SQLiteTelemetryStore(TelemetryStore):
             tool_name=row["tool_name"],
             started_at=datetime.fromisoformat(row["started_at"]),
             completed_at=(
-                datetime.fromisoformat(row["completed_at"])
-                if row["completed_at"]
-                else None
+                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
             ),
             duration_ms=row["duration_ms"],
             params=json.loads(row["params"]) if row["params"] else None,
             result=json.loads(row["result"]) if row["result"] else None,
-            error=(
-                self._dict_to_error(json.loads(row["error"])) if row["error"] else None
-            ),
+            error=(self._dict_to_error(json.loads(row["error"])) if row["error"] else None),
             execution_id=row["execution_id"],
             step_id=row["step_id"],
             source=ToolCallSource(row["source"]),

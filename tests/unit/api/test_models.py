@@ -1,28 +1,21 @@
 """Tests for REST API Pydantic models."""
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from ploston_core.api.models import (
     ErrorDetail,
     ErrorResponse,
     ExecuteRequest,
-    ExecutionDetail,
     ExecutionStatus,
     HealthCheck,
     HealthStatus,
     StepSummary,
     ToolCallRequest,
     ToolCallResponse,
-    ToolDetail,
     ToolSource,
     ToolSummary,
     ValidationError,
     ValidationResult,
-    WorkflowCreateResponse,
-    WorkflowDetail,
-    WorkflowListResponse,
     WorkflowStatus,
     WorkflowSummary,
 )
@@ -36,7 +29,7 @@ class TestHealthModels:
         check = HealthCheck(
             status=HealthStatus.HEALTHY,
             checks={"registry": "ok", "tools": "ok"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         assert check.status == HealthStatus.HEALTHY
         assert check.checks["registry"] == "ok"
@@ -80,7 +73,7 @@ class TestWorkflowModels:
 
     def test_workflow_summary(self) -> None:
         """Test WorkflowSummary model."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         summary = WorkflowSummary(
             id="test-workflow",
             name="test-workflow",
@@ -137,7 +130,7 @@ class TestExecutionModels:
 
     def test_step_summary(self) -> None:
         """Test StepSummary model."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         step = StepSummary(
             id="step-1",
             tool="read_file",
@@ -186,4 +179,3 @@ class TestToolModels:
         )
         assert response.tool_name == "read_file"
         assert response.duration_ms == 50
-

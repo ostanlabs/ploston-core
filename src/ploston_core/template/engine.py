@@ -274,7 +274,7 @@ class TemplateEngine:
                 if key:
                     current = current[key] if isinstance(current, dict) else getattr(current, key)
                 # Index into list/tuple
-                if isinstance(current, (list, tuple)):
+                if isinstance(current, list | tuple):
                     current = current[index]
                 else:
                     raise TypeError(f"Cannot index {type(current)} with integer")

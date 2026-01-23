@@ -62,9 +62,7 @@ class AELPlugin:
         """
         return context
 
-    def on_step_before(
-        self, context: StepContext
-    ) -> StepContext | HookResult[StepContext]:
+    def on_step_before(self, context: StepContext) -> StepContext | HookResult[StepContext]:
         """Called before each step executes.
 
         Override this method to inspect or modify step parameters.

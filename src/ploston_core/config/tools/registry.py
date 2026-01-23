@@ -1,10 +1,10 @@
 """Config Tool Registry - routes config tool calls to handlers."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ploston_core.config import ConfigLoader, StagedConfig
 from ploston_core.errors import create_error
-
 
 # Tool schemas for MCP exposure
 CONFIG_TOOL_SCHEMAS = [
@@ -155,9 +155,7 @@ class ConfigToolRegistry:
         """Handle config_get tool call."""
         from .config_get import handle_config_get
 
-        return await handle_config_get(
-            arguments, self._staged_config, self._config_loader
-        )
+        return await handle_config_get(arguments, self._staged_config, self._config_loader)
 
     async def _handle_config_set(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle config_set tool call."""
@@ -165,9 +163,7 @@ class ConfigToolRegistry:
 
         return await handle_config_set(arguments, self._staged_config)
 
-    async def _handle_config_validate(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _handle_config_validate(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle config_validate tool call."""
         from .config_validate import handle_config_validate
 
@@ -179,15 +175,11 @@ class ConfigToolRegistry:
 
         return await handle_config_schema(arguments)
 
-    async def _handle_config_location(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _handle_config_location(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle config_location tool call."""
         from .config_location import handle_config_location
 
-        result = await handle_config_location(
-            arguments, self._write_location, self._config_loader
-        )
+        result = await handle_config_location(arguments, self._write_location, self._config_loader)
         if "new_location" in result:
             self._write_location = result["new_location"]
         return result

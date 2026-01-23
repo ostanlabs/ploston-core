@@ -13,7 +13,6 @@ from ploston_core.types import ValidationIssue, ValidationResult
 from .loader import ConfigLoader, deep_merge
 from .models import AELConfig
 
-
 # Patterns that look like secrets (should use ${VAR} instead)
 SECRET_PATTERNS = [
     r"^ghp_[a-zA-Z0-9]{36}$",  # GitHub personal access token
@@ -168,9 +167,7 @@ class StagedConfig:
             warnings=all_warnings,
         )
 
-    def _check_secrets(
-        self, data: dict[str, Any], path: str = ""
-    ) -> list[ValidationIssue]:
+    def _check_secrets(self, data: dict[str, Any], path: str = "") -> list[ValidationIssue]:
         """Check for plaintext values that look like secrets.
 
         Args:
@@ -198,7 +195,7 @@ class StagedConfig:
                         warnings.append(
                             ValidationIssue(
                                 path=current_path,
-                                message=f"Value looks like a secret. Consider using ${{VAR}} syntax.",
+                                message="Value looks like a secret. Consider using ${VAR} syntax.",
                                 severity="warning",
                             )
                         )
@@ -206,9 +203,7 @@ class StagedConfig:
 
         return warnings
 
-    def _check_incomplete_mcp_servers(
-        self, data: dict[str, Any]
-    ) -> list[ValidationIssue]:
+    def _check_incomplete_mcp_servers(self, data: dict[str, Any]) -> list[ValidationIssue]:
         """Check for incomplete MCP server definitions.
 
         Args:

@@ -20,7 +20,13 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.api_keys = {key.key: key for key in api_keys}
-        self.exclude_paths = exclude_paths or ["/health", "/info", "/docs", "/redoc", "/openapi.json"]
+        self.exclude_paths = exclude_paths or [
+            "/health",
+            "/info",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        ]
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Check API key authentication."""
@@ -64,4 +70,3 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         request.state.api_key_scopes = key_config.scopes
 
         return await call_next(request)
-

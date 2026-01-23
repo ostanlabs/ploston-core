@@ -33,11 +33,7 @@ class Redactor:
 
         if isinstance(data, dict):
             return {
-                key: (
-                    self.REDACTED
-                    if key.lower() in self._field_set
-                    else self.redact(value)
-                )
+                key: (self.REDACTED if key.lower() in self._field_set else self.redact(value))
                 for key, value in data.items()
             }
         elif isinstance(data, list):
@@ -60,4 +56,3 @@ class Redactor:
         for pattern in self._config.patterns:
             result = pattern.regex.sub(pattern.replacement, result)
         return result
-

@@ -50,7 +50,8 @@ class TestModeAwareMCPFrontend:
             {"name": "ael:config_set", "description": "Set config"},
         ]
         registry.get_configure_tool_for_mcp_exposure.return_value = {
-            "name": "ael:configure", "description": "Switch to config mode"
+            "name": "ael:configure",
+            "description": "Switch to config mode",
         }
         registry.call = AsyncMock(return_value={"content": [{"type": "text", "text": "ok"}]})
         return registry
@@ -110,10 +111,10 @@ class TestModeAwareMCPFrontend:
     async def test_tools_list_config_mode_returns_config_tools(self, frontend_config_mode):
         """In config mode, tools/list returns only config tools."""
         result = await frontend_config_mode._handle_tools_list({})
-        
+
         tools = result["tools"]
         tool_names = [t["name"] for t in tools]
-        
+
         assert "ael:config_get" in tool_names
         assert "ael:config_set" in tool_names
         assert "tool1" not in tool_names
@@ -122,10 +123,10 @@ class TestModeAwareMCPFrontend:
     async def test_tools_list_running_mode_returns_all_tools(self, frontend_running_mode):
         """In running mode, tools/list returns all tools + workflows + ael:configure."""
         result = await frontend_running_mode._handle_tools_list({})
-        
+
         tools = result["tools"]
         tool_names = [t["name"] for t in tools]
-        
+
         assert "tool1" in tool_names
         assert "tool2" in tool_names
         assert "workflow:test" in tool_names
@@ -139,41 +140,35 @@ class TestModeAwareMCPFrontend:
         self, frontend_config_mode, mock_config_tool_registry
     ):
         """In config mode, config tools can be called."""
-        result = await frontend_config_mode._handle_tools_call({
-            "name": "ael:config_get",
-            "arguments": {"path": "server.port"}
-        })
-        
+        await frontend_config_mode._handle_tools_call(
+            {"name": "ael:config_get", "arguments": {"path": "server.port"}}
+        )
+
         mock_config_tool_registry.call.assert_called_once()
 
     async def test_tools_call_config_mode_blocks_ael_configure(self, frontend_config_mode):
         """In config mode, ael:configure is not available."""
         with pytest.raises(AELError) as exc_info:
-            await frontend_config_mode._handle_tools_call({
-                "name": "ael:configure",
-                "arguments": {}
-            })
-        
+            await frontend_config_mode._handle_tools_call(
+                {"name": "ael:configure", "arguments": {}}
+            )
+
         assert "only available in running mode" in exc_info.value.message
 
     async def test_tools_call_config_mode_blocks_workflows(self, frontend_config_mode):
         """In config mode, workflows are blocked."""
         with pytest.raises(AELError) as exc_info:
-            await frontend_config_mode._handle_tools_call({
-                "name": "workflow:test",
-                "arguments": {}
-            })
-        
+            await frontend_config_mode._handle_tools_call(
+                {"name": "workflow:test", "arguments": {}}
+            )
+
         assert "not available in configuration mode" in exc_info.value.message
 
     async def test_tools_call_config_mode_blocks_regular_tools(self, frontend_config_mode):
         """In config mode, regular tools are blocked."""
         with pytest.raises(AELError) as exc_info:
-            await frontend_config_mode._handle_tools_call({
-                "name": "tool1",
-                "arguments": {}
-            })
-        
+            await frontend_config_mode._handle_tools_call({"name": "tool1", "arguments": {}})
+
         assert "not available in configuration mode" in exc_info.value.message
 
     # Tools call tests - running mode
@@ -182,21 +177,17 @@ class TestModeAwareMCPFrontend:
         self, frontend_running_mode, mock_config_tool_registry
     ):
         """In running mode, ael:configure can be called."""
-        result = await frontend_running_mode._handle_tools_call({
-            "name": "ael:configure",
-            "arguments": {}
-        })
-        
+        await frontend_running_mode._handle_tools_call({"name": "ael:configure", "arguments": {}})
+
         mock_config_tool_registry.call.assert_called_once_with("ael:configure", {})
 
     async def test_tools_call_running_mode_blocks_config_tools(self, frontend_running_mode):
         """In running mode, config tools (except ael:configure) are blocked."""
         with pytest.raises(AELError) as exc_info:
-            await frontend_running_mode._handle_tools_call({
-                "name": "ael:config_get",
-                "arguments": {}
-            })
-        
+            await frontend_running_mode._handle_tools_call(
+                {"name": "ael:config_get", "arguments": {}}
+            )
+
         assert "only available in configuration mode" in exc_info.value.message
 
     # Mode change notification tests
@@ -211,7 +202,7 @@ class TestModeAwareMCPFrontend:
     ):
         """Mode change triggers tools/list_changed notification."""
         mode_manager = ModeManager(initial_mode=Mode.CONFIGURATION)
-        
+
         frontend = MCPFrontend(
             workflow_engine=mock_workflow_engine,
             tool_registry=mock_tool_registry,
@@ -220,25 +211,30 @@ class TestModeAwareMCPFrontend:
             mode_manager=mode_manager,
             config_tool_registry=mock_config_tool_registry,
         )
-        
-        with patch.object(frontend, '_send_tools_changed_notification', new_callable=AsyncMock) as mock_notify:
+
+        with patch.object(
+            frontend, "_send_tools_changed_notification", new_callable=AsyncMock
+        ) as mock_notify:
             # Change mode
             mode_manager.set_mode(Mode.RUNNING)
-            
+
             # Give asyncio.create_task a chance to run
             import asyncio
+
             await asyncio.sleep(0)
-            
+
             mock_notify.assert_called_once()
 
     async def test_notification_format(self, frontend_config_mode):
         """Test the notification message format."""
-        with patch('ploston_core.mcp_frontend.server.write_message', new_callable=AsyncMock) as mock_write:
+        with patch(
+            "ploston_core.mcp_frontend.server.write_message", new_callable=AsyncMock
+        ) as mock_write:
             await frontend_config_mode._send_tools_changed_notification()
-            
+
             mock_write.assert_called_once()
             notification = mock_write.call_args[0][0]
-            
+
             assert notification["jsonrpc"] == "2.0"
             assert notification["method"] == "notifications/tools/list_changed"
             assert "id" not in notification  # Notifications don't have id
@@ -250,19 +246,19 @@ class TestModeManagerRegistration:
     def test_frontend_registers_callback(self):
         """Frontend registers callback with mode manager."""
         mode_manager = ModeManager()
-        
+
         # Before creating frontend
         assert len(mode_manager._on_change_callbacks) == 0
-        
-        frontend = MCPFrontend(
+
+        _frontend = MCPFrontend(
             workflow_engine=MagicMock(),
             tool_registry=MagicMock(),
             workflow_registry=MagicMock(),
             tool_invoker=MagicMock(),
             mode_manager=mode_manager,
         )
-        
-        # After creating frontend
+
+        # After creating frontend (frontend registers callback)
         assert len(mode_manager._on_change_callbacks) == 1
 
     def test_default_mode_manager_created(self):
@@ -273,6 +269,6 @@ class TestModeManagerRegistration:
             workflow_registry=MagicMock(),
             tool_invoker=MagicMock(),
         )
-        
+
         assert frontend._mode_manager is not None
         assert frontend._mode_manager.mode == Mode.CONFIGURATION  # Default

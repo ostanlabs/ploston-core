@@ -1,8 +1,8 @@
 """Unit tests for config_location tool."""
 
-import pytest
 from unittest.mock import MagicMock
-from pathlib import Path
+
+import pytest
 
 from ploston_core.config.tools.config_location import handle_config_location
 
@@ -30,7 +30,7 @@ class TestHandleConfigLocation:
     async def test_set_project_scope(self, mock_config_loader, tmp_path, monkeypatch):
         """Set project scope."""
         monkeypatch.chdir(tmp_path)
-        
+
         result = await handle_config_location(
             {"scope": "project"},
             None,
@@ -56,7 +56,7 @@ class TestHandleConfigLocation:
     async def test_set_custom_path(self, mock_config_loader, tmp_path):
         """Set custom path."""
         custom_path = str(tmp_path / "custom-config.yaml")
-        
+
         result = await handle_config_location(
             {"path": custom_path},
             None,

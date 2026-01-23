@@ -1,8 +1,5 @@
 """Unit tests for AEL telemetry metrics."""
 
-import pytest
-from unittest.mock import MagicMock, patch
-
 from ploston_core.telemetry import (
     AELMetrics,
     MetricLabels,

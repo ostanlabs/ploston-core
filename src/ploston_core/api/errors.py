@@ -24,9 +24,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle HTTP exceptions."""
         # If detail is already a dict (from our handlers), use it
         if isinstance(exc.detail, dict):
@@ -83,4 +81,3 @@ def setup_error_handlers(app: FastAPI) -> None:
                 }
             },
         )
-

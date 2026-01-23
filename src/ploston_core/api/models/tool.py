@@ -69,4 +69,3 @@ class ToolRefreshResponse(BaseModel):
 
     refreshed: int
     servers: dict[str, RefreshServerResult]
-

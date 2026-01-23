@@ -1,12 +1,13 @@
 """Unit tests for ConfigToolRegistry."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 from ploston_core.config.tools import (
-    ConfigToolRegistry,
     CONFIG_TOOL_SCHEMAS,
     CONFIGURE_TOOL_SCHEMA,
+    ConfigToolRegistry,
 )
 
 

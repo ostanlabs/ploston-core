@@ -1,6 +1,6 @@
 """Tool router."""
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Path, Request
 
 from ploston_core.api.models import (
     RefreshServerResult,
@@ -130,7 +130,10 @@ async def call_tool(
         result = await invoker.invoke(tool_name, call_request.params)
 
         if not result.success:
-            raise HTTPException(status_code=502, detail=result.error.to_dict() if result.error else "Tool call failed")
+            raise HTTPException(
+                status_code=502,
+                detail=result.error.to_dict() if result.error else "Tool call failed",
+            )
 
         return ToolCallResponse(
             tool_name=tool_name,
@@ -139,4 +142,3 @@ async def call_tool(
         )
     except AELError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
-

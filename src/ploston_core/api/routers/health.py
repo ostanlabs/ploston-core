@@ -1,6 +1,6 @@
 """Health and info router."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 
@@ -50,7 +50,7 @@ async def health_check(request: Request) -> HealthCheck:
     return HealthCheck(
         status=status,
         checks=checks,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -81,4 +81,3 @@ async def server_info(request: Request) -> ServerInfo:
         features=features,
         mcp=mcp_info,
     )
-

@@ -1,7 +1,8 @@
 """Unit tests for config_done tool."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 from ploston_core.config import Mode
 from ploston_core.config.tools.config_done import handle_config_done

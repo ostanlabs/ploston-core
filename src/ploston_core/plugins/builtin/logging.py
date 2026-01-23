@@ -30,9 +30,7 @@ class LoggingPlugin(AELPlugin):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
-        self._level = getattr(
-            logging, self.config.get("level", "INFO").upper(), logging.INFO
-        )
+        self._level = getattr(logging, self.config.get("level", "INFO").upper(), logging.INFO)
         self._include_params = self.config.get("include_params", True)
         self._include_outputs = self.config.get("include_outputs", False)
         logger_name = self.config.get("logger_name", "ael.plugins.logging")
@@ -62,10 +60,7 @@ class LoggingPlugin(AELPlugin):
     def on_step_after(self, context: StepResultContext) -> StepResultContext:
         """Log step execution result."""
         status = "SUCCESS" if context.success else "FAILED"
-        msg = (
-            f"[{context.execution_id}] Step {context.step_id}: {status} "
-            f"({context.duration_ms}ms)"
-        )
+        msg = f"[{context.execution_id}] Step {context.step_id}: {status} ({context.duration_ms}ms)"
         if not context.success and context.error:
             msg += f" error={context.error}"
         if self._include_outputs and context.success:

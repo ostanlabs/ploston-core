@@ -10,15 +10,16 @@ Implements MCP over HTTP with:
 import asyncio
 import json
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
+from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
-from sse_starlette.sse import EventSourceResponse
 
 from ploston_core.telemetry import get_telemetry
 
@@ -150,7 +151,7 @@ class HTTPTransport:
                             "event": "message",
                             "data": json.dumps(notification),
                         }
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Send keepalive
                         yield {"event": "ping", "data": ""}
             finally:

@@ -1,7 +1,8 @@
 """Unit tests for config_validate tool."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from ploston_core.config.tools.config_validate import handle_config_validate
 

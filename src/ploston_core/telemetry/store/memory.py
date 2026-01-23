@@ -3,7 +3,6 @@
 import asyncio
 from collections import OrderedDict
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 from .base import TelemetryStore
 from .types import ExecutionRecord, ExecutionStatus, ExecutionType
@@ -38,23 +37,23 @@ class MemoryTelemetryStore(TelemetryStore):
             while len(self._records) > self._max_records:
                 self._records.popitem(last=False)
 
-    async def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
+    async def get_execution(self, execution_id: str) -> ExecutionRecord | None:
         """Get execution by ID."""
         return self._records.get(execution_id)
 
     async def list_executions(
         self,
-        execution_type: Optional[ExecutionType] = None,
-        workflow_id: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        status: Optional[ExecutionStatus] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-        caller_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        execution_type: ExecutionType | None = None,
+        workflow_id: str | None = None,
+        tool_name: str | None = None,
+        status: ExecutionStatus | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        caller_id: str | None = None,
+        session_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Tuple[List[ExecutionRecord], int]:
+    ) -> tuple[list[ExecutionRecord], int]:
         """List executions with filtering."""
         # Filter
         filtered = []
@@ -109,11 +108,11 @@ class MemoryTelemetryStore(TelemetryStore):
 
     async def get_tool_call_stats(
         self,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> Dict[str, Dict[str, int]]:
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict[str, dict[str, int]]:
         """Get tool call statistics."""
-        stats: Dict[str, Dict[str, int]] = {}
+        stats: dict[str, dict[str, int]] = {}
 
         for record in self._records.values():
             if since and record.started_at and record.started_at < since:
@@ -133,4 +132,3 @@ class MemoryTelemetryStore(TelemetryStore):
                         stats[call.tool_name]["success"] += 1
 
         return stats
-

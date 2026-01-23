@@ -1,8 +1,7 @@
 """Unit tests for HTTP transport."""
 
 import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from starlette.testclient import TestClient
@@ -255,6 +254,7 @@ class TestHTTPTransportDualMode:
     def mock_rest_app(self):
         """Create a mock FastAPI app for testing."""
         from fastapi import FastAPI
+
         app = FastAPI()
 
         @app.get("/health")
@@ -308,10 +308,7 @@ class TestHTTPTransportDualMode:
         assert "/health" in route_paths
 
         # Check REST API mount
-        mount_paths = [
-            route.path for route in app.routes
-            if hasattr(route, 'app')
-        ]
+        mount_paths = [route.path for route in app.routes if hasattr(route, "app")]
         assert "/api/v1" in mount_paths
 
     def test_dual_mode_mcp_endpoint_works(self, message_handler, mock_rest_app):

@@ -1,7 +1,5 @@
 """Unit tests for ModeManager."""
 
-import pytest
-
 from ploston_core.config.mode_manager import Mode, ModeManager
 
 
@@ -67,7 +65,7 @@ class TestModeManager:
 
         manager.on_mode_change(callback)
         manager.set_mode(Mode.RUNNING)
-        
+
         assert len(received_modes) == 1
         assert received_modes[0] == Mode.RUNNING
 
@@ -122,7 +120,7 @@ class TestModeManager:
 
         manager.on_mode_change(callback)
         result = manager.remove_mode_change_callback(callback)
-        
+
         assert result is True
         manager.set_mode(Mode.RUNNING)
         assert callback_count == 0

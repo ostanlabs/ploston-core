@@ -57,11 +57,13 @@ async def handle_config_done(
                     "tools": len(tools) if tools else 0,
                 }
             except Exception as e:
-                errors.append({
-                    "path": f"mcp.servers.{server_name}",
-                    "error": str(e),
-                    "suggestion": "Check server command and environment variables",
-                })
+                errors.append(
+                    {
+                        "path": f"mcp.servers.{server_name}",
+                        "error": str(e),
+                        "suggestion": "Check server command and environment variables",
+                    }
+                )
                 mcp_results[server_name] = {
                     "status": "failed",
                     "error": str(e),

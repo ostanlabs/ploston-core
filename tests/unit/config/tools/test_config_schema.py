@@ -2,7 +2,7 @@
 
 import pytest
 
-from ploston_core.config.tools.config_schema import handle_config_schema, CONFIG_SCHEMA
+from ploston_core.config.tools.config_schema import CONFIG_SCHEMA, handle_config_schema
 
 
 class TestHandleConfigSchema:

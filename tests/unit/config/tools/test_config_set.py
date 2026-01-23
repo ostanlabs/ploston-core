@@ -1,12 +1,12 @@
 """Unit tests for config_set tool."""
 
-import pytest
 from unittest.mock import MagicMock
 
-from ploston_core.config import StagedConfig
+import pytest
+
 from ploston_core.config.tools.config_set import (
-    handle_config_set,
     detect_plaintext_secrets,
+    handle_config_set,
 )
 
 

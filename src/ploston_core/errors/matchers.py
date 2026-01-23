@@ -20,7 +20,7 @@ class TimeoutErrorMatcher(ErrorMatcher):
         """
         if isinstance(error, dict):
             return error.get("type") == "timeout"
-        return isinstance(error, (asyncio.TimeoutError, TimeoutError))
+        return isinstance(error, asyncio.TimeoutError | TimeoutError)
 
     def extract(self, error: Exception | dict[str, Any]) -> MatchResult:
         """Extract timeout error info.
