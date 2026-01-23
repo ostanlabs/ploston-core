@@ -141,6 +141,7 @@ jobs:
           files: test-results/**/*.xml
           comment_mode: always
           check_name: Test Results
+          compare_to_earlier_commit: false
 
   build:
     name: Build
