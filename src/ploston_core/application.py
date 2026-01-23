@@ -21,7 +21,7 @@ from ploston_core.mcp import MCPClientManager
 from ploston_core.mcp_frontend import MCPFrontend, MCPServerConfig
 from ploston_core.registry import ToolRegistry
 from ploston_core.sandbox import SandboxConfig
-from ploston_core.telemetry import setup_telemetry, TelemetryConfig, OTLPExporterConfig
+from ploston_core.telemetry import OTLPExporterConfig, TelemetryConfig, setup_telemetry
 from ploston_core.template import TemplateEngine
 from ploston_core.types import MCPTransport
 from ploston_core.workflow import WorkflowRegistry
@@ -33,7 +33,7 @@ class PlostApplication:
 
     Initializes and wires all components together. This class handles
     the full initialization sequence including:
-    
+
     1. Config loading
     2. Logger setup
     3. Telemetry setup
@@ -98,7 +98,7 @@ class PlostApplication:
 
     async def initialize(self) -> None:
         """Initialize all components.
-        
+
         This method performs the full initialization sequence:
         1. Load configuration
         2. Set up logging
@@ -160,9 +160,7 @@ class PlostApplication:
 
         telemetry_config = TelemetryConfig(
             enabled=telemetry_enabled,
-            service_name=os.environ.get(
-                "OTEL_SERVICE_NAME", self.config.telemetry.service_name
-            ),
+            service_name=os.environ.get("OTEL_SERVICE_NAME", self.config.telemetry.service_name),
             service_version=self.config.telemetry.service_version,
             metrics_enabled=metrics_enabled,
             traces_enabled=traces_enabled,
@@ -171,9 +169,7 @@ class PlostApplication:
             otlp=OTLPExporterConfig(
                 enabled=otlp_enabled,
                 endpoint=otlp_endpoint,
-                insecure=os.environ.get(
-                    "OTEL_EXPORTER_OTLP_INSECURE", "true"
-                ).lower() == "true",
+                insecure=os.environ.get("OTEL_EXPORTER_OTLP_INSECURE", "true").lower() == "true",
                 protocol=self.config.telemetry.export.otlp.protocol,
                 headers=self.config.telemetry.export.otlp.headers,
             ),
@@ -343,7 +339,7 @@ class PlostApplication:
 
     async def start(self) -> None:
         """Start the MCP frontend server.
-        
+
         This is a convenience method that initializes the application
         (if not already initialized) and starts the server.
         """
