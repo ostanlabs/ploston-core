@@ -117,6 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     permissions:
+      contents: read
       checks: write
       pull-requests: write
     steps:
