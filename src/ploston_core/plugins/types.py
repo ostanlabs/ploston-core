@@ -29,7 +29,7 @@ class PluginDecision(Enum):
 
 
 @dataclass
-class HookResult(Generic[T]):
+class HookResult(Generic[T]):  # noqa: UP046
     """Result of a plugin hook execution.
 
     Wraps the data returned by a hook with metadata about the execution.

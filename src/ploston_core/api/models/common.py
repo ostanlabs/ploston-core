@@ -14,7 +14,7 @@ T = TypeVar("T")
 # ─────────────────────────────────────────────────────────────────
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
+class PaginatedResponse(BaseModel, Generic[T]):  # noqa: UP046
     """Paginated list response."""
 
     items: list[T]
