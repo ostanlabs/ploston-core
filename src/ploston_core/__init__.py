@@ -6,5 +6,5 @@ Contains no tier-specific code—only extension points that tier packages hook i
 
 from ploston_core.application import PlostApplication
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["__version__", "PlostApplication"]
