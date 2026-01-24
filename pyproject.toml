@@ -38,12 +38,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Development dependencies
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.2.0",
     "mypy>=1.8.0",
+]
+# Kafka tools - for kafka_publish, kafka_consume, etc.
+kafka = [
+    "kafka-python>=2.0.0",
+]
+# All native tools dependencies (for Docker images)
+tools = [
+    "kafka-python>=2.0.0",
 ]
 
 [project.urls]
@@ -76,4 +85,3 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-
