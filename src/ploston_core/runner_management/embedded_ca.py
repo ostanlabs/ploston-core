@@ -221,11 +221,12 @@ class EmbeddedCA:
         )
         
         # Generate certificate
+        # Note: Use OU for runner_id since SERIAL_NUMBER has strict charset requirements
         subject = x509.Name([
             x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, runner_id),
             x509.NameAttribute(NameOID.COMMON_NAME, f"runner-{runner_name}"),
-            x509.NameAttribute(NameOID.SERIAL_NUMBER, runner_id),
         ])
         
         now = datetime.now(timezone.utc)
