@@ -142,17 +142,31 @@ def workflow_runner(ael_cli: Callable, workflows_dir: Path) -> Callable:
 
 def pytest_configure(config):
     """Configure custom markers."""
+    # Basic test categories
+    config.addinivalue_line("markers", "unit: Unit tests (fast, isolated)")
     config.addinivalue_line("markers", "integration: Integration tests")
-    config.addinivalue_line("markers", "unit: Unit tests")
+    config.addinivalue_line("markers", "e2e: End-to-end tests")
+
+    # Specialized test types
+    config.addinivalue_line("markers", "property: Property-based tests (Hypothesis)")
+    config.addinivalue_line("markers", "fuzz: Fuzzing tests")
+    config.addinivalue_line("markers", "security: Security tests (P0, must pass)")
+    config.addinivalue_line("markers", "golden: Golden master/snapshot tests")
+    config.addinivalue_line("markers", "chaos: Chaos/resilience tests")
+    config.addinivalue_line("markers", "docs: Documentation tests")
+
+    # Component-specific markers
     config.addinivalue_line("markers", "workflow: Workflow engine tests")
     config.addinivalue_line("markers", "registry: Registry tests")
-    config.addinivalue_line("markers", "security: Security tests")
     config.addinivalue_line("markers", "cli: CLI tests")
-    config.addinivalue_line("markers", "slow: Slow tests")
     config.addinivalue_line("markers", "mcp_client: MCP client integration tests")
     config.addinivalue_line("markers", "mcp_http_client: MCP HTTP client integration tests")
     config.addinivalue_line("markers", "frontend: MCP frontend tests")
-    config.addinivalue_line("markers", "homelab: Homelab K3s deployment integration tests")
+
+    # Environment-specific markers
+    config.addinivalue_line("markers", "docker_compose: Tests requiring docker-compose environment")
+    config.addinivalue_line("markers", "homelab: Tests requiring homelab deployment (never skip, fix failures)")
+    config.addinivalue_line("markers", "slow: Slow tests (>10s)")
     config.addinivalue_line(
         "markers",
         "requires_running_mode: Tests that require AEL to be in running mode (not configuration mode)",

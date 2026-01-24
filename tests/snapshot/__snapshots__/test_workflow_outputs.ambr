@@ -1,0 +1,279 @@
+# serializer version: 1
+# name: TestConfigOutputSnapshots.test_snap_030_default_config_output
+  dict({
+    'execution': dict({
+      'max_retries': 3,
+      'max_steps': 100,
+      'step_timeout': 30,
+    }),
+    'security': dict({
+      'allowed_modules': list([
+        'math',
+        'json',
+        'datetime',
+      ]),
+      'sandbox_enabled': True,
+    }),
+    'server': dict({
+      'host': 'localhost',
+      'port': 8080,
+    }),
+  })
+# ---
+# name: TestConfigOutputSnapshots.test_snap_031_custom_config_output
+  dict({
+    'execution': dict({
+      'max_retries': 5,
+      'max_steps': 500,
+      'parallel_steps': True,
+      'step_timeout': 60,
+    }),
+    'logging': dict({
+      'format': 'json',
+      'level': 'DEBUG',
+    }),
+    'security': dict({
+      'allowed_modules': list([
+        'math',
+        'json',
+        'datetime',
+        're',
+        'collections',
+      ]),
+      'sandbox_enabled': True,
+    }),
+    'server': dict({
+      'host': '0.0.0.0',
+      'port': 9090,
+      'ssl_enabled': True,
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_020_mcp_initialize_request
+  dict({
+    'id': 1,
+    'jsonrpc': '2.0',
+    'method': 'initialize',
+    'params': dict({
+      'capabilities': dict({
+        'prompts': dict({
+        }),
+        'tools': dict({
+        }),
+      }),
+      'clientInfo': dict({
+        'name': 'ploston',
+        'version': '1.0.0',
+      }),
+      'protocolVersion': '2024-11-05',
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_021_mcp_initialize_response
+  dict({
+    'id': 1,
+    'jsonrpc': '2.0',
+    'result': dict({
+      'capabilities': dict({
+        'tools': dict({
+          'listChanged': True,
+        }),
+      }),
+      'protocolVersion': '2024-11-05',
+      'serverInfo': dict({
+        'name': 'ploston-server',
+        'version': '1.0.0',
+      }),
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_022_mcp_tools_list_response
+  dict({
+    'id': 2,
+    'jsonrpc': '2.0',
+    'result': dict({
+      'tools': list([
+        dict({
+          'description': 'Echo the input message',
+          'inputSchema': dict({
+            'properties': dict({
+              'message': dict({
+                'description': 'Message to echo',
+                'type': 'string',
+              }),
+            }),
+            'required': list([
+              'message',
+            ]),
+            'type': 'object',
+          }),
+          'name': 'echo',
+        }),
+      ]),
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_023_mcp_tool_call_request
+  dict({
+    'id': 3,
+    'jsonrpc': '2.0',
+    'method': 'tools/call',
+    'params': dict({
+      'arguments': dict({
+        'message': 'Hello, World!',
+      }),
+      'name': 'echo',
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_024_mcp_tool_call_response
+  dict({
+    'id': 3,
+    'jsonrpc': '2.0',
+    'result': dict({
+      'content': list([
+        dict({
+          'text': 'Hello, World!',
+          'type': 'text',
+        }),
+      ]),
+    }),
+  })
+# ---
+# name: TestMCPMessageSnapshots.test_snap_025_mcp_error_response
+  dict({
+    'error': dict({
+      'code': -32600,
+      'data': dict({
+        'details': "Missing required field 'method'",
+      }),
+      'message': 'Invalid Request',
+    }),
+    'id': 4,
+    'jsonrpc': '2.0',
+  })
+# ---
+# name: TestValidationOutputSnapshots.test_snap_010_validation_success_output
+  dict({
+    'errors': list([
+    ]),
+    'valid': True,
+    'version': '1.0',
+    'warnings': list([
+    ]),
+    'workflow_name': 'test-workflow',
+  })
+# ---
+# name: TestValidationOutputSnapshots.test_snap_011_validation_error_output
+  dict({
+    'errors': list([
+      dict({
+        'code': 'MISSING_FIELD',
+        'message': "Required field 'name' is missing",
+        'path': '$.name',
+      }),
+      dict({
+        'code': 'MISSING_FIELD',
+        'message': "Required field 'steps' is missing",
+        'path': '$.steps',
+      }),
+    ]),
+    'valid': False,
+    'version': None,
+    'warnings': list([
+    ]),
+    'workflow_name': None,
+  })
+# ---
+# name: TestValidationOutputSnapshots.test_snap_012_validation_warning_output
+  dict({
+    'errors': list([
+    ]),
+    'valid': True,
+    'version': '1.0',
+    'warnings': list([
+      dict({
+        'code': 'DEPRECATED_FIELD',
+        'message': "Field 'timeout' is deprecated, use 'step_timeout' instead",
+        'path': '$.timeout',
+      }),
+    ]),
+    'workflow_name': 'test-workflow',
+  })
+# ---
+# name: TestWorkflowOutputSnapshots.test_snap_001_simple_workflow_output
+  dict({
+    'result': 42,
+    'status': 'completed',
+    'steps_executed': 1,
+    'version': '1.0',
+    'workflow_name': 'simple-test',
+  })
+# ---
+# name: TestWorkflowOutputSnapshots.test_snap_002_multi_step_workflow_output
+  dict({
+    'result': dict({
+      'count': 5,
+      'sum': 100,
+    }),
+    'status': 'completed',
+    'step_results': dict({
+      'step1': dict({
+        'output': 10,
+      }),
+      'step2': dict({
+        'output': 50,
+      }),
+      'step3': dict({
+        'output': 100,
+      }),
+    }),
+    'steps_executed': 3,
+    'version': '1.0',
+    'workflow_name': 'multi-step',
+  })
+# ---
+# name: TestWorkflowOutputSnapshots.test_snap_003_workflow_with_inputs_output
+  dict({
+    'inputs_received': dict({
+      'count': 5,
+      'name': 'Alice',
+    }),
+    'result': 'Hello, Alice! Count: 5',
+    'status': 'completed',
+    'version': '1.0',
+    'workflow_name': 'with-inputs',
+  })
+# ---
+# name: TestWorkflowOutputSnapshots.test_snap_004_workflow_error_output
+  dict({
+    'error': dict({
+      'code': 'EXECUTION_ERROR',
+      'details': 'Division by zero',
+      'message': "Step 'step2' failed",
+      'step_id': 'step2',
+    }),
+    'status': 'failed',
+    'steps_executed': 1,
+    'steps_failed': 1,
+    'version': '1.0',
+    'workflow_name': 'error-test',
+  })
+# ---
+# name: TestWorkflowOutputSnapshots.test_snap_005_workflow_with_tool_output
+  dict({
+    'result': 'Tool result: success',
+    'status': 'completed',
+    'tool_calls': list([
+      dict({
+        'input': dict({
+          'message': 'hello',
+        }),
+        'output': 'hello',
+        'tool': 'echo',
+      }),
+    ]),
+    'version': '1.0',
+    'workflow_name': 'tool-test',
+  })
+# ---
