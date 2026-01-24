@@ -14,6 +14,7 @@ from ploston_core.api.middleware import (
 )
 from ploston_core.api.routers import (
     capabilities_router,
+    config_router,
     execution_router,
     health_router,
     tool_router,
@@ -109,6 +110,7 @@ def create_rest_app(
 
     # Include routers
     app.include_router(capabilities_router)  # No prefix - already has /api/v1
+    app.include_router(config_router, prefix=config.prefix)
     app.include_router(health_router, prefix=config.prefix)
     app.include_router(workflow_router, prefix=config.prefix)
     app.include_router(execution_router, prefix=config.prefix)

@@ -34,7 +34,7 @@ def _workflow_to_summary(workflow: WorkflowDefinition) -> WorkflowSummary:
         description=workflow.description,
         status=WorkflowStatus.ACTIVE,
         tags=workflow.tags or [],
-        inputs=list(workflow.inputs.keys()) if workflow.inputs else [],
+        inputs=[inp.name for inp in workflow.inputs] if workflow.inputs else [],
         created_at=now,
         updated_at=now,
     )
@@ -245,6 +245,13 @@ async def execute_workflow(
         result = await engine.execute(workflow_id, execute_request.inputs)
 
         # Convert to ExecutionDetail
+        # Note: StepResult doesn't have tool_name, we need to get it from the workflow
+        workflow = request.app.state.workflow_registry.get(workflow_id)
+        step_tools = {}
+        if workflow:
+            for step in workflow.steps:
+                step_tools[step.id] = step.tool
+
         execution = ExecutionDetail(
             execution_id=result.execution_id,
             workflow_id=workflow_id,
@@ -258,8 +265,8 @@ async def execute_workflow(
             steps=[
                 StepSummary(
                     id=s.step_id,
-                    tool=s.tool_name,
-                    type="tool" if s.tool_name else "code",
+                    tool=step_tools.get(s.step_id),
+                    type="tool" if step_tools.get(s.step_id) else "code",
                     status=ExecutionStatus(s.status.value),
                     started_at=s.started_at,
                     completed_at=s.completed_at,
