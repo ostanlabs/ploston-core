@@ -6,12 +6,11 @@ pub/sub notifications for reactive config updates between services.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -73,14 +72,14 @@ class RedisConfigStore:
             config = await store.get_config("native-tools")
     """
 
-    def __init__(self, options: Optional[RedisConfigStoreOptions] = None):
+    def __init__(self, options: RedisConfigStoreOptions | None = None):
         """Initialize the Redis config store.
 
         Args:
             options: Configuration options. Uses defaults from environment if not provided.
         """
         self._options = options or RedisConfigStoreOptions()
-        self._client: Optional[Any] = None  # redis.asyncio.Redis
+        self._client: Any | None = None  # redis.asyncio.Redis
         self._connected = False
         self._instance_id = self._options.instance_id
 
@@ -166,7 +165,7 @@ class RedisConfigStore:
             version = await self._client.incr(version_key)
 
             # Build payload
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             payload = ServiceConfigPayload(
                 version=version,
                 updated_at=now,
@@ -195,7 +194,7 @@ class RedisConfigStore:
             logger.error(f"Failed to publish config for {service}: {e}")
             return False
 
-    async def get_config(self, service: str) -> Optional[ServiceConfigPayload]:
+    async def get_config(self, service: str) -> ServiceConfigPayload | None:
         """Read configuration for a service from Redis.
 
         Args:
@@ -218,7 +217,7 @@ class RedisConfigStore:
             logger.error(f"Failed to get config for {service}: {e}")
             return None
 
-    async def get_mode(self) -> Optional[str]:
+    async def get_mode(self) -> str | None:
         """Get current mode from Redis.
 
         Returns:

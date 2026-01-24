@@ -13,8 +13,7 @@ With a local Redis:
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Generator
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -32,7 +31,7 @@ def redis_url() -> str:
 @pytest.fixture
 def test_prefix() -> str:
     """Use a unique prefix for test isolation."""
-    return f"test:config:{datetime.now(timezone.utc).timestamp()}"
+    return f"test:config:{datetime.now(UTC).timestamp()}"
 
 
 @pytest.fixture

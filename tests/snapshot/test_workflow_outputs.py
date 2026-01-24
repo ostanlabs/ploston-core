@@ -10,7 +10,7 @@ from syrupy.assertion import SnapshotAssertion
 @pytest.mark.snapshot
 class TestWorkflowOutputSnapshots:
     """Snapshot tests for workflow output formats."""
-    
+
     def test_snap_001_simple_workflow_output(self, snapshot: SnapshotAssertion):
         """SNAP-001: Simple workflow output format."""
         output = {
@@ -20,9 +20,9 @@ class TestWorkflowOutputSnapshots:
             "result": 42,
             "steps_executed": 1
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_002_multi_step_workflow_output(self, snapshot: SnapshotAssertion):
         """SNAP-002: Multi-step workflow output format."""
         output = {
@@ -37,9 +37,9 @@ class TestWorkflowOutputSnapshots:
                 "step3": {"output": 100}
             }
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_003_workflow_with_inputs_output(self, snapshot: SnapshotAssertion):
         """SNAP-003: Workflow with inputs output format."""
         output = {
@@ -52,9 +52,9 @@ class TestWorkflowOutputSnapshots:
             },
             "result": "Hello, Alice! Count: 5"
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_004_workflow_error_output(self, snapshot: SnapshotAssertion):
         """SNAP-004: Workflow error output format."""
         output = {
@@ -70,9 +70,9 @@ class TestWorkflowOutputSnapshots:
             "steps_executed": 1,
             "steps_failed": 1
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_005_workflow_with_tool_output(self, snapshot: SnapshotAssertion):
         """SNAP-005: Workflow with tool call output format."""
         output = {
@@ -88,14 +88,14 @@ class TestWorkflowOutputSnapshots:
                 }
             ]
         }
-        
+
         assert output == snapshot
 
 
 @pytest.mark.snapshot
 class TestValidationOutputSnapshots:
     """Snapshot tests for validation output formats."""
-    
+
     def test_snap_010_validation_success_output(self, snapshot: SnapshotAssertion):
         """SNAP-010: Validation success output format."""
         output = {
@@ -105,9 +105,9 @@ class TestValidationOutputSnapshots:
             "warnings": [],
             "errors": []
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_011_validation_error_output(self, snapshot: SnapshotAssertion):
         """SNAP-011: Validation error output format."""
         output = {
@@ -128,9 +128,9 @@ class TestValidationOutputSnapshots:
                 }
             ]
         }
-        
+
         assert output == snapshot
-    
+
     def test_snap_012_validation_warning_output(self, snapshot: SnapshotAssertion):
         """SNAP-012: Validation with warnings output format."""
         output = {
@@ -146,14 +146,14 @@ class TestValidationOutputSnapshots:
             ],
             "errors": []
         }
-        
+
         assert output == snapshot
 
 
 @pytest.mark.snapshot
 class TestMCPMessageSnapshots:
     """Snapshot tests for MCP message formats."""
-    
+
     def test_snap_020_mcp_initialize_request(self, snapshot: SnapshotAssertion):
         """SNAP-020: MCP initialize request format."""
         message = {
@@ -172,9 +172,9 @@ class TestMCPMessageSnapshots:
                 }
             }
         }
-        
+
         assert message == snapshot
-    
+
     def test_snap_021_mcp_initialize_response(self, snapshot: SnapshotAssertion):
         """SNAP-021: MCP initialize response format."""
         message = {
@@ -191,9 +191,9 @@ class TestMCPMessageSnapshots:
                 }
             }
         }
-        
+
         assert message == snapshot
-    
+
     def test_snap_022_mcp_tools_list_response(self, snapshot: SnapshotAssertion):
         """SNAP-022: MCP tools/list response format."""
         message = {
@@ -218,9 +218,9 @@ class TestMCPMessageSnapshots:
                 ]
             }
         }
-        
+
         assert message == snapshot
-    
+
     def test_snap_023_mcp_tool_call_request(self, snapshot: SnapshotAssertion):
         """SNAP-023: MCP tools/call request format."""
         message = {
@@ -234,9 +234,9 @@ class TestMCPMessageSnapshots:
                 }
             }
         }
-        
+
         assert message == snapshot
-    
+
     def test_snap_024_mcp_tool_call_response(self, snapshot: SnapshotAssertion):
         """SNAP-024: MCP tools/call response format."""
         message = {
@@ -251,9 +251,9 @@ class TestMCPMessageSnapshots:
                 ]
             }
         }
-        
+
         assert message == snapshot
-    
+
     def test_snap_025_mcp_error_response(self, snapshot: SnapshotAssertion):
         """SNAP-025: MCP error response format."""
         message = {
@@ -267,14 +267,14 @@ class TestMCPMessageSnapshots:
                 }
             }
         }
-        
+
         assert message == snapshot
 
 
 @pytest.mark.snapshot
 class TestConfigOutputSnapshots:
     """Snapshot tests for configuration output formats."""
-    
+
     def test_snap_030_default_config_output(self, snapshot: SnapshotAssertion):
         """SNAP-030: Default configuration output format."""
         config = {
@@ -292,9 +292,9 @@ class TestConfigOutputSnapshots:
                 "allowed_modules": ["math", "json", "datetime"]
             }
         }
-        
+
         assert config == snapshot
-    
+
     def test_snap_031_custom_config_output(self, snapshot: SnapshotAssertion):
         """SNAP-031: Custom configuration output format."""
         config = {
@@ -318,5 +318,5 @@ class TestConfigOutputSnapshots:
                 "format": "json"
             }
         }
-        
+
         assert config == snapshot
