@@ -102,7 +102,7 @@ async def get_tool(
 ) -> ToolDetail:
     """Get tool schema."""
     registry = request.app.state.tool_registry
-    tool = registry.get_tool(tool_name)
+    tool = registry.get(tool_name)
 
     if not tool:
         raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
