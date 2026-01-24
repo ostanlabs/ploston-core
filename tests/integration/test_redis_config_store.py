@@ -1,0 +1,333 @@
+"""Integration tests for Redis Config Store.
+
+These tests require a running Redis instance. They are skipped if Redis
+is not available.
+
+To run these tests:
+    pytest packages/ploston-core/tests/integration/test_redis_config_store.py -v
+
+With a local Redis:
+    docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+"""
+
+import asyncio
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any, Generator
+from unittest.mock import patch
+
+import pytest
+
+# Skip all tests if redis is not installed
+pytest.importorskip("redis")
+
+
+@pytest.fixture
+def redis_url() -> str:
+    """Get Redis URL from environment or use default."""
+    return os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+
+@pytest.fixture
+def test_prefix() -> str:
+    """Use a unique prefix for test isolation."""
+    return f"test:config:{datetime.now(timezone.utc).timestamp()}"
+
+
+@pytest.fixture
+async def redis_client(redis_url: str):
+    """Create a Redis client for test setup/teardown."""
+    import redis.asyncio as redis
+
+    client = redis.from_url(redis_url, decode_responses=True)
+    try:
+        await client.ping()
+        yield client
+    except Exception:
+        pytest.skip("Redis not available")
+    finally:
+        await client.aclose()
+
+
+@pytest.fixture
+async def config_store(redis_url: str, test_prefix: str):
+    """Create a RedisConfigStore for testing."""
+    from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+    options = RedisConfigStoreOptions(
+        redis_url=redis_url,
+        key_prefix=test_prefix,
+        channel=f"{test_prefix}:changed",
+    )
+    store = RedisConfigStore(options)
+
+    connected = await store.connect()
+    if not connected:
+        pytest.skip("Could not connect to Redis")
+
+    yield store
+
+    await store.close()
+
+
+@pytest.fixture
+async def cleanup_keys(redis_client, test_prefix: str):
+    """Clean up test keys after test."""
+    yield
+    # Clean up all keys with test prefix
+    keys = await redis_client.keys(f"{test_prefix}:*")
+    if keys:
+        await redis_client.delete(*keys)
+
+
+class TestRedisConfigStoreConnection:
+    """Tests for Redis connection handling."""
+
+    @pytest.mark.asyncio
+    async def test_connect_success(self, redis_url: str, test_prefix: str):
+        """Test successful connection to Redis."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+        )
+        store = RedisConfigStore(options)
+
+        connected = await store.connect()
+        assert connected is True
+        assert store.connected is True
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_bad_url(self, test_prefix: str):
+        """Test connection failure with bad URL."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        options = RedisConfigStoreOptions(
+            redis_url="redis://nonexistent:6379/0",
+            key_prefix=test_prefix,
+        )
+        store = RedisConfigStore(options)
+
+        # Should fail quickly
+        connected = await store.connect()
+        assert connected is False
+        assert store.connected is False
+
+
+class TestRedisConfigStorePublish:
+    """Tests for config publishing."""
+
+    @pytest.mark.asyncio
+    async def test_publish_config(self, config_store, cleanup_keys):
+        """Test publishing a config."""
+        config = {
+            "kafka": {"enabled": True, "bootstrap_servers": "localhost:9092"},
+            "firecrawl": {"enabled": False},
+        }
+
+        success = await config_store.publish_config("test-service", config)
+        assert success is True
+
+    @pytest.mark.asyncio
+    async def test_publish_increments_version(self, config_store, cleanup_keys):
+        """Test that publishing increments version."""
+        config1 = {"value": 1}
+        config2 = {"value": 2}
+
+        await config_store.publish_config("test-service", config1)
+        payload1 = await config_store.get_config("test-service")
+
+        await config_store.publish_config("test-service", config2)
+        payload2 = await config_store.get_config("test-service")
+
+        assert payload1 is not None
+        assert payload2 is not None
+        assert payload2.version == payload1.version + 1
+
+    @pytest.mark.asyncio
+    async def test_get_config_returns_payload(self, config_store, cleanup_keys):
+        """Test getting config returns full payload."""
+        config = {"key": "value", "nested": {"a": 1}}
+
+        await config_store.publish_config("test-service", config)
+        payload = await config_store.get_config("test-service")
+
+        assert payload is not None
+        assert payload.config == config
+        assert payload.version >= 1
+        assert payload.updated_by.startswith("ploston")  # May include PID
+        assert payload.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_config(self, config_store, cleanup_keys):
+        """Test getting nonexistent config returns None."""
+        payload = await config_store.get_config("nonexistent-service")
+        assert payload is None
+
+
+class TestRedisConfigStoreMode:
+    """Tests for mode persistence."""
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_mode(self, config_store, cleanup_keys):
+        """Test setting and getting mode."""
+        await config_store.set_mode("CONFIGURATION")
+        mode = await config_store.get_mode()
+        assert mode == "CONFIGURATION"
+
+        await config_store.set_mode("RUNNING")
+        mode = await config_store.get_mode()
+        assert mode == "RUNNING"
+
+    @pytest.mark.asyncio
+    async def test_get_mode_not_set(self, redis_url: str, test_prefix: str, cleanup_keys):
+        """Test getting mode when not set returns None."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        # Use a fresh prefix to ensure mode is not set
+        fresh_prefix = f"{test_prefix}:fresh"
+        options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=fresh_prefix,
+        )
+        store = RedisConfigStore(options)
+        await store.connect()
+
+        mode = await store.get_mode()
+        assert mode is None
+
+        await store.close()
+
+
+class TestRedisConfigStorePubSub:
+    """Tests for pub/sub notifications."""
+
+    @pytest.mark.asyncio
+    async def test_publish_sends_notification(
+        self, config_store, redis_client, test_prefix: str, cleanup_keys
+    ):
+        """Test that publishing sends a notification."""
+        channel = f"{test_prefix}:changed"
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel)
+
+        # Wait for subscription to be ready
+        await asyncio.sleep(0.1)
+
+        # Publish config
+        await config_store.publish_config("test-service", {"key": "value"})
+
+        # Wait for notification
+        message = None
+        for _ in range(10):
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+            if msg and msg["type"] == "message":
+                message = msg
+                break
+
+        await pubsub.unsubscribe()
+        await pubsub.aclose()
+
+        assert message is not None
+        data = json.loads(message["data"])
+        assert data["service"] == "test-service"
+        assert "version" in data
+        assert "updated_at" in data  # Field is updated_at, not timestamp
+
+
+class TestConfigPropagation:
+    """End-to-end tests for config propagation."""
+
+    @pytest.mark.asyncio
+    async def test_config_propagation_flow(self, redis_url: str, test_prefix: str, cleanup_keys):
+        """Test full config propagation from ploston to native-tools."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        # Simulate ploston publishing config
+        ploston_options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+            channel=f"{test_prefix}:changed",
+        )
+        ploston_store = RedisConfigStore(ploston_options)
+        await ploston_store.connect()
+
+        # Publish ploston config
+        ploston_config = {
+            "tools": {
+                "native_tools": {
+                    "kafka": {"enabled": True, "bootstrap_servers": "kafka:9092"},
+                    "firecrawl": {"enabled": True, "base_url": "http://firecrawl:3002"},
+                }
+            }
+        }
+        await ploston_store.publish_config("ploston", ploston_config)
+
+        # Build and publish native-tools config
+        from ploston_core.config.service_configs import build_native_tools_config
+
+        native_config = build_native_tools_config(ploston_config)
+        await ploston_store.publish_config("native-tools", native_config)
+
+        # Verify native-tools can read the config
+        native_payload = await ploston_store.get_config("native-tools")
+        assert native_payload is not None
+        assert native_payload.config.get("kafka", {}).get("enabled") is True
+        assert native_payload.config.get("kafka", {}).get("bootstrap_servers") == "kafka:9092"
+
+        await ploston_store.close()
+
+
+class TestEnvVarResolution:
+    """Tests for environment variable resolution."""
+
+    def test_resolve_env_var_simple(self):
+        """Test resolving simple env var."""
+        from ploston.native_tools.config_watcher import resolve_env_vars
+
+        with patch.dict(os.environ, {"TEST_VAR": "test_value"}):
+            result = resolve_env_vars("${TEST_VAR}")
+            assert result == "test_value"
+
+    def test_resolve_env_var_with_default(self):
+        """Test resolving env var with default."""
+        from ploston.native_tools.config_watcher import resolve_env_vars
+
+        # Unset var uses default
+        result = resolve_env_vars("${UNSET_VAR:-default_value}")
+        assert result == "default_value"
+
+        # Set var ignores default
+        with patch.dict(os.environ, {"SET_VAR": "actual_value"}):
+            result = resolve_env_vars("${SET_VAR:-default_value}")
+            assert result == "actual_value"
+
+    def test_resolve_env_var_in_string(self):
+        """Test resolving env var embedded in string."""
+        from ploston.native_tools.config_watcher import resolve_env_vars
+
+        with patch.dict(os.environ, {"HOST": "localhost", "PORT": "9092"}):
+            result = resolve_env_vars("${HOST}:${PORT}")
+            assert result == "localhost:9092"
+
+    def test_resolve_config_env_vars_recursive(self):
+        """Test resolving env vars in nested config."""
+        from ploston.native_tools.config_watcher import resolve_config_env_vars
+
+        with patch.dict(os.environ, {"API_KEY": "secret123", "HOST": "example.com"}):
+            config = {
+                "api_key": "${API_KEY}",
+                "nested": {
+                    "url": "https://${HOST}/api",
+                    "list": ["${HOST}", "other"],
+                },
+            }
+            result = resolve_config_env_vars(config)
+
+            assert result["api_key"] == "secret123"
+            assert result["nested"]["url"] == "https://example.com/api"
+            assert result["nested"]["list"] == ["example.com", "other"]
