@@ -9,6 +9,7 @@ from ploston_core.errors import create_error
 from ploston_core.logging import AELLogger
 from ploston_core.sandbox import SandboxContext
 from ploston_core.telemetry import (
+    TokenEstimator,
     instrument_step,
     instrument_workflow,
     record_tool_result,
@@ -55,6 +56,7 @@ class WorkflowEngine:
         logger: AELLogger | None = None,
         error_factory: Any = None,  # ErrorFactory
         plugin_registry: "PluginRegistry | None" = None,
+        token_estimator: TokenEstimator | None = None,
     ):
         """Initialize workflow engine.
 
@@ -66,6 +68,7 @@ class WorkflowEngine:
             logger: Optional logger
             error_factory: Optional error factory
             plugin_registry: Optional plugin registry for hook execution
+            token_estimator: Optional token estimator for savings metrics
         """
         self._workflow_registry = workflow_registry
         self._tool_invoker = tool_invoker
@@ -74,6 +77,7 @@ class WorkflowEngine:
         self._logger = logger
         self._error_factory = error_factory
         self._plugin_registry = plugin_registry
+        self._token_estimator = token_estimator
 
     async def execute(
         self,
@@ -253,6 +257,10 @@ class WorkflowEngine:
                         "duration_ms": duration_ms,
                     },
                 )
+
+            # Record token savings metrics (T-397)
+            if self._token_estimator and status == ExecutionStatus.COMPLETED:
+                self._token_estimator.record_workflow_savings(result)
 
             return result
 
