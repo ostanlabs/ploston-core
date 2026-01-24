@@ -22,25 +22,30 @@ from ploston_core.errors import AELError
 # =============================================================================
 
 # Valid env var names
-valid_env_var_name = st.from_regex(r'^[A-Z][A-Z0-9_]{0,20}$', fullmatch=True)
+valid_env_var_name = st.from_regex(r"^[A-Z][A-Z0-9_]{0,20}$", fullmatch=True)
 
 # Valid env var values (no special chars that break shell)
-valid_env_var_value = st.from_regex(r'^[a-zA-Z0-9_\-./]{1,50}$', fullmatch=True)
+valid_env_var_value = st.from_regex(r"^[a-zA-Z0-9_\-./]{1,50}$", fullmatch=True)
 
 # Valid config keys
-valid_config_key = st.from_regex(r'^[a-z][a-z0-9_]{0,15}$', fullmatch=True)
+valid_config_key = st.from_regex(r"^[a-z][a-z0-9_]{0,15}$", fullmatch=True)
 
 # Simple config values
 simple_values = st.one_of(
     st.booleans(),
     st.integers(min_value=-1000, max_value=10000),
-    st.text(alphabet=st.characters(whitelist_categories=('L', 'N'), whitelist_characters='_-'), min_size=1, max_size=50),
+    st.text(
+        alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+        min_size=1,
+        max_size=50,
+    ),
 )
 
 
 # =============================================================================
 # Property Tests for Environment Variable Resolution
 # =============================================================================
+
 
 @pytest.mark.property
 class TestEnvVarResolution:
@@ -93,11 +98,13 @@ class TestEnvVarResolution:
                 resolve_env_vars(f"${{{var_name}:?Custom error message}}")
             assert exc_info.value.code == "CONFIG_INVALID"
 
-    @given(st.text(alphabet=st.characters(whitelist_categories=('L', 'N')), min_size=1, max_size=50))
+    @given(
+        st.text(alphabet=st.characters(whitelist_categories=("L", "N")), min_size=1, max_size=50)
+    )
     @settings(max_examples=30)
     def test_string_without_env_vars_unchanged(self, text):
         """Strings without env var syntax should be unchanged."""
-        assume('$' not in text)
+        assume("$" not in text)
         result = resolve_env_vars(text)
         assert result == text
 
@@ -105,6 +112,7 @@ class TestEnvVarResolution:
 # =============================================================================
 # Property Tests for Recursive Env Var Resolution
 # =============================================================================
+
 
 @pytest.mark.property
 class TestRecursiveEnvVarResolution:
@@ -115,11 +123,7 @@ class TestRecursiveEnvVarResolution:
     def test_nested_dict_resolution(self, var_name, var_value):
         """Env vars in nested dicts should be resolved."""
         with patch.dict(os.environ, {var_name: var_value}):
-            data = {
-                "level1": {
-                    "level2": f"${{{var_name}}}"
-                }
-            }
+            data = {"level1": {"level2": f"${{{var_name}}}"}}
             result = _resolve_env_vars_recursive(data)
             assert result["level1"]["level2"] == var_value
 
@@ -152,6 +156,7 @@ class TestRecursiveEnvVarResolution:
 # =============================================================================
 # Property Tests for Config Validation
 # =============================================================================
+
 
 @pytest.mark.property
 class TestConfigValidation:
@@ -194,10 +199,21 @@ class TestConfigValidation:
     @settings(max_examples=30)
     def test_unknown_keys_generate_warnings(self, unknown_key):
         """Unknown top-level keys should generate warnings."""
-        assume(unknown_key not in {
-            "server", "mcp", "tools", "workflows", "execution",
-            "python_exec", "logging", "plugins", "security", "telemetry"
-        })
+        assume(
+            unknown_key
+            not in {
+                "server",
+                "mcp",
+                "tools",
+                "workflows",
+                "execution",
+                "python_exec",
+                "logging",
+                "plugins",
+                "security",
+                "telemetry",
+            }
+        )
 
         loader = ConfigLoader()
         data = {unknown_key: "some_value"}
@@ -210,6 +226,7 @@ class TestConfigValidation:
 # =============================================================================
 # Property Tests for Config Defaults
 # =============================================================================
+
 
 @pytest.mark.property
 class TestConfigDefaults:
@@ -240,20 +257,14 @@ class TestConfigDefaults:
         assert config.server.host == "0.0.0.0"
         assert config.execution.default_timeout == 300
 
-    @given(
-        st.integers(min_value=1, max_value=1000),
-        st.integers(min_value=1, max_value=100)
-    )
+    @given(st.integers(min_value=1, max_value=1000), st.integers(min_value=1, max_value=100))
     @settings(max_examples=30)
     def test_multiple_overrides(self, timeout, max_steps):
         """Multiple config overrides should all be applied."""
         loader = ConfigLoader()
-        config = loader.load_from_dict({
-            "execution": {
-                "default_timeout": timeout,
-                "max_steps": max_steps
-            }
-        })
+        config = loader.load_from_dict(
+            {"execution": {"default_timeout": timeout, "max_steps": max_steps}}
+        )
 
         assert config.execution.default_timeout == timeout
         assert config.execution.max_steps == max_steps

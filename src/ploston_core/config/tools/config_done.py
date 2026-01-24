@@ -122,11 +122,13 @@ async def handle_config_done(
         except Exception as e:
             logger.error(f"Failed to publish config to Redis: {e}")
             # Don't fail the whole operation - file was written successfully
-            errors.append({
-                "path": "(redis)",
-                "error": f"Failed to publish to Redis: {e}",
-                "suggestion": "Config was written to file but Redis publish failed",
-            })
+            errors.append(
+                {
+                    "path": "(redis)",
+                    "error": f"Failed to publish to Redis: {e}",
+                    "suggestion": "Config was written to file but Redis publish failed",
+                }
+            )
 
     # Step 6: Switch to running mode
     if mode_manager:

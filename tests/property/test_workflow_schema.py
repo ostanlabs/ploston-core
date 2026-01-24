@@ -16,30 +16,33 @@ from ploston_core.workflow.parser import parse_workflow_yaml
 # =============================================================================
 
 # Strategy for valid workflow names (alphanumeric, starting with letter)
-workflow_names = st.from_regex(r'^[a-zA-Z][a-zA-Z0-9_-]{0,30}$', fullmatch=True)
+workflow_names = st.from_regex(r"^[a-zA-Z][a-zA-Z0-9_-]{0,30}$", fullmatch=True)
 
 # Strategy for valid step IDs
-step_ids = st.from_regex(r'^[a-zA-Z][a-zA-Z0-9_]{0,20}$', fullmatch=True)
+step_ids = st.from_regex(r"^[a-zA-Z][a-zA-Z0-9_]{0,20}$", fullmatch=True)
 
 # Strategy for simple safe code blocks
-safe_code = st.sampled_from([
-    'result = 42',
-    'result = "hello"',
-    'result = [1, 2, 3]',
-    'result = {"key": "value"}',
-    'import json\nresult = json.dumps({"a": 1})',
-    'import math\nresult = math.sqrt(16)',
-    'result = len("test")',
-    'result = str(123)',
-])
+safe_code = st.sampled_from(
+    [
+        "result = 42",
+        'result = "hello"',
+        "result = [1, 2, 3]",
+        'result = {"key": "value"}',
+        'import json\nresult = json.dumps({"a": 1})',
+        "import math\nresult = math.sqrt(16)",
+        'result = len("test")',
+        "result = str(123)",
+    ]
+)
 
 # Strategy for input types
-input_types = st.sampled_from(['string', 'integer', 'number', 'boolean', 'array', 'object'])
+input_types = st.sampled_from(["string", "integer", "number", "boolean", "array", "object"])
 
 
 # =============================================================================
 # Test Classes
 # =============================================================================
+
 
 @pytest.mark.property
 class TestWorkflowNameValidation:
@@ -60,14 +63,16 @@ steps:
         workflow = parse_workflow_yaml(workflow_yaml)
         assert workflow.name == name
 
-    @given(name=st.text(
-        alphabet=st.characters(
-            whitelist_categories=('L', 'N'),  # Letters and numbers only
-            whitelist_characters='_-'
-        ),
-        min_size=1,
-        max_size=50
-    ))
+    @given(
+        name=st.text(
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"),  # Letters and numbers only
+                whitelist_characters="_-",
+            ),
+            min_size=1,
+            max_size=50,
+        )
+    )
     @settings(max_examples=100)
     def test_names_either_valid_or_rejected(self, name):
         """Any alphanumeric string should either be valid or raise an error."""
@@ -98,7 +103,7 @@ class TestStepDependencies:
         for i, name in enumerate(step_names):
             step = f'  - id: {name}\n    code: result = "{name}"'
             if i > 0:
-                step += f'\n    depends_on:\n      - {step_names[i-1]}'
+                step += f"\n    depends_on:\n      - {step_names[i - 1]}"
             steps_yaml.append(step)
 
         workflow_yaml = f"""
@@ -115,8 +120,9 @@ steps:
             step = next(s for s in parsed.steps if s.id == step_id)
             if step.depends_on:
                 for dep in step.depends_on:
-                    assert execution_order.index(dep) < i, \
+                    assert execution_order.index(dep) < i, (
                         f"Dependency {dep} should come before {step_id}"
+                    )
 
     @given(st.lists(step_ids, min_size=2, max_size=4, unique=True))
     @settings(max_examples=30)
@@ -138,7 +144,7 @@ steps:
 """
         parsed = parse_workflow_yaml(workflow_yaml)
 
-        with pytest.raises(ValueError, match='[Cc]ircular'):
+        with pytest.raises(ValueError, match="[Cc]ircular"):
             parsed.get_execution_order()
 
 
@@ -151,7 +157,7 @@ class TestYAMLParsing:
     def test_arbitrary_bytes_handled(self, data):
         """Arbitrary bytes should either parse or raise clear error."""
         try:
-            text = data.decode('utf-8', errors='replace')
+            text = data.decode("utf-8", errors="replace")
             parse_workflow_yaml(text)
         except (AELError, yaml.YAMLError, ValueError, TypeError):
             pass  # Expected for invalid input

@@ -3,7 +3,6 @@
 Tests that validate documentation accuracy and code examples.
 """
 
-
 import pytest
 import yaml
 
@@ -16,123 +15,96 @@ class TestWorkflowExamples:
         """DOC-001: Simple workflow example is valid."""
         # Example from documentation
         workflow = {
-            'name': 'hello-world',
-            'version': '1.0',
-            'steps': [
-                {
-                    'id': 'greet',
-                    'code': 'result = "Hello, World!"'
-                }
-            ],
-            'output': '{{ steps.greet.output }}'
+            "name": "hello-world",
+            "version": "1.0",
+            "steps": [{"id": "greet", "code": 'result = "Hello, World!"'}],
+            "output": "{{ steps.greet.output }}",
         }
 
         # Validate structure
-        assert 'name' in workflow
-        assert 'version' in workflow
-        assert 'steps' in workflow
-        assert len(workflow['steps']) > 0
-        assert 'id' in workflow['steps'][0]
+        assert "name" in workflow
+        assert "version" in workflow
+        assert "steps" in workflow
+        assert len(workflow["steps"]) > 0
+        assert "id" in workflow["steps"][0]
 
     def test_doc_002_workflow_with_inputs_example(self):
         """DOC-002: Workflow with inputs example is valid."""
         workflow = {
-            'name': 'greeting',
-            'version': '1.0',
-            'inputs': [
-                {'name': {'type': 'string', 'default': 'World'}}
-            ],
-            'steps': [
-                {
-                    'id': 'greet',
-                    'code': 'result = f"Hello, {{ inputs.name }}!"'
-                }
-            ],
-            'output': '{{ steps.greet.output }}'
+            "name": "greeting",
+            "version": "1.0",
+            "inputs": [{"name": {"type": "string", "default": "World"}}],
+            "steps": [{"id": "greet", "code": 'result = f"Hello, {{ inputs.name }}!"'}],
+            "output": "{{ steps.greet.output }}",
         }
 
-        assert 'inputs' in workflow
-        assert len(workflow['inputs']) > 0
+        assert "inputs" in workflow
+        assert len(workflow["inputs"]) > 0
 
     def test_doc_003_multi_step_workflow_example(self):
         """DOC-003: Multi-step workflow example is valid."""
         workflow = {
-            'name': 'calculator',
-            'version': '1.0',
-            'steps': [
+            "name": "calculator",
+            "version": "1.0",
+            "steps": [
+                {"id": "step1", "code": "result = 10"},
                 {
-                    'id': 'step1',
-                    'code': 'result = 10'
+                    "id": "step2",
+                    "depends_on": ["step1"],
+                    "code": "result = {{ steps.step1.output }} * 2",
                 },
                 {
-                    'id': 'step2',
-                    'depends_on': ['step1'],
-                    'code': 'result = {{ steps.step1.output }} * 2'
+                    "id": "step3",
+                    "depends_on": ["step2"],
+                    "code": "result = {{ steps.step2.output }} + 5",
                 },
-                {
-                    'id': 'step3',
-                    'depends_on': ['step2'],
-                    'code': 'result = {{ steps.step2.output }} + 5'
-                }
             ],
-            'output': '{{ steps.step3.output }}'
+            "output": "{{ steps.step3.output }}",
         }
 
-        assert len(workflow['steps']) == 3
-        assert workflow['steps'][1].get('depends_on') == ['step1']
+        assert len(workflow["steps"]) == 3
+        assert workflow["steps"][1].get("depends_on") == ["step1"]
 
     def test_doc_004_conditional_workflow_example(self):
         """DOC-004: Conditional workflow example is valid."""
         workflow = {
-            'name': 'conditional',
-            'version': '1.0',
-            'inputs': [
-                {'value': {'type': 'integer', 'default': 10}}
-            ],
-            'steps': [
+            "name": "conditional",
+            "version": "1.0",
+            "inputs": [{"value": {"type": "integer", "default": 10}}],
+            "steps": [
+                {"id": "check", "code": "result = {{ inputs.value }} > 5"},
+                {"id": "high", "when": "{{ steps.check.output }}", "code": 'result = "High value"'},
                 {
-                    'id': 'check',
-                    'code': 'result = {{ inputs.value }} > 5'
+                    "id": "low",
+                    "when": "not {{ steps.check.output }}",
+                    "code": 'result = "Low value"',
                 },
-                {
-                    'id': 'high',
-                    'when': '{{ steps.check.output }}',
-                    'code': 'result = "High value"'
-                },
-                {
-                    'id': 'low',
-                    'when': 'not {{ steps.check.output }}',
-                    'code': 'result = "Low value"'
-                }
             ],
-            'output': '{{ steps.high.output or steps.low.output }}'
+            "output": "{{ steps.high.output or steps.low.output }}",
         }
 
-        assert 'when' in workflow['steps'][1]
-        assert 'when' in workflow['steps'][2]
+        assert "when" in workflow["steps"][1]
+        assert "when" in workflow["steps"][2]
 
     def test_doc_005_loop_workflow_example(self):
         """DOC-005: Loop workflow example is valid."""
         workflow = {
-            'name': 'loop-example',
-            'version': '1.0',
-            'steps': [
+            "name": "loop-example",
+            "version": "1.0",
+            "steps": [
+                {"id": "generate", "code": "result = [1, 2, 3, 4, 5]"},
                 {
-                    'id': 'generate',
-                    'code': 'result = [1, 2, 3, 4, 5]'
+                    "id": "process",
+                    "foreach": "{{ steps.generate.output }}",
+                    "as": "item",
+                    "code": "result = {{ item }} * 2",
                 },
-                {
-                    'id': 'process',
-                    'foreach': '{{ steps.generate.output }}',
-                    'as': 'item',
-                    'code': 'result = {{ item }} * 2'
-                }
             ],
-            'output': '{{ steps.process.output }}'
+            "output": "{{ steps.process.output }}",
         }
 
-        assert 'foreach' in workflow['steps'][1]
-        assert 'as' in workflow['steps'][1]
+        assert "foreach" in workflow["steps"][1]
+        assert "as" in workflow["steps"][1]
 
 
 @pytest.mark.docs
@@ -141,42 +113,23 @@ class TestConfigExamples:
 
     def test_doc_010_basic_config_example(self):
         """DOC-010: Basic configuration example is valid."""
-        config = {
-            'server': {
-                'host': 'localhost',
-                'port': 8080
-            }
-        }
+        config = {"server": {"host": "localhost", "port": 8080}}
 
-        assert 'server' in config
-        assert config['server']['port'] == 8080
+        assert "server" in config
+        assert config["server"]["port"] == 8080
 
     def test_doc_011_full_config_example(self):
         """DOC-011: Full configuration example is valid."""
         config = {
-            'server': {
-                'host': '0.0.0.0',
-                'port': 8080,
-                'workers': 4
-            },
-            'execution': {
-                'max_steps': 100,
-                'step_timeout': 30,
-                'max_retries': 3
-            },
-            'security': {
-                'sandbox_enabled': True,
-                'allowed_modules': ['math', 'json', 'datetime']
-            },
-            'logging': {
-                'level': 'INFO',
-                'format': 'json'
-            }
+            "server": {"host": "0.0.0.0", "port": 8080, "workers": 4},
+            "execution": {"max_steps": 100, "step_timeout": 30, "max_retries": 3},
+            "security": {"sandbox_enabled": True, "allowed_modules": ["math", "json", "datetime"]},
+            "logging": {"level": "INFO", "format": "json"},
         }
 
-        assert 'execution' in config
-        assert 'security' in config
-        assert config['security']['sandbox_enabled'] is True
+        assert "execution" in config
+        assert "security" in config
+        assert config["security"]["sandbox_enabled"] is True
 
     def test_doc_012_env_config_example(self):
         """DOC-012: Environment variable configuration example."""
@@ -189,7 +142,7 @@ server:
 
         # Validate YAML is parseable
         config = yaml.safe_load(config_template)
-        assert 'server' in config
+        assert "server" in config
 
 
 @pytest.mark.docs
@@ -204,14 +157,9 @@ class TestMCPExamples:
             "method": "initialize",
             "params": {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {}
-                },
-                "clientInfo": {
-                    "name": "ploston",
-                    "version": "1.0.0"
-                }
-            }
+                "capabilities": {"tools": {}},
+                "clientInfo": {"name": "ploston", "version": "1.0.0"},
+            },
         }
 
         assert request["jsonrpc"] == "2.0"
@@ -220,11 +168,7 @@ class TestMCPExamples:
 
     def test_doc_021_mcp_tools_list_example(self):
         """DOC-021: MCP tools/list example is valid."""
-        request = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list"
-        }
+        request = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
 
         response = {
             "jsonrpc": "2.0",
@@ -236,14 +180,12 @@ class TestMCPExamples:
                         "description": "Echo the input",
                         "inputSchema": {
                             "type": "object",
-                            "properties": {
-                                "message": {"type": "string"}
-                            },
-                            "required": ["message"]
-                        }
+                            "properties": {"message": {"type": "string"}},
+                            "required": ["message"],
+                        },
                     }
                 ]
-            }
+            },
         }
 
         assert request["method"] == "tools/list"
@@ -255,25 +197,13 @@ class TestMCPExamples:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {
-                "name": "echo",
-                "arguments": {
-                    "message": "Hello!"
-                }
-            }
+            "params": {"name": "echo", "arguments": {"message": "Hello!"}},
         }
 
         response = {
             "jsonrpc": "2.0",
             "id": 3,
-            "result": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Hello!"
-                    }
-                ]
-            }
+            "result": {"content": [{"type": "text", "text": "Hello!"}]},
         }
 
         assert request["method"] == "tools/call"
@@ -337,12 +267,7 @@ class TestAPIExamples:
         endpoint = "/api/v1/workflows"
         _method = "GET"  # noqa: F841 - documenting API method
 
-        response = {
-            "workflows": [],
-            "total": 0,
-            "page": 1,
-            "page_size": 10
-        }
+        response = {"workflows": [], "total": 0, "page": 1, "page_size": 10}
 
         assert endpoint.startswith("/api/")
         assert "workflows" in response
@@ -356,17 +281,15 @@ class TestAPIExamples:
         request_body = {
             "name": "my-workflow",
             "version": "1.0",
-            "steps": [
-                {"id": "step1", "code": "result = 42"}
-            ],
-            "output": "{{ steps.step1.output }}"
+            "steps": [{"id": "step1", "code": "result = 42"}],
+            "output": "{{ steps.step1.output }}",
         }
 
         response = {
             "id": "wf-123",
             "name": "my-workflow",
             "version": "1.0",
-            "created_at": "2024-01-01T00:00:00Z"
+            "created_at": "2024-01-01T00:00:00Z",
         }
 
         assert "name" in request_body
@@ -379,16 +302,10 @@ class TestAPIExamples:
         _method = "POST"  # noqa: F841 - documenting API method
 
         _request_body = {  # noqa: F841 - documenting request format
-            "inputs": {
-                "name": "Alice"
-            }
+            "inputs": {"name": "Alice"}
         }
 
-        response = {
-            "execution_id": "exec-456",
-            "status": "completed",
-            "result": "Hello, Alice!"
-        }
+        response = {"execution_id": "exec-456", "status": "completed", "result": "Hello, Alice!"}
 
         assert "/execute" in endpoint
         assert "execution_id" in response
@@ -404,9 +321,7 @@ class TestErrorExamples:
             "error": "Validation Error",
             "code": "VALIDATION_ERROR",
             "message": "Workflow validation failed",
-            "details": [
-                {"field": "name", "message": "Required field is missing"}
-            ]
+            "details": [{"field": "name", "message": "Required field is missing"}],
         }
 
         assert "error" in error
@@ -420,7 +335,7 @@ class TestErrorExamples:
             "code": "EXECUTION_ERROR",
             "message": "Step 'step1' failed",
             "step_id": "step1",
-            "details": "Division by zero"
+            "details": "Division by zero",
         }
 
         assert error["code"] == "EXECUTION_ERROR"
@@ -431,7 +346,7 @@ class TestErrorExamples:
         error = {
             "error": "Not Found",
             "code": "NOT_FOUND",
-            "message": "Workflow 'wf-123' not found"
+            "message": "Workflow 'wf-123' not found",
         }
 
         assert error["code"] == "NOT_FOUND"

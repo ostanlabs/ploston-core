@@ -165,7 +165,9 @@ def pytest_configure(config):
 
     # Environment-specific markers
     config.addinivalue_line("markers", "docker_compose: Tests requiring docker-compose environment")
-    config.addinivalue_line("markers", "homelab: Tests requiring homelab deployment (never skip, fix failures)")
+    config.addinivalue_line(
+        "markers", "homelab: Tests requiring homelab deployment (never skip, fix failures)"
+    )
     config.addinivalue_line("markers", "slow: Slow tests (>10s)")
     config.addinivalue_line(
         "markers",

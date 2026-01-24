@@ -61,10 +61,15 @@ class TestSandboxBasicExecution:
         assert res.success
         assert res.result == value
 
-    @given(text=st.text(min_size=0, max_size=100, alphabet=st.characters(
-        whitelist_categories=('L', 'N', 'P', 'S'),
-        blacklist_characters='"\'\\`'
-    )))
+    @given(
+        text=st.text(
+            min_size=0,
+            max_size=100,
+            alphabet=st.characters(
+                whitelist_categories=("L", "N", "P", "S"), blacklist_characters="\"'\\`"
+            ),
+        )
+    )
     @settings(max_examples=50)
     def test_string_assignment(self, text):
         """String assignment should work correctly."""
@@ -84,7 +89,7 @@ class TestSandboxArithmetic:
 
     @given(
         a=st.integers(min_value=-1000, max_value=1000),
-        b=st.integers(min_value=-1000, max_value=1000)
+        b=st.integers(min_value=-1000, max_value=1000),
     )
     @settings(max_examples=50)
     def test_addition(self, a, b):
@@ -99,7 +104,7 @@ class TestSandboxArithmetic:
 
     @given(
         a=st.integers(min_value=-1000, max_value=1000),
-        b=st.integers(min_value=-1000, max_value=1000)
+        b=st.integers(min_value=-1000, max_value=1000),
     )
     @settings(max_examples=50)
     def test_multiplication(self, a, b):
@@ -114,7 +119,7 @@ class TestSandboxArithmetic:
 
     @given(
         a=st.integers(min_value=-1000, max_value=1000),
-        b=st.integers(min_value=1, max_value=1000)  # Avoid division by zero
+        b=st.integers(min_value=1, max_value=1000),  # Avoid division by zero
     )
     @settings(max_examples=50)
     def test_integer_division(self, a, b):
@@ -127,10 +132,7 @@ class TestSandboxArithmetic:
         assert res.success
         assert res.result == a // b
 
-    @given(
-        base=st.integers(min_value=1, max_value=10),
-        exp=st.integers(min_value=0, max_value=5)
-    )
+    @given(base=st.integers(min_value=1, max_value=10), exp=st.integers(min_value=0, max_value=5))
     @settings(max_examples=30)
     def test_exponentiation(self, base, exp):
         """Exponentiation should work correctly."""
@@ -140,7 +142,7 @@ class TestSandboxArithmetic:
         res = run_async(sandbox.execute(code))
 
         assert res.success
-        assert res.result == base ** exp
+        assert res.result == base**exp
 
 
 @pytest.mark.property
@@ -184,10 +186,13 @@ class TestSandboxDataStructures:
         assert res.result == len(items)
 
     @given(
-        keys=st.lists(st.text(min_size=1, max_size=10, alphabet=st.characters(
-            whitelist_categories=('L',)
-        )), min_size=1, max_size=5, unique=True),
-        values=st.lists(st.integers(min_value=-100, max_value=100), min_size=1, max_size=5)
+        keys=st.lists(
+            st.text(min_size=1, max_size=10, alphabet=st.characters(whitelist_categories=("L",))),
+            min_size=1,
+            max_size=5,
+            unique=True,
+        ),
+        values=st.lists(st.integers(min_value=-100, max_value=100), min_size=1, max_size=5),
     )
     @settings(max_examples=30)
     def test_dict_creation(self, keys, values):
@@ -206,4 +211,3 @@ class TestSandboxDataStructures:
         assert res.success
         expected = dict(zip(keys, values))
         assert res.result == expected
-

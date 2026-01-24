@@ -30,10 +30,10 @@ def make_validator() -> WorkflowValidator:
 # =============================================================================
 
 # Valid identifiers (step IDs, workflow names)
-valid_identifier = st.from_regex(r'^[a-z][a-z0-9_]{0,15}$', fullmatch=True)
+valid_identifier = st.from_regex(r"^[a-z][a-z0-9_]{0,15}$", fullmatch=True)
 
 # Valid version strings
-valid_version = st.from_regex(r'^[0-9]+\.[0-9]+(\.[0-9]+)?$', fullmatch=True)
+valid_version = st.from_regex(r"^[0-9]+\.[0-9]+(\.[0-9]+)?$", fullmatch=True)
 
 
 def make_code_step(step_id: str, depends_on: list[str] | None = None) -> StepDefinition:
@@ -63,6 +63,7 @@ def make_workflow(
 # Property Tests for Unique Step IDs
 # =============================================================================
 
+
 @pytest.mark.property
 class TestUniqueStepIds:
     """Property tests for unique step ID validation."""
@@ -81,10 +82,7 @@ class TestUniqueStepIds:
         duplicate_errors = [e for e in result.errors if "Duplicate step IDs" in e.message]
         assert len(duplicate_errors) == 0
 
-    @given(
-        valid_identifier,
-        st.integers(min_value=2, max_value=5)
-    )
+    @given(valid_identifier, st.integers(min_value=2, max_value=5))
     @settings(max_examples=50)
     def test_duplicate_step_ids_detected(self, step_id, count):
         """Workflows with duplicate step IDs should fail validation."""
@@ -102,7 +100,7 @@ class TestUniqueStepIds:
 
     @given(
         st.lists(valid_identifier, min_size=3, max_size=8, unique=True),
-        st.integers(min_value=0, max_value=2)
+        st.integers(min_value=0, max_value=2),
     )
     @settings(max_examples=50)
     def test_partial_duplicates_detected(self, unique_ids, dup_index):
@@ -129,6 +127,7 @@ class TestUniqueStepIds:
 # Property Tests for Depends On References
 # =============================================================================
 
+
 @pytest.mark.property
 class TestDependsOnReferences:
     """Property tests for depends_on reference validation."""
@@ -140,7 +139,7 @@ class TestDependsOnReferences:
         # Create a chain: step2 depends on step1, step3 depends on step2, etc.
         steps = []
         for i, sid in enumerate(step_ids):
-            depends_on = [step_ids[i-1]] if i > 0 else None
+            depends_on = [step_ids[i - 1]] if i > 0 else None
             steps.append(make_code_step(sid, depends_on=depends_on))
 
         workflow = make_workflow(steps=steps)
@@ -149,13 +148,12 @@ class TestDependsOnReferences:
         result = validator.validate(workflow, check_tools=False)
 
         # Should not have dependency not found errors
-        dep_errors = [e for e in result.errors if "not found" in e.message and "depends_on" in e.path]
+        dep_errors = [
+            e for e in result.errors if "not found" in e.message and "depends_on" in e.path
+        ]
         assert len(dep_errors) == 0
 
-    @given(
-        st.lists(valid_identifier, min_size=2, max_size=5, unique=True),
-        valid_identifier
-    )
+    @given(st.lists(valid_identifier, min_size=2, max_size=5, unique=True), valid_identifier)
     @settings(max_examples=50)
     def test_invalid_depends_on_detected(self, step_ids, invalid_ref):
         """Invalid depends_on references should be detected."""
@@ -188,7 +186,7 @@ class TestDependsOnReferences:
         ]
         # Add remaining steps depending on previous
         for i in range(3, len(step_ids)):
-            steps.append(make_code_step(step_ids[i], depends_on=[step_ids[i-1]]))
+            steps.append(make_code_step(step_ids[i], depends_on=[step_ids[i - 1]]))
 
         workflow = make_workflow(steps=steps)
 
@@ -203,6 +201,7 @@ class TestDependsOnReferences:
 # Property Tests for Circular Dependencies
 # =============================================================================
 
+
 @pytest.mark.property
 class TestCircularDependencies:
     """Property tests for circular dependency detection."""
@@ -214,7 +213,7 @@ class TestCircularDependencies:
         # Create a linear chain
         steps = []
         for i, sid in enumerate(step_ids):
-            depends_on = [step_ids[i-1]] if i > 0 else None
+            depends_on = [step_ids[i - 1]] if i > 0 else None
             steps.append(make_code_step(sid, depends_on=depends_on))
 
         workflow = make_workflow(steps=steps)
@@ -277,6 +276,7 @@ class TestCircularDependencies:
 # Property Tests for Required Fields
 # =============================================================================
 
+
 @pytest.mark.property
 class TestRequiredFields:
     """Property tests for required field validation."""
@@ -320,6 +320,7 @@ class TestRequiredFields:
 # =============================================================================
 # Property Tests for Tool XOR Code
 # =============================================================================
+
 
 @pytest.mark.property
 class TestToolXorCode:

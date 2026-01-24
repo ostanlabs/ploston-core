@@ -19,7 +19,6 @@ class TestBlockedImports:
         ("import subprocess", "subprocess module"),
         ("import shutil", "shutil module"),
         ("import pathlib", "pathlib module"),
-
         # Network access
         ("import socket", "socket module"),
         ("import http", "http module"),
@@ -27,32 +26,26 @@ class TestBlockedImports:
         ("import requests", "requests module"),
         ("import httpx", "httpx module"),
         ("import aiohttp", "aiohttp module"),
-
         # Code execution
         ("import ctypes", "ctypes module"),
         ("import cffi", "cffi module"),
         ("import importlib", "importlib module"),
-
         # Serialization (code execution risk)
         ("import pickle", "pickle module"),
         ("import marshal", "marshal module"),
         ("import shelve", "shelve module"),
-
         # Multiprocessing (sandbox escape)
         ("import multiprocessing", "multiprocessing module"),
         ("import threading", "threading module - direct"),
         ("import concurrent", "concurrent module"),
-
         # Introspection (sandbox inspection)
         ("import inspect", "inspect module"),
         ("import gc", "gc module"),
         ("import traceback", "traceback module"),
-
         # File operations
         ("import tempfile", "tempfile module"),
         ("import glob", "glob module"),
         ("import fnmatch", "fnmatch module"),
-
         # Indirect imports
         ("from os import path", "os.path"),
         ("from sys import modules", "sys.modules"),
@@ -77,8 +70,9 @@ class TestBlockedImports:
         assert result.error is not None
         # Error should mention import or blocked
         error_lower = result.error.lower()
-        assert "import" in error_lower or "blocked" in error_lower or "not allowed" in error_lower, \
-            f"Error should mention import blocking: {result.error}"
+        assert (
+            "import" in error_lower or "blocked" in error_lower or "not allowed" in error_lower
+        ), f"Error should mention import blocking: {result.error}"
 
 
 @pytest.mark.security
@@ -90,26 +84,20 @@ class TestBlockedBuiltins:
         ("eval('1+1')", "eval"),
         ("exec('x=1')", "exec"),
         ("compile('x=1', '', 'exec')", "compile"),
-
         # File access
         ("open('/etc/passwd')", "open"),
         ("open('/etc/passwd', 'r')", "open read"),
-
         # Dynamic import
         ("__import__('os')", "__import__"),
-
         # Namespace access
         ("globals()", "globals"),
         ("locals()", "locals"),
-
         # Attribute manipulation
         ("getattr(object, '__class__')", "getattr"),
         ("setattr(object, 'x', 1)", "setattr"),
         ("delattr(object, 'x')", "delattr"),
-
         # Debugging
         ("breakpoint()", "breakpoint"),
-
         # Input (hangs execution)
         ("input('prompt')", "input"),
     ]

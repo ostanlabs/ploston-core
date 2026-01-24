@@ -18,7 +18,7 @@ class TestWorkflowOutputSnapshots:
             "version": "1.0",
             "status": "completed",
             "result": 42,
-            "steps_executed": 1
+            "steps_executed": 1,
         }
 
         assert output == snapshot
@@ -34,8 +34,8 @@ class TestWorkflowOutputSnapshots:
             "step_results": {
                 "step1": {"output": 10},
                 "step2": {"output": 50},
-                "step3": {"output": 100}
-            }
+                "step3": {"output": 100},
+            },
         }
 
         assert output == snapshot
@@ -46,11 +46,8 @@ class TestWorkflowOutputSnapshots:
             "workflow_name": "with-inputs",
             "version": "1.0",
             "status": "completed",
-            "inputs_received": {
-                "name": "Alice",
-                "count": 5
-            },
-            "result": "Hello, Alice! Count: 5"
+            "inputs_received": {"name": "Alice", "count": 5},
+            "result": "Hello, Alice! Count: 5",
         }
 
         assert output == snapshot
@@ -65,10 +62,10 @@ class TestWorkflowOutputSnapshots:
                 "code": "EXECUTION_ERROR",
                 "message": "Step 'step2' failed",
                 "step_id": "step2",
-                "details": "Division by zero"
+                "details": "Division by zero",
             },
             "steps_executed": 1,
-            "steps_failed": 1
+            "steps_failed": 1,
         }
 
         assert output == snapshot
@@ -80,13 +77,7 @@ class TestWorkflowOutputSnapshots:
             "version": "1.0",
             "status": "completed",
             "result": "Tool result: success",
-            "tool_calls": [
-                {
-                    "tool": "echo",
-                    "input": {"message": "hello"},
-                    "output": "hello"
-                }
-            ]
+            "tool_calls": [{"tool": "echo", "input": {"message": "hello"}, "output": "hello"}],
         }
 
         assert output == snapshot
@@ -103,7 +94,7 @@ class TestValidationOutputSnapshots:
             "workflow_name": "test-workflow",
             "version": "1.0",
             "warnings": [],
-            "errors": []
+            "errors": [],
         }
 
         assert output == snapshot
@@ -119,14 +110,14 @@ class TestValidationOutputSnapshots:
                 {
                     "code": "MISSING_FIELD",
                     "message": "Required field 'name' is missing",
-                    "path": "$.name"
+                    "path": "$.name",
                 },
                 {
                     "code": "MISSING_FIELD",
                     "message": "Required field 'steps' is missing",
-                    "path": "$.steps"
-                }
-            ]
+                    "path": "$.steps",
+                },
+            ],
         }
 
         assert output == snapshot
@@ -141,10 +132,10 @@ class TestValidationOutputSnapshots:
                 {
                     "code": "DEPRECATED_FIELD",
                     "message": "Field 'timeout' is deprecated, use 'step_timeout' instead",
-                    "path": "$.timeout"
+                    "path": "$.timeout",
                 }
             ],
-            "errors": []
+            "errors": [],
         }
 
         assert output == snapshot
@@ -162,15 +153,9 @@ class TestMCPMessageSnapshots:
             "method": "initialize",
             "params": {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {},
-                    "prompts": {}
-                },
-                "clientInfo": {
-                    "name": "ploston",
-                    "version": "1.0.0"
-                }
-            }
+                "capabilities": {"tools": {}, "prompts": {}},
+                "clientInfo": {"name": "ploston", "version": "1.0.0"},
+            },
         }
 
         assert message == snapshot
@@ -182,14 +167,9 @@ class TestMCPMessageSnapshots:
             "id": 1,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {"listChanged": True}
-                },
-                "serverInfo": {
-                    "name": "ploston-server",
-                    "version": "1.0.0"
-                }
-            }
+                "capabilities": {"tools": {"listChanged": True}},
+                "serverInfo": {"name": "ploston-server", "version": "1.0.0"},
+            },
         }
 
         assert message == snapshot
@@ -207,16 +187,13 @@ class TestMCPMessageSnapshots:
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "message": {
-                                    "type": "string",
-                                    "description": "Message to echo"
-                                }
+                                "message": {"type": "string", "description": "Message to echo"}
                             },
-                            "required": ["message"]
-                        }
+                            "required": ["message"],
+                        },
                     }
                 ]
-            }
+            },
         }
 
         assert message == snapshot
@@ -227,12 +204,7 @@ class TestMCPMessageSnapshots:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {
-                "name": "echo",
-                "arguments": {
-                    "message": "Hello, World!"
-                }
-            }
+            "params": {"name": "echo", "arguments": {"message": "Hello, World!"}},
         }
 
         assert message == snapshot
@@ -242,14 +214,7 @@ class TestMCPMessageSnapshots:
         message = {
             "jsonrpc": "2.0",
             "id": 3,
-            "result": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Hello, World!"
-                    }
-                ]
-            }
+            "result": {"content": [{"type": "text", "text": "Hello, World!"}]},
         }
 
         assert message == snapshot
@@ -262,10 +227,8 @@ class TestMCPMessageSnapshots:
             "error": {
                 "code": -32600,
                 "message": "Invalid Request",
-                "data": {
-                    "details": "Missing required field 'method'"
-                }
-            }
+                "data": {"details": "Missing required field 'method'"},
+            },
         }
 
         assert message == snapshot
@@ -278,19 +241,9 @@ class TestConfigOutputSnapshots:
     def test_snap_030_default_config_output(self, snapshot: SnapshotAssertion):
         """SNAP-030: Default configuration output format."""
         config = {
-            "server": {
-                "host": "localhost",
-                "port": 8080
-            },
-            "execution": {
-                "max_steps": 100,
-                "step_timeout": 30,
-                "max_retries": 3
-            },
-            "security": {
-                "sandbox_enabled": True,
-                "allowed_modules": ["math", "json", "datetime"]
-            }
+            "server": {"host": "localhost", "port": 8080},
+            "execution": {"max_steps": 100, "step_timeout": 30, "max_retries": 3},
+            "security": {"sandbox_enabled": True, "allowed_modules": ["math", "json", "datetime"]},
         }
 
         assert config == snapshot
@@ -298,25 +251,18 @@ class TestConfigOutputSnapshots:
     def test_snap_031_custom_config_output(self, snapshot: SnapshotAssertion):
         """SNAP-031: Custom configuration output format."""
         config = {
-            "server": {
-                "host": "0.0.0.0",
-                "port": 9090,
-                "ssl_enabled": True
-            },
+            "server": {"host": "0.0.0.0", "port": 9090, "ssl_enabled": True},
             "execution": {
                 "max_steps": 500,
                 "step_timeout": 60,
                 "max_retries": 5,
-                "parallel_steps": True
+                "parallel_steps": True,
             },
             "security": {
                 "sandbox_enabled": True,
-                "allowed_modules": ["math", "json", "datetime", "re", "collections"]
+                "allowed_modules": ["math", "json", "datetime", "re", "collections"],
             },
-            "logging": {
-                "level": "DEBUG",
-                "format": "json"
-            }
+            "logging": {"level": "DEBUG", "format": "json"},
         }
 
         assert config == snapshot

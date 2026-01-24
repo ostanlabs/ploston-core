@@ -46,9 +46,7 @@ def _build_kafka_config(native_tools_config: dict[str, Any]) -> dict[str, Any]:
     kafka = native_tools_config.get("kafka", {})
     return {
         "enabled": kafka.get("enabled", False),
-        "bootstrap_servers": kafka.get(
-            "bootstrap_servers", "${KAFKA_BOOTSTRAP_SERVERS:-}"
-        ),
+        "bootstrap_servers": kafka.get("bootstrap_servers", "${KAFKA_BOOTSTRAP_SERVERS:-}"),
         "producer": kafka.get("producer", {"acks": "all", "retries": 3}),
         "consumer": kafka.get("consumer", {"auto_offset_reset": "earliest"}),
         "security_protocol": kafka.get("security_protocol", "PLAINTEXT"),
