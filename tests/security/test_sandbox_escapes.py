@@ -139,36 +139,36 @@ class TestBuiltinsRecovery:
 @pytest.mark.security
 class TestAttributeAccessEscapes:
     """Test attribute access escape attempts."""
-    
+
     @pytest.fixture
     def sandbox(self):
         return PythonExecSandbox(timeout=5)
-    
+
     ATTR_ESCAPES = [
         # getattr chains
         ("getattr(getattr((), '__class__'), '__bases__')", "nested getattr"),
         ("getattr(type, '__dict__')", "type dict via getattr"),
-        
+
         # vars() access
         ("vars(type)", "vars on type"),
         ("vars(object)", "vars on object"),
-        
+
         # dir() enumeration
         ("dir(type)", "dir on type"),
         ("[x for x in dir(type) if 'base' in x]", "filtered dir"),
-        
+
         # hasattr probing
         ("hasattr(type, '__bases__')", "hasattr probing"),
     ]
-    
+
     @pytest.mark.parametrize("code,description", ATTR_ESCAPES)
     @pytest.mark.asyncio
     async def test_attr_escape_blocked(self, sandbox, code, description):
         """Verify attribute access escape is blocked."""
         full_code = f"result = {code}"
-        
+
         result = await sandbox.execute(full_code, {})
-        
+
         # Should fail
         assert not result.success, f"Escape should be blocked: {description}"
 
@@ -216,32 +216,32 @@ class TestFormatStringEscapes:
 @pytest.mark.security
 class TestEnvironmentEscapes:
     """Test environment access escape attempts."""
-    
+
     @pytest.fixture
     def sandbox(self):
         return PythonExecSandbox(timeout=5)
-    
+
     ENV_ESCAPES = [
         # Direct os.environ
         ("__import__('os').environ", "os.environ via import"),
-        
+
         # File descriptor tricks (Linux-specific)
         ("open('/proc/self/environ')", "proc environ"),
         ("open('/proc/self/fd/0')", "proc fd"),
         ("open('/proc/self/cmdline')", "proc cmdline"),
-        
+
         # Environment via subprocess
         ("__import__('subprocess').check_output('env', shell=True)", "env via subprocess"),
     ]
-    
+
     @pytest.mark.parametrize("code,description", ENV_ESCAPES)
     @pytest.mark.asyncio
     async def test_env_escape_blocked(self, sandbox, code, description):
         """Verify environment access escape is blocked."""
         full_code = f"result = {code}"
-        
+
         result = await sandbox.execute(full_code, {})
-        
+
         # Should fail
         assert not result.success, f"Escape should be blocked: {description}"
 
@@ -249,32 +249,32 @@ class TestEnvironmentEscapes:
 @pytest.mark.security
 class TestGCManipulation:
     """Test garbage collector manipulation escape attempts."""
-    
+
     @pytest.fixture
     def sandbox(self):
         return PythonExecSandbox(timeout=5)
-    
+
     GC_ESCAPES = [
         # Direct gc access
         ("import gc; gc.get_objects()", "gc.get_objects"),
         ("import gc; gc.get_referrers(())", "gc.get_referrers"),
         ("import gc; gc.get_referents(())", "gc.get_referents"),
-        
+
         # gc via __import__
         ("__import__('gc').get_objects()", "gc via __import__"),
-        
+
         # gc disable (could allow memory attacks)
         ("import gc; gc.disable()", "gc.disable"),
     ]
-    
+
     @pytest.mark.parametrize("code,description", GC_ESCAPES)
     @pytest.mark.asyncio
     async def test_gc_escape_blocked(self, sandbox, code, description):
         """Verify gc manipulation is blocked."""
         full_code = f"{code}\nresult = 'escaped'"
-        
+
         result = await sandbox.execute(full_code, {})
-        
+
         # Should fail
         assert not result.success, f"Escape should be blocked: {description}"
 
@@ -282,34 +282,34 @@ class TestGCManipulation:
 @pytest.mark.security
 class TestFrameInspection:
     """Test frame inspection escape attempts."""
-    
+
     @pytest.fixture
     def sandbox(self):
         return PythonExecSandbox(timeout=5)
-    
+
     FRAME_ESCAPES = [
         # sys._getframe
         ("import sys; sys._getframe()", "sys._getframe"),
         ("import sys; sys._getframe().f_globals", "frame globals"),
         ("import sys; sys._getframe().f_locals", "frame locals"),
         ("import sys; sys._getframe().f_back", "frame back"),
-        
+
         # inspect module
         ("import inspect; inspect.currentframe()", "inspect.currentframe"),
         ("import inspect; inspect.stack()", "inspect.stack"),
-        
+
         # traceback module
         ("import traceback; traceback.extract_stack()", "traceback.extract_stack"),
     ]
-    
+
     @pytest.mark.parametrize("code,description", FRAME_ESCAPES)
     @pytest.mark.asyncio
     async def test_frame_escape_blocked(self, sandbox, code, description):
         """Verify frame inspection is blocked."""
         full_code = f"result = {code}"
-        
+
         result = await sandbox.execute(full_code, {})
-        
+
         # Should fail
         assert not result.success, f"Escape should be blocked: {description}"
 
@@ -317,32 +317,32 @@ class TestFrameInspection:
 @pytest.mark.security
 class TestCtypesEscapes:
     """Test ctypes escape attempts."""
-    
+
     @pytest.fixture
     def sandbox(self):
         return PythonExecSandbox(timeout=5)
-    
+
     CTYPES_ESCAPES = [
         # Direct ctypes import
         ("import ctypes", "ctypes import"),
         ("from ctypes import *", "ctypes star import"),
         ("import ctypes; ctypes.CDLL(None)", "ctypes CDLL"),
-        
+
         # ctypes via __import__
         ("__import__('ctypes')", "ctypes via __import__"),
-        
+
         # cffi (similar to ctypes)
         ("import cffi", "cffi import"),
         ("from cffi import FFI", "cffi FFI import"),
     ]
-    
+
     @pytest.mark.parametrize("code,description", CTYPES_ESCAPES)
     @pytest.mark.asyncio
     async def test_ctypes_escape_blocked(self, sandbox, code, description):
         """Verify ctypes escape is blocked."""
         full_code = f"{code}\nresult = 'escaped'"
-        
+
         result = await sandbox.execute(full_code, {})
-        
+
         # Should fail
         assert not result.success, f"Escape should be blocked: {description}"

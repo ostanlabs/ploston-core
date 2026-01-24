@@ -4,19 +4,18 @@ Tests circular dependency detection, unique step IDs, valid depends_on reference
 and other validation rules using Hypothesis.
 """
 
-import pytest
-from hypothesis import given, strategies as st, settings, assume
 from unittest.mock import MagicMock
 
+import pytest
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
+
 from ploston_core.workflow.types import (
-    WorkflowDefinition,
-    StepDefinition,
-    InputDefinition,
     OutputDefinition,
+    StepDefinition,
+    WorkflowDefinition,
 )
-from ploston_core.workflow.validator import WorkflowValidator, ValidationResult
-from ploston_core.workflow.parser import parse_workflow_yaml
-from ploston_core.errors import AELError
+from ploston_core.workflow.validator import WorkflowValidator
 
 
 def make_validator() -> WorkflowValidator:
@@ -67,14 +66,14 @@ def make_workflow(
 @pytest.mark.property
 class TestUniqueStepIds:
     """Property tests for unique step ID validation."""
-    
+
     @given(st.lists(valid_identifier, min_size=2, max_size=10, unique=True))
     @settings(max_examples=50)
     def test_unique_step_ids_are_valid(self, step_ids):
         """Workflows with unique step IDs should pass validation."""
         steps = [make_code_step(sid) for sid in step_ids]
         workflow = make_workflow(steps=steps)
-        
+
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
 
@@ -120,7 +119,7 @@ class TestUniqueStepIds:
 
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
-        
+
         # Should detect the duplicate
         duplicate_errors = [e for e in result.errors if "Duplicate step IDs" in e.message]
         assert len(duplicate_errors) == 1
@@ -133,7 +132,7 @@ class TestUniqueStepIds:
 @pytest.mark.property
 class TestDependsOnReferences:
     """Property tests for depends_on reference validation."""
-    
+
     @given(st.lists(valid_identifier, min_size=2, max_size=6, unique=True))
     @settings(max_examples=50)
     def test_valid_depends_on_references(self, step_ids):
@@ -143,9 +142,9 @@ class TestDependsOnReferences:
         for i, sid in enumerate(step_ids):
             depends_on = [step_ids[i-1]] if i > 0 else None
             steps.append(make_code_step(sid, depends_on=depends_on))
-        
+
         workflow = make_workflow(steps=steps)
-        
+
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
 
@@ -195,7 +194,7 @@ class TestDependsOnReferences:
 
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
-        
+
         dep_errors = [e for e in result.errors if "not found" in e.message]
         assert len(dep_errors) == 0
 
@@ -207,7 +206,7 @@ class TestDependsOnReferences:
 @pytest.mark.property
 class TestCircularDependencies:
     """Property tests for circular dependency detection."""
-    
+
     @given(st.lists(valid_identifier, min_size=2, max_size=6, unique=True))
     @settings(max_examples=50)
     def test_linear_chain_no_cycle(self, step_ids):
@@ -217,59 +216,59 @@ class TestCircularDependencies:
         for i, sid in enumerate(step_ids):
             depends_on = [step_ids[i-1]] if i > 0 else None
             steps.append(make_code_step(sid, depends_on=depends_on))
-        
+
         workflow = make_workflow(steps=steps)
-        
+
         # Should not raise circular dependency error
         try:
             order = workflow.get_execution_order()
             assert len(order) == len(step_ids)
         except ValueError as e:
             pytest.fail(f"Linear chain incorrectly detected as cycle: {e}")
-    
+
     @given(st.lists(valid_identifier, min_size=2, max_size=4, unique=True))
     @settings(max_examples=50)
     def test_simple_cycle_detected(self, step_ids):
         """Simple A->B->A cycles should be detected."""
         assume(len(step_ids) >= 2)
-        
+
         # Create a cycle: A depends on B, B depends on A
         steps = [
             make_code_step(step_ids[0], depends_on=[step_ids[1]]),
             make_code_step(step_ids[1], depends_on=[step_ids[0]]),
         ]
-        
+
         workflow = make_workflow(steps=steps)
-        
+
         with pytest.raises(ValueError, match="[Cc]ircular"):
             workflow.get_execution_order()
-    
+
     @given(st.lists(valid_identifier, min_size=3, max_size=5, unique=True))
     @settings(max_examples=50)
     def test_longer_cycle_detected(self, step_ids):
         """Longer cycles (A->B->C->A) should be detected."""
         assume(len(step_ids) >= 3)
-        
+
         # Create a cycle: A->B->C->A
         steps = []
         for i, sid in enumerate(step_ids):
             next_idx = (i + 1) % len(step_ids)
             steps.append(make_code_step(sid, depends_on=[step_ids[next_idx]]))
-        
+
         workflow = make_workflow(steps=steps)
-        
+
         with pytest.raises(ValueError, match="[Cc]ircular"):
             workflow.get_execution_order()
-    
+
     @given(st.lists(valid_identifier, min_size=1, max_size=3, unique=True))
     @settings(max_examples=30)
     def test_self_dependency_detected(self, step_ids):
         """Self-dependencies (A depends on A) should be detected."""
         # Create a step that depends on itself
         steps = [make_code_step(step_ids[0], depends_on=[step_ids[0]])]
-        
+
         workflow = make_workflow(steps=steps)
-        
+
         with pytest.raises(ValueError, match="[Cc]ircular"):
             workflow.get_execution_order()
 
@@ -281,7 +280,7 @@ class TestCircularDependencies:
 @pytest.mark.property
 class TestRequiredFields:
     """Property tests for required field validation."""
-    
+
     @given(valid_identifier, valid_version)
     @settings(max_examples=30)
     def test_valid_name_and_version(self, name, version):
@@ -313,7 +312,7 @@ class TestRequiredFields:
 
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
-        
+
         version_errors = [e for e in result.errors if "version" in e.message.lower()]
         assert len(version_errors) == 1
 
@@ -325,7 +324,7 @@ class TestRequiredFields:
 @pytest.mark.property
 class TestToolXorCode:
     """Property tests for tool XOR code validation."""
-    
+
     @given(valid_identifier)
     @settings(max_examples=30)
     def test_code_only_step_valid(self, step_id):
@@ -374,6 +373,6 @@ class TestToolXorCode:
 
         validator = make_validator()
         result = validator.validate(workflow, check_tools=False)
-        
+
         xor_errors = [e for e in result.errors if "either" in e.message.lower()]
         assert len(xor_errors) == 1

@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .redis_store import RedisConfigStore
@@ -39,7 +39,7 @@ class ModeManager:
     def __init__(
         self,
         initial_mode: Mode = Mode.CONFIGURATION,
-        redis_store: Optional["RedisConfigStore"] = None,
+        redis_store: RedisConfigStore | None = None,
     ):
         """Initialize mode manager.
 

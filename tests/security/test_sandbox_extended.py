@@ -33,7 +33,7 @@ class TestExtendedBlockedImports:
         ("import mmap", "mmap module"),
         ("import sysconfig", "sysconfig module"),
         ("import platform", "platform module"),
-        
+
         # Additional network modules
         ("import ssl", "ssl module"),
         ("import ftplib", "ftplib module"),
@@ -43,7 +43,7 @@ class TestExtendedBlockedImports:
         ("import telnetlib", "telnetlib module"),
         ("import asyncio", "asyncio module"),
         ("import selectors", "selectors module"),
-        
+
         # Code execution modules
         ("import code", "code module"),
         ("import codeop", "codeop module"),
@@ -51,7 +51,7 @@ class TestExtendedBlockedImports:
         ("import py_compile", "py_compile module"),
         ("import dis", "dis module"),
         ("import ast", "ast module"),
-        
+
         # Debugging modules
         ("import pdb", "pdb module"),
         ("import bdb", "bdb module"),
@@ -59,16 +59,16 @@ class TestExtendedBlockedImports:
         ("import cProfile", "cProfile module"),
         ("import trace", "trace module"),
         ("import timeit", "timeit module"),
-        
+
         # Serialization modules
         ("import copyreg", "copyreg module"),
         ("import _pickle", "_pickle module"),
-        
+
         # Indirect imports with aliases
         ("import os as o", "os with alias"),
         ("import sys as s", "sys with alias"),
         ("import subprocess as sp", "subprocess with alias"),
-        
+
         # From imports with aliases
         ("from os import system as sys_call", "os.system with alias"),
         ("from subprocess import Popen as P", "Popen with alias"),
@@ -169,20 +169,20 @@ class TestUnicodeObfuscation:
         # Unicode lookalikes for 'import'
         ("ⅰmport os", "unicode i in import"),
         ("іmport os", "cyrillic i in import"),
-        
+
         # Unicode lookalikes for 'eval'
         ("еval('1+1')", "cyrillic e in eval"),
-        
+
         # Unicode lookalikes for 'exec'
         ("ехec('x=1')", "cyrillic e and x in exec"),
-        
+
         # Unicode lookalikes for 'open'
         ("оpen('/etc/passwd')", "cyrillic o in open"),
-        
+
         # Zero-width characters
         ("im\u200bport os", "zero-width space in import"),
         ("ev\u200bal('1')", "zero-width space in eval"),
-        
+
         # Right-to-left override
         ("so tropmi\u202e", "RTL override"),
     ]
