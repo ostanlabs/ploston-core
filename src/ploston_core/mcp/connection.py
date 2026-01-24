@@ -412,14 +412,18 @@ class MCPConnection:
             result = await self._client.call_tool(tool_name, arguments)
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Extract content from FastMCP result
-            # FastMCP returns a list of content items
+            # Extract content from FastMCP result (CallToolResult object)
             text_content = self._extract_fastmcp_content(result)
 
             # Check if result indicates an error
             is_error = False
             if hasattr(result, "isError"):
                 is_error = result.isError
+
+            # Extract structured content if available
+            structured_content = None
+            if hasattr(result, "structuredContent"):
+                structured_content = result.structuredContent
 
             return MCPCallResult(
                 success=not is_error,
@@ -428,7 +432,7 @@ class MCPConnection:
                 duration_ms=duration_ms,
                 error=text_content if is_error else None,
                 is_error=is_error,
-                structured_content=None,
+                structured_content=structured_content,
             )
 
         except asyncio.TimeoutError as e:
@@ -447,7 +451,7 @@ class MCPConnection:
         """Extract text content from FastMCP call_tool result.
 
         Args:
-            result: FastMCP call_tool result (list of content items)
+            result: FastMCP call_tool result (CallToolResult object)
 
         Returns:
             Concatenated text content
@@ -455,7 +459,22 @@ class MCPConnection:
         if not result:
             return ""
 
-        # FastMCP returns a list of content items
+        # FastMCP returns a CallToolResult object with a content attribute
+        # that is a list of content items (TextContent, ImageContent, etc.)
+        if hasattr(result, "content"):
+            content_list = result.content
+            if isinstance(content_list, list):
+                text_parts = []
+                for item in content_list:
+                    if hasattr(item, "text"):
+                        text_parts.append(item.text)
+                    elif hasattr(item, "type") and item.type == "text":
+                        text_parts.append(getattr(item, "text", ""))
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                return "\n".join(text_parts)
+
+        # Handle list directly (legacy support)
         if isinstance(result, list):
             text_parts = []
             for item in result:
