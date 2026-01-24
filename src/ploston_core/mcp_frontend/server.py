@@ -11,6 +11,7 @@ from ploston_core.errors.errors import ErrorCategory
 from ploston_core.invoker import ToolInvoker
 from ploston_core.logging import AELLogger
 from ploston_core.registry import ToolRegistry
+from ploston_core.telemetry import ChainDetector
 from ploston_core.types import ExecutionStatus, MCPTransport
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ class MCPFrontend:
         http_config: MCPHTTPConfig | None = None,
         rest_app: Any | None = None,
         rest_prefix: str = "/api/v1",
+        chain_detector: ChainDetector | None = None,
     ):
         """Initialize MCP frontend.
 
@@ -62,6 +64,7 @@ class MCPFrontend:
             http_config: HTTP transport configuration (required if transport is http)
             rest_app: Optional FastAPI app to mount for REST API (dual-mode)
             rest_prefix: URL prefix for REST API (default: /api/v1)
+            chain_detector: Optional chain detector for detecting tool sequences
         """
         self._workflow_engine = workflow_engine
         self._tool_registry = tool_registry
@@ -79,6 +82,9 @@ class MCPFrontend:
         # Mode management
         self._mode_manager = mode_manager or ModeManager()
         self._config_tool_registry = config_tool_registry
+
+        # Chain detection (T-446)
+        self._chain_detector = chain_detector
 
         # Register for mode change notifications
         self._mode_manager.on_mode_change(self._on_mode_change)
@@ -410,6 +416,19 @@ class MCPFrontend:
             MCP response
         """
         result = await self._tool_invoker.invoke(tool_name, arguments)
+
+        # Chain detection (T-446): Process tool call for chain detection
+        # Only for direct tool calls (not workflows)
+        if self._chain_detector and result.success and not tool_name.startswith("workflow:"):
+            try:
+                await self._chain_detector.process_tool_call(
+                    tool_name=tool_name,
+                    params=arguments,
+                    result=result.output,
+                )
+            except Exception:
+                # Chain detection is non-critical - don't fail the tool call
+                pass
 
         if result.success:
             response: dict[str, Any] = {
