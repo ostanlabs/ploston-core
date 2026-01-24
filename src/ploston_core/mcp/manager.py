@@ -1,6 +1,7 @@
 """MCP Client Manager - manages all MCP server connections."""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from ploston_core.config.models import ToolsConfig
@@ -10,6 +11,10 @@ from ploston_core.types import LogLevel
 
 from .connection import MCPConnection
 from .types import MCPCallResult, ServerStatus, ToolSchema
+
+# Type alias for manager-level tool change callback
+# Callback receives: server_name, list of tools
+ManagerToolChangeCallback = Callable[[str, list[ToolSchema]], None]
 
 
 class MCPClientManager:
@@ -24,6 +29,7 @@ class MCPClientManager:
         config: ToolsConfig,
         logger: AELLogger | None = None,
         error_factory: ErrorFactory | None = None,
+        on_tools_changed: ManagerToolChangeCallback | None = None,
     ):
         """Initialize MCP client manager.
 
@@ -31,11 +37,13 @@ class MCPClientManager:
             config: Tools configuration
             logger: Optional logger
             error_factory: Optional error factory
+            on_tools_changed: Optional callback when tools change on any server
         """
         self._connections: dict[str, MCPConnection] = {}
         self._config = config
         self._logger = logger
         self._error_factory = error_factory
+        self._on_tools_changed = on_tools_changed
 
     def _log(self, level: LogLevel, message: str, **kwargs: Any) -> None:
         """Log message if logger available."""
@@ -63,6 +71,7 @@ class MCPClientManager:
                     name=name,
                     config=server_config,
                     logger=self._logger,
+                    on_tools_changed=self._handle_tools_changed,
                 )
 
         # Connect in parallel
@@ -84,17 +93,50 @@ class MCPClientManager:
 
         return status_dict
 
-    async def _connect_one(self, name: str, conn: MCPConnection) -> None:
+    async def _connect_one(
+        self,
+        name: str,
+        conn: MCPConnection,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        max_delay: float = 30.0,
+    ) -> None:
         """Connect to one server, catching exceptions.
 
         Args:
             name: Server name
             conn: Connection instance
+            max_retries: Maximum number of retry attempts
+            initial_delay: Initial delay between retries in seconds
+            max_delay: Maximum delay between retries in seconds
         """
         try:
-            await conn.connect()
+            await conn.connect(
+                max_retries=max_retries,
+                initial_delay=initial_delay,
+                max_delay=max_delay,
+            )
         except Exception as e:
             self._log(LogLevel.ERROR, f"Failed to connect to '{name}': {e}")
+
+    def _handle_tools_changed(self, server_name: str, tools: list[ToolSchema]) -> None:
+        """Handle tools changed notification from a connection.
+
+        Args:
+            server_name: Name of the server whose tools changed
+            tools: Updated list of tools
+        """
+        self._log(
+            LogLevel.INFO,
+            f"Tools changed on server '{server_name}': {len(tools)} tools",
+        )
+
+        # Propagate to manager-level callback if registered
+        if self._on_tools_changed:
+            try:
+                self._on_tools_changed(server_name, tools)
+            except Exception as e:
+                self._log(LogLevel.WARN, f"Error in manager tools changed callback: {e}")
 
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
@@ -240,6 +282,7 @@ class MCPClientManager:
                 name=name,
                 config=new_config.mcp_servers[name],
                 logger=self._logger,
+                on_tools_changed=self._handle_tools_changed,
             )
             self._connections[name] = conn
             await self._connect_one(name, conn)
@@ -264,6 +307,7 @@ class MCPClientManager:
                     name=name,
                     config=new_server_config,
                     logger=self._logger,
+                    on_tools_changed=self._handle_tools_changed,
                 )
                 self._connections[name] = new_conn
                 await self._connect_one(name, new_conn)

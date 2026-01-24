@@ -1,27 +1,50 @@
-"""MCP Connection - manages single MCP server connection."""
+"""MCP Connection - manages single MCP server connection.
+
+Uses the FastMCP client library for proper MCP protocol support,
+including automatic handling of notifications like tools/list_changed.
+"""
 
 import asyncio
-import json
 import time
+from collections.abc import Callable
+from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Any
 
-import httpx
+import mcp.types
+from fastmcp.client import Client
+from fastmcp.client.messages import MessageHandler
 
 from ploston_core.config.models import MCPServerDefinition
 from ploston_core.errors import create_error
 from ploston_core.logging.logger import AELLogger
 from ploston_core.types import ConnectionStatus, LogLevel, MCPTransport
 
-from .protocol import JSONRPCMessage
 from .types import MCPCallResult, ServerStatus, ToolSchema
+
+# Type alias for tool change callback
+# Callback receives: server_name, list of tools
+ToolChangeCallback = Callable[[str, list[ToolSchema]], None]
+
+
+class _ToolChangeMessageHandler(MessageHandler):
+    """Message handler that triggers callback on tool list changes."""
+
+    def __init__(self, on_change: Callable[[], Any]):
+        self._on_change = on_change
+
+    async def on_tool_list_changed(
+        self, message: mcp.types.ToolListChangedNotification
+    ) -> None:
+        """Handle tool list changed notification from server."""
+        await self._on_change()
 
 
 class MCPConnection:
     """Single MCP server connection.
 
-    Manages the lifecycle of an MCP server connection,
-    including spawning (for stdio), initialization, and tool calls.
+    Uses FastMCP Client for proper MCP protocol support including
+    automatic handling of notifications like tools/list_changed.
     """
 
     def __init__(
@@ -29,6 +52,7 @@ class MCPConnection:
         name: str,
         config: MCPServerDefinition,
         logger: AELLogger | None = None,
+        on_tools_changed: ToolChangeCallback | None = None,
     ):
         """Initialize MCP connection.
 
@@ -36,28 +60,20 @@ class MCPConnection:
             name: Server name
             config: Server configuration
             logger: Optional logger
+            on_tools_changed: Optional callback when tools change via notification
         """
         self.name = name
         self.config = config
         self._logger = logger
+        self._on_tools_changed = on_tools_changed
         self._status = ConnectionStatus.DISCONNECTED
         self._tools: dict[str, ToolSchema] = {}
-        self._request_id = 0
         self._last_connected: datetime | None = None
         self._last_error: str | None = None
 
-        # Transport-specific state
-        # For stdio transport
-        self._process: asyncio.subprocess.Process | None = None
-        # For HTTP transport
-        self._http_client: httpx.AsyncClient | None = None
-        self._http_base_url: str | None = None
-        self._http_session_id: str | None = None  # MCP session ID from server
-
-    def _next_id(self) -> int:
-        """Get next request ID."""
-        self._request_id += 1
-        return self._request_id
+        # FastMCP client
+        self._client: Client | None = None
+        self._exit_stack: AsyncExitStack | None = None
 
     def _log(self, level: LogLevel, message: str, **kwargs: Any) -> None:
         """Log message if logger available."""
@@ -103,35 +119,92 @@ class MCPConnection:
         """
         return list(self._tools.values())
 
-    async def connect(self) -> None:
+    async def connect(
+        self,
+        max_retries: int = 0,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+    ) -> None:
         """Establish connection to MCP server.
 
         For stdio: spawns process and sends initialize.
         For http: validates endpoint and sends initialize.
 
+        Args:
+            max_retries: Maximum number of retry attempts (0 = no retries)
+            initial_delay: Initial delay between retries in seconds
+            max_delay: Maximum delay between retries in seconds
+
         Raises:
-            AELError(TOOL_UNAVAILABLE) if connection fails
+            AELError(TOOL_UNAVAILABLE) if connection fails after all retries
         """
         if self._status == ConnectionStatus.CONNECTED:
             self._log(LogLevel.DEBUG, "Already connected")
             return
 
+        last_error: Exception | None = None
+        delay = initial_delay
+        attempts = 0
+
+        while attempts <= max_retries:
+            if attempts > 0:
+                self._log(
+                    LogLevel.INFO,
+                    f"Retry {attempts}/{max_retries} connecting to MCP server "
+                    f"(delay={delay:.1f}s)",
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)  # Exponential backoff
+
+            attempts += 1
+
+            try:
+                await self._connect_once()
+                return  # Success!
+            except Exception as e:
+                last_error = e
+                if attempts <= max_retries:
+                    self._log(
+                        LogLevel.WARN,
+                        f"Connection attempt {attempts} failed: {e}",
+                    )
+
+        # All retries exhausted
+        self._status = ConnectionStatus.ERROR
+        self._last_error = str(last_error)
+        self._log(LogLevel.ERROR, f"Connection failed after {attempts} attempts: {last_error}")
+        raise create_error(
+            "TOOL_UNAVAILABLE",
+            detail=f"Failed to connect to MCP server '{self.name}': {last_error}",
+        ) from last_error
+
+    async def _connect_once(self) -> None:
+        """Single connection attempt to MCP server using FastMCP Client.
+
+        Raises:
+            Exception if connection fails
+        """
         self._status = ConnectionStatus.CONNECTING
         self._log(LogLevel.INFO, f"Connecting to MCP server (transport={self.config.transport})")
 
         try:
-            if self.config.transport == MCPTransport.STDIO or self.config.transport == "stdio":
-                await self._connect_stdio()
-            elif self.config.transport == MCPTransport.HTTP or self.config.transport == "http":
-                await self._connect_http()
-            else:
-                raise create_error(
-                    "TOOL_UNAVAILABLE",
-                    detail=f"Transport {self.config.transport} not supported",
-                )
+            # Determine transport URL/command for FastMCP Client
+            transport_source = self._get_transport_source()
 
-            # Send initialize
-            await self._initialize()
+            # Create message handler for tool change notifications
+            message_handler = _ToolChangeMessageHandler(self._handle_tools_changed)
+
+            # Create FastMCP client with notification handler
+            self._client = Client(
+                transport=transport_source,
+                message_handler=message_handler,
+                timeout=self.config.timeout,
+                name=f"ploston-{self.name}",
+            )
+
+            # Enter the client context (establishes connection)
+            self._exit_stack = AsyncExitStack()
+            await self._exit_stack.enter_async_context(self._client)
 
             # Fetch tools
             await self.refresh_tools()
@@ -144,340 +217,84 @@ class MCPConnection:
         except Exception as e:
             self._status = ConnectionStatus.ERROR
             self._last_error = str(e)
-            self._log(LogLevel.ERROR, f"Connection failed: {e}")
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Failed to connect to MCP server '{self.name}': {e}",
-            ) from e
+            # Clean up on failure
+            if self._exit_stack:
+                try:
+                    await self._exit_stack.aclose()
+                except Exception:
+                    pass
+                self._exit_stack = None
+            self._client = None
+            raise
 
-    async def _connect_stdio(self) -> None:
-        """Connect via stdio transport.
-
-        Raises:
-            AELError(TOOL_UNAVAILABLE) if process spawn fails
-        """
-        if not self.config.command:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"No command specified for stdio server '{self.name}'",
-            )
-
-        # Parse command and args
-        cmd_parts = self.config.command.split()
-        if not cmd_parts:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Empty command for stdio server '{self.name}'",
-            )
-
-        # Build environment - merge with current environment
-        import os
-
-        env = {**os.environ, **(self.config.env or {})}
-
-        try:
-            # Spawn process
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd_parts,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-            self._log(LogLevel.DEBUG, f"Spawned process PID={self._process.pid}")
-
-        except Exception as e:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Failed to spawn MCP server process: {e}",
-            ) from e
-
-    async def _connect_http(self) -> None:
-        """Connect via HTTP transport.
-
-        Creates an HTTP client and validates the server endpoint.
-        The URL should point to the MCP server's HTTP endpoint (e.g., http://host:port/sse).
-
-        Raises:
-            AELError(TOOL_UNAVAILABLE) if connection fails
-        """
-        if not self.config.url:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"No URL specified for HTTP server '{self.name}'",
-            )
-
-        # Parse and validate URL
-        url = self.config.url.rstrip("/")
-        self._http_base_url = url
-
-        # Determine the MCP endpoint - FastMCP uses /mcp for JSON-RPC
-        # If URL ends with /sse, replace with /mcp for JSON-RPC requests
-        if url.endswith("/sse"):
-            self._http_base_url = url[:-4] + "/mcp"
-        elif not url.endswith("/mcp"):
-            # Assume it's a base URL, append /mcp
-            self._http_base_url = url + "/mcp"
-
-        self._log(LogLevel.DEBUG, f"HTTP endpoint: {self._http_base_url}")
-
-        try:
-            # Create HTTP client with timeout
-            # FastMCP requires Accept header with both application/json and text/event-stream
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.config.timeout, connect=10.0),
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                },
-            )
-
-            # Verify server is reachable by checking health endpoint
-            health_url = url.rsplit("/", 1)[0] + "/health"
-            try:
-                response = await self._http_client.get(health_url)
-                if response.status_code == 200:
-                    self._log(LogLevel.DEBUG, f"Health check passed: {health_url}")
-                else:
-                    self._log(LogLevel.WARN, f"Health check returned {response.status_code}")
-            except Exception as health_err:
-                # Health check is optional, log but continue
-                self._log(LogLevel.DEBUG, f"Health check skipped: {health_err}")
-
-        except Exception as e:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Failed to create HTTP client for '{self.name}': {e}",
-            ) from e
-
-    async def _initialize(self) -> None:
-        """Send initialize request to MCP server.
-
-        Raises:
-            AELError(TOOL_UNAVAILABLE) if initialize fails
-        """
-        request = JSONRPCMessage.request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "ael",
-                    "version": "0.1.0",
-                },
-            },
-            id=self._next_id(),
-        )
-
-        try:
-            response = await self._send_request(request)
-            if JSONRPCMessage.is_error(response):
-                error = JSONRPCMessage.get_error(response)
-                raise create_error(
-                    "TOOL_UNAVAILABLE",
-                    detail=f"Initialize failed: {error.get('message', 'Unknown error')}",
-                )
-
-            self._log(LogLevel.DEBUG, "Initialize successful")
-
-        except Exception as e:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Initialize request failed: {e}",
-            ) from e
-
-    async def _send_request(
-        self, request: dict[str, Any], timeout_seconds: int | None = None
-    ) -> dict[str, Any]:
-        """Send JSON-RPC request and wait for response.
-
-        Dispatches to transport-specific implementation.
-
-        Args:
-            request: JSON-RPC request dict
-            timeout_seconds: Optional timeout in seconds
+    def _get_transport_source(self) -> str:
+        """Get the transport source for FastMCP Client.
 
         Returns:
-            JSON-RPC response dict
+            URL for HTTP transport, or command path for stdio transport
 
         Raises:
-            AELError(TOOL_TIMEOUT) if timeout
-            AELError(TOOL_UNAVAILABLE) if not connected
+            AELError if transport configuration is invalid
         """
-        if self.config.transport == MCPTransport.HTTP or self.config.transport == "http":
-            return await self._send_request_http(request, timeout_seconds)
+        if self.config.transport == MCPTransport.STDIO or self.config.transport == "stdio":
+            if not self.config.command:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"No command specified for stdio server '{self.name}'",
+                )
+            # FastMCP Client accepts file paths for stdio
+            # Extract the script path from the command
+            cmd_parts = self.config.command.split()
+            if not cmd_parts:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"Empty command for stdio server '{self.name}'",
+                )
+            # Return the command - FastMCP will handle it
+            return self.config.command
+
+        elif self.config.transport == MCPTransport.HTTP or self.config.transport == "http":
+            if not self.config.url:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"No URL specified for HTTP server '{self.name}'",
+                )
+            # Normalize URL for FastMCP - it expects the base URL
+            url = self.config.url.rstrip("/")
+            # FastMCP expects the /mcp endpoint for streamable-http
+            if url.endswith("/sse"):
+                url = url[:-4] + "/mcp"
+            elif not url.endswith("/mcp"):
+                url = url + "/mcp"
+            return url
+
         else:
-            return await self._send_request_stdio(request, timeout_seconds)
-
-    async def _send_request_stdio(
-        self, request: dict[str, Any], timeout_seconds: int | None = None
-    ) -> dict[str, Any]:
-        """Send JSON-RPC request via stdio transport.
-
-        Args:
-            request: JSON-RPC request dict
-            timeout_seconds: Optional timeout in seconds
-
-        Returns:
-            JSON-RPC response dict
-
-        Raises:
-            AELError(TOOL_TIMEOUT) if timeout
-            AELError(TOOL_UNAVAILABLE) if not connected
-        """
-        if not self._process or not self._process.stdin or not self._process.stdout:
             raise create_error(
                 "TOOL_UNAVAILABLE",
-                detail=f"Not connected to MCP server '{self.name}'",
+                detail=f"Transport {self.config.transport} not supported",
             )
 
-        # Send request
-        request_str = json.dumps(request) + "\n"
-        self._process.stdin.write(request_str.encode("utf-8"))
-        await self._process.stdin.drain()
-
-        # Read response with timeout
-        timeout_val = timeout_seconds or 30
+    async def _handle_tools_changed(self) -> None:
+        """Handle tools/list_changed notification by refreshing tools."""
         try:
-            response_line = await asyncio.wait_for(
-                self._process.stdout.readline(),
-                timeout=timeout_val,
-            )
-        except TimeoutError as e:
-            raise create_error(
-                "TOOL_TIMEOUT",
-                detail=f"Request to MCP server '{self.name}' timed out after {timeout_val}s",
-            ) from e
+            old_tool_count = len(self._tools)
+            tools = await self.refresh_tools()
+            new_tool_count = len(tools)
 
-        if not response_line:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"MCP server '{self.name}' closed connection",
+            self._log(
+                LogLevel.INFO,
+                f"Tools refreshed via notification: {old_tool_count} -> {new_tool_count} tools",
             )
 
-        # Parse response
-        return JSONRPCMessage.parse(response_line)
+            # Notify callback if registered
+            if self._on_tools_changed:
+                try:
+                    self._on_tools_changed(self.name, tools)
+                except Exception as e:
+                    self._log(LogLevel.WARN, f"Error in tools changed callback: {e}")
 
-    async def _send_request_http(
-        self, request: dict[str, Any], timeout_seconds: int | None = None
-    ) -> dict[str, Any]:
-        """Send JSON-RPC request via HTTP transport.
-
-        FastMCP servers return responses in SSE (Server-Sent Events) format.
-        We parse the SSE response to extract the JSON-RPC message.
-
-        The server returns a session ID in the mcp-session-id header on initialize,
-        which must be included in subsequent requests.
-
-        Args:
-            request: JSON-RPC request dict
-            timeout_seconds: Optional timeout in seconds
-
-        Returns:
-            JSON-RPC response dict
-
-        Raises:
-            AELError(TOOL_TIMEOUT) if timeout
-            AELError(TOOL_UNAVAILABLE) if not connected
-        """
-        if not self._http_client or not self._http_base_url:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Not connected to MCP server '{self.name}'",
-            )
-
-        timeout_val = timeout_seconds or self.config.timeout
-
-        try:
-            # Build headers - include session ID if we have one
-            headers: dict[str, str] = {}
-            if self._http_session_id:
-                headers["mcp-session-id"] = self._http_session_id
-
-            # Send POST request with JSON-RPC payload
-            response = await self._http_client.post(
-                self._http_base_url,
-                json=request,
-                headers=headers,
-                timeout=timeout_val,
-            )
-
-            if response.status_code != 200:
-                raise create_error(
-                    "TOOL_UNAVAILABLE",
-                    detail=f"HTTP request failed with status {response.status_code}: {response.text}",
-                )
-
-            # Capture session ID from response headers (set on initialize)
-            session_id = response.headers.get("mcp-session-id")
-            if session_id and not self._http_session_id:
-                self._http_session_id = session_id
-                self._log(LogLevel.DEBUG, f"Captured MCP session ID: {session_id[:8]}...")
-
-            # Parse response - FastMCP returns SSE format
-            content_type = response.headers.get("content-type", "")
-            response_text = response.text
-
-            if "text/event-stream" in content_type or response_text.startswith("event:"):
-                # Parse SSE response
-                return self._parse_sse_response(response_text)
-            else:
-                # Plain JSON response
-                return response.json()
-
-        except httpx.TimeoutException as e:
-            raise create_error(
-                "TOOL_TIMEOUT",
-                detail=f"Request to MCP server '{self.name}' timed out after {timeout_val}s",
-            ) from e
-        except httpx.HTTPError as e:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"HTTP error communicating with MCP server '{self.name}': {e}",
-            ) from e
-
-    def _parse_sse_response(self, sse_text: str) -> dict[str, Any]:
-        """Parse SSE (Server-Sent Events) response to extract JSON-RPC message.
-
-        SSE format:
-            event: message
-            data: {"jsonrpc": "2.0", ...}
-
-        Args:
-            sse_text: Raw SSE response text
-
-        Returns:
-            Parsed JSON-RPC response dict
-
-        Raises:
-            AELError(TOOL_UNAVAILABLE) if parsing fails
-        """
-        # Parse SSE lines to find the data payload
-        data_lines = []
-        for line in sse_text.split("\n"):
-            line = line.strip()
-            if line.startswith("data:"):
-                # Extract data after "data:" prefix
-                data_content = line[5:].strip()
-                if data_content:
-                    data_lines.append(data_content)
-
-        if not data_lines:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"No data found in SSE response: {sse_text[:200]}",
-            )
-
-        # Join data lines (in case data spans multiple lines)
-        data_str = "".join(data_lines)
-
-        try:
-            return json.loads(data_str)
-        except json.JSONDecodeError as e:
-            raise create_error(
-                "TOOL_UNAVAILABLE",
-                detail=f"Failed to parse SSE data as JSON: {e}",
-            ) from e
+        except Exception as e:
+            self._log(LogLevel.ERROR, f"Failed to refresh tools after notification: {e}")
 
     async def disconnect(self) -> None:
         """Gracefully disconnect from MCP server."""
@@ -486,38 +303,21 @@ class MCPConnection:
 
         self._log(LogLevel.INFO, "Disconnecting from MCP server")
 
-        # Clean up stdio transport
-        if self._process:
+        # Close the FastMCP client context
+        if self._exit_stack:
             try:
-                # Terminate process
-                self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            except TimeoutError:
-                # Force kill if doesn't terminate
-                self._process.kill()
-                await self._process.wait()
+                await self._exit_stack.aclose()
             except Exception as e:
                 self._log(LogLevel.WARN, f"Error during disconnect: {e}")
+            self._exit_stack = None
 
-            self._process = None
-
-        # Clean up HTTP transport
-        if self._http_client:
-            try:
-                await self._http_client.aclose()
-            except Exception as e:
-                self._log(LogLevel.WARN, f"Error closing HTTP client: {e}")
-
-            self._http_client = None
-            self._http_base_url = None
-            self._http_session_id = None
-
+        self._client = None
         self._status = ConnectionStatus.DISCONNECTED
         self._tools.clear()
         self._log(LogLevel.INFO, "Disconnected")
 
     async def refresh_tools(self) -> list[ToolSchema]:
-        """Fetch tool list from server.
+        """Fetch tool list from server using FastMCP Client.
 
         Returns:
             List of available tools
@@ -534,31 +334,26 @@ class MCPConnection:
                 detail=f"MCP server '{self.name}' not connected",
             )
 
-        request = JSONRPCMessage.request("tools/list", id=self._next_id())
+        if not self._client:
+            raise create_error(
+                "TOOL_UNAVAILABLE",
+                detail=f"MCP client not initialized for '{self.name}'",
+            )
 
         try:
-            response = await self._send_request(request)
+            # Use FastMCP client to list tools
+            tools_result = await self._client.list_tools()
 
-            if JSONRPCMessage.is_error(response):
-                error = JSONRPCMessage.get_error(response)
-                raise create_error(
-                    "TOOL_UNAVAILABLE",
-                    detail=f"tools/list failed: {error.get('message', 'Unknown error')}",
-                )
-
-            result = JSONRPCMessage.get_result(response)
-            tools_data = result.get("tools", [])
-
-            # Parse tools
+            # Parse tools from FastMCP response
             self._tools.clear()
-            for tool_data in tools_data:
-                tool = ToolSchema(
-                    name=tool_data["name"],
-                    description=tool_data.get("description", ""),
-                    input_schema=tool_data.get("inputSchema", {}),
-                    output_schema=tool_data.get("outputSchema"),
+            for tool in tools_result:
+                tool_schema = ToolSchema(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    output_schema=None,
                 )
-                self._tools[tool.name] = tool
+                self._tools[tool_schema.name] = tool_schema
 
             self._log(LogLevel.DEBUG, f"Refreshed {len(self._tools)} tools")
             return list(self._tools.values())
@@ -573,12 +368,12 @@ class MCPConnection:
         arguments: dict[str, Any],
         timeout_seconds: int | None = None,
     ) -> MCPCallResult:
-        """Call a tool on this MCP server.
+        """Call a tool on this MCP server using FastMCP Client.
 
         Args:
             tool_name: Name of tool to call
             arguments: Tool arguments
-            timeout: Optional timeout override
+            timeout_seconds: Optional timeout override (not used with FastMCP)
 
         Returns:
             MCPCallResult with content and metadata
@@ -603,78 +398,77 @@ class MCPConnection:
                 detail=f"Tool '{tool_name}' not found on server '{self.name}'",
             )
 
-        request = JSONRPCMessage.request(
-            "tools/call",
-            {
-                "name": tool_name,
-                "arguments": arguments,
-            },
-            id=self._next_id(),
-        )
+        if not self._client:
+            raise create_error(
+                "TOOL_UNAVAILABLE",
+                tool_name=tool_name,
+                detail=f"MCP client not initialized for '{self.name}'",
+            )
 
         start_time = time.time()
 
         try:
-            response = await self._send_request(request, timeout_seconds=timeout_seconds)
+            # Use FastMCP client to call tool
+            result = await self._client.call_tool(tool_name, arguments)
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Check for JSON-RPC error
-            if JSONRPCMessage.is_error(response):
-                error = JSONRPCMessage.get_error(response)
-                error_msg = error.get("message", "Unknown error")
-                return MCPCallResult(
-                    success=False,
-                    content=None,
-                    raw_response=response,
-                    duration_ms=duration_ms,
-                    error=error_msg,
-                    is_error=True,
-                )
+            # Extract content from FastMCP result
+            # FastMCP returns a list of content items
+            text_content = self._extract_fastmcp_content(result)
 
-            # Get result
-            result = JSONRPCMessage.get_result(response)
-
-            # Check for MCP-level error (isError flag)
-            is_error = result.get("isError", False)
-            content = result.get("content", [])
-            structured_content = result.get("structuredContent")
-
-            # Extract text content
-            text_content = self._extract_content(content)
+            # Check if result indicates an error
+            is_error = False
+            if hasattr(result, "isError"):
+                is_error = result.isError
 
             return MCPCallResult(
                 success=not is_error,
                 content=text_content,
-                raw_response=response,
+                raw_response={"result": str(result)},
                 duration_ms=duration_ms,
                 error=text_content if is_error else None,
                 is_error=is_error,
-                structured_content=structured_content,
+                structured_content=None,
             )
 
+        except asyncio.TimeoutError as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            raise create_error(
+                "TOOL_TIMEOUT",
+                tool_name=tool_name,
+                detail=f"Tool call timed out after {timeout_seconds or self.config.timeout}s",
+            ) from e
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
             self._log(LogLevel.ERROR, f"Tool call failed: {e}")
             raise
 
-    def _extract_content(self, content: list[Any]) -> str:
-        """Extract text content from MCP content list.
+    def _extract_fastmcp_content(self, result: Any) -> str:
+        """Extract text content from FastMCP call_tool result.
 
         Args:
-            content: List of content items
+            result: FastMCP call_tool result (list of content items)
 
         Returns:
             Concatenated text content
         """
-        if not content:
+        if not result:
             return ""
 
-        result = []
-        for item in content:
-            if isinstance(item, dict):
-                if item.get("type") == "text":
-                    result.append(item.get("text", ""))
-            elif isinstance(item, str):
-                result.append(item)
+        # FastMCP returns a list of content items
+        if isinstance(result, list):
+            text_parts = []
+            for item in result:
+                if hasattr(item, "text"):
+                    text_parts.append(item.text)
+                elif hasattr(item, "type") and item.type == "text":
+                    text_parts.append(getattr(item, "text", ""))
+                elif isinstance(item, str):
+                    text_parts.append(item)
+            return "\n".join(text_parts)
 
-        return "\n".join(result)
+        # Single item
+        if hasattr(result, "text"):
+            return result.text
+
+        return str(result)
