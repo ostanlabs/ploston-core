@@ -330,3 +330,281 @@ class TestEnvVarResolution:
             assert result["api_key"] == "secret123"
             assert result["nested"]["url"] == "https://example.com/api"
             assert result["nested"]["list"] == ["example.com", "other"]
+
+
+# =============================================================================
+# M-049 S-145: Integration Tests for Config Distribution
+# =============================================================================
+
+
+class TestStartupConfigPropagation:
+    """T-481: Test startup config propagation from ploston to native-tools."""
+
+    @pytest.mark.asyncio
+    async def test_native_tools_receives_config_on_startup(
+        self, redis_url: str, test_prefix: str, cleanup_keys
+    ):
+        """Test that native-tools receives config published before it starts.
+
+        Simulates the scenario where ploston publishes config to Redis,
+        then native-tools starts and reads the existing config.
+        """
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+        from ploston_core.config.service_configs import build_native_tools_config
+
+        # Step 1: Ploston publishes config before native-tools starts
+        ploston_options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+            channel=f"{test_prefix}:changed",
+        )
+        ploston_store = RedisConfigStore(ploston_options)
+        await ploston_store.connect()
+
+        ploston_config = {
+            "tools": {
+                "native_tools": {
+                    "kafka": {"enabled": True, "bootstrap_servers": "kafka:9092"},
+                    "firecrawl": {"enabled": True, "base_url": "http://firecrawl:3002"},
+                    "ollama": {"enabled": False},
+                }
+            }
+        }
+        await ploston_store.publish_config("ploston", ploston_config)
+
+        # Build and publish native-tools config
+        native_config = build_native_tools_config(ploston_config)
+        await ploston_store.publish_config("native-tools", native_config)
+
+        # Step 2: Native-tools starts and reads existing config
+        native_options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+        )
+        native_store = RedisConfigStore(native_options)
+        await native_store.connect()
+
+        # Read config that was published before startup
+        payload = await native_store.get_config("native-tools")
+
+        assert payload is not None
+        assert payload.config.get("kafka", {}).get("enabled") is True
+        assert payload.config.get("kafka", {}).get("bootstrap_servers") == "kafka:9092"
+        assert payload.config.get("firecrawl", {}).get("enabled") is True
+
+        await ploston_store.close()
+        await native_store.close()
+
+
+class TestConfigChangePropagation:
+    """T-482: Test config change propagation via pub/sub."""
+
+    @pytest.mark.asyncio
+    async def test_config_change_triggers_notification(
+        self, redis_url: str, test_prefix: str, cleanup_keys
+    ):
+        """Test that config changes are propagated via pub/sub.
+
+        Simulates the scenario where ploston updates config and
+        native-tools receives the change notification.
+        """
+        import redis.asyncio as redis
+
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        channel = f"{test_prefix}:changed"
+
+        # Step 1: Native-tools subscribes to config changes
+        subscriber = redis.from_url(redis_url, decode_responses=True)
+        pubsub = subscriber.pubsub()
+        await pubsub.subscribe(channel)
+
+        # Wait for subscription to be ready
+        await asyncio.sleep(0.1)
+
+        # Step 2: Ploston publishes config change
+        ploston_options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+            channel=channel,
+        )
+        ploston_store = RedisConfigStore(ploston_options)
+        await ploston_store.connect()
+
+        # Publish initial config
+        await ploston_store.publish_config(
+            "native-tools", {"kafka": {"enabled": False}}
+        )
+
+        # Wait for notification
+        notification1 = None
+        for _ in range(10):
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+            if msg and msg["type"] == "message":
+                notification1 = json.loads(msg["data"])
+                break
+
+        assert notification1 is not None
+        assert notification1["service"] == "native-tools"
+        version1 = notification1["version"]
+
+        # Step 3: Ploston updates config
+        await ploston_store.publish_config(
+            "native-tools", {"kafka": {"enabled": True, "bootstrap_servers": "new-kafka:9092"}}
+        )
+
+        # Wait for second notification
+        notification2 = None
+        for _ in range(10):
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+            if msg and msg["type"] == "message":
+                notification2 = json.loads(msg["data"])
+                break
+
+        assert notification2 is not None
+        assert notification2["version"] == version1 + 1
+
+        # Step 4: Native-tools reads updated config
+        payload = await ploston_store.get_config("native-tools")
+        assert payload is not None
+        assert payload.config["kafka"]["enabled"] is True
+        assert payload.config["kafka"]["bootstrap_servers"] == "new-kafka:9092"
+
+        await pubsub.unsubscribe()
+        await pubsub.aclose()
+        await subscriber.aclose()
+        await ploston_store.close()
+
+
+class TestRedisFailureAndRecovery:
+    """T-483: Test Redis failure and recovery scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_graceful_handling_of_connection_failure(self, test_prefix: str):
+        """Test that connection failure is handled gracefully."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        # Try to connect to non-existent Redis
+        options = RedisConfigStoreOptions(
+            redis_url="redis://nonexistent-host:6379/0",
+            key_prefix=test_prefix,
+        )
+        store = RedisConfigStore(options)
+
+        # Should return False, not raise exception
+        connected = await store.connect()
+        assert connected is False
+        assert store.connected is False
+
+    @pytest.mark.asyncio
+    async def test_operations_fail_gracefully_when_disconnected(
+        self, redis_url: str, test_prefix: str
+    ):
+        """Test that operations fail gracefully when Redis is disconnected."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+        )
+        store = RedisConfigStore(options)
+
+        # Don't connect - operations should handle this gracefully
+        # get_config should return None when not connected
+        payload = await store.get_config("test-service")
+        assert payload is None
+
+    @pytest.mark.asyncio
+    async def test_reconnection_after_disconnect(
+        self, redis_url: str, test_prefix: str, cleanup_keys
+    ):
+        """Test that store can reconnect after being disconnected."""
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+        )
+        store = RedisConfigStore(options)
+
+        # Connect
+        connected = await store.connect()
+        assert connected is True
+
+        # Publish config
+        await store.publish_config("test-service", {"key": "value1"})
+
+        # Close connection
+        await store.close()
+        assert store.connected is False
+
+        # Reconnect
+        connected = await store.connect()
+        assert connected is True
+
+        # Should be able to read previously published config
+        payload = await store.get_config("test-service")
+        assert payload is not None
+        assert payload.config["key"] == "value1"
+
+        # Should be able to publish new config
+        await store.publish_config("test-service", {"key": "value2"})
+        payload = await store.get_config("test-service")
+        assert payload.config["key"] == "value2"
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_last_config_preserved_during_disconnect(
+        self, redis_url: str, test_prefix: str, cleanup_keys
+    ):
+        """Test that last known config is preserved in Redis during disconnect.
+
+        This simulates the scenario where native-tools loses connection
+        but the config remains in Redis for when it reconnects.
+        """
+        from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
+
+        # Ploston publishes config
+        ploston_options = RedisConfigStoreOptions(
+            redis_url=redis_url,
+            key_prefix=test_prefix,
+        )
+        ploston_store = RedisConfigStore(ploston_options)
+        await ploston_store.connect()
+
+        await ploston_store.publish_config(
+            "native-tools",
+            {"kafka": {"enabled": True, "bootstrap_servers": "kafka:9092"}},
+        )
+
+        # Native-tools connects and reads config
+        native_store = RedisConfigStore(
+            RedisConfigStoreOptions(redis_url=redis_url, key_prefix=test_prefix)
+        )
+        await native_store.connect()
+
+        payload1 = await native_store.get_config("native-tools")
+        assert payload1 is not None
+        original_version = payload1.version
+
+        # Native-tools disconnects (simulating network issue)
+        await native_store.close()
+
+        # Ploston updates config while native-tools is disconnected
+        await ploston_store.publish_config(
+            "native-tools",
+            {"kafka": {"enabled": True, "bootstrap_servers": "new-kafka:9092"}},
+        )
+
+        # Native-tools reconnects
+        await native_store.connect()
+
+        # Should get the updated config
+        payload2 = await native_store.get_config("native-tools")
+        assert payload2 is not None
+        assert payload2.version == original_version + 1
+        assert payload2.config["kafka"]["bootstrap_servers"] == "new-kafka:9092"
+
+        await ploston_store.close()
+        await native_store.close()
