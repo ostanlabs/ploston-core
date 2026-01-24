@@ -24,9 +24,7 @@ async def get_config(
     if hasattr(config, "to_dict"):
         config_dict = config.to_dict()
     elif hasattr(config, "__dict__"):
-        config_dict = {
-            k: v for k, v in config.__dict__.items() if not k.startswith("_")
-        }
+        config_dict = {k: v for k, v in config.__dict__.items() if not k.startswith("_")}
     else:
         config_dict = dict(config) if config else {}
 
@@ -35,4 +33,3 @@ async def get_config(
         return {section: config_dict.get(section, {})}
 
     return config_dict
-

@@ -16,26 +16,19 @@ from ploston_core.types import StepOutput
 def make_context(inputs=None, steps=None, config=None):
     """Create a TemplateContext for testing."""
     return TemplateContext(
-        inputs=inputs or {},
-        steps=steps or {},
-        config=config or {},
-        execution_id="test-exec-id"
+        inputs=inputs or {}, steps=steps or {}, config=config or {}, execution_id="test-exec-id"
     )
 
 
 def make_step_output(output, step_id="test-step"):
     """Create a StepOutput for testing."""
-    return StepOutput(
-        output=output,
-        success=True,
-        duration_ms=100,
-        step_id=step_id
-    )
+    return StepOutput(output=output, success=True, duration_ms=100, step_id=step_id)
 
 
 # =============================================================================
 # Test Classes
 # =============================================================================
+
 
 @pytest.mark.property
 class TestTemplateInjectionPrevention:
@@ -48,7 +41,7 @@ class TestTemplateInjectionPrevention:
         engine = TemplateEngine()
 
         # User input in context
-        context = make_context(inputs={'user_data': user_input})
+        context = make_context(inputs={"user_data": user_input})
 
         # Template that uses user data
         template = "User said: {{ inputs.user_data }}"
@@ -64,9 +57,9 @@ class TestTemplateInjectionPrevention:
 
     @given(
         st.dictionaries(
-            keys=st.from_regex(r'^[a-z]{1,10}$', fullmatch=True),
+            keys=st.from_regex(r"^[a-z]{1,10}$", fullmatch=True),
             values=st.text(max_size=50),
-            max_size=5
+            max_size=5,
         )
     )
     @settings(max_examples=100)
@@ -95,14 +88,14 @@ class TestTemplateWithValidInputs:
 
     @given(
         inputs=st.dictionaries(
-            keys=st.from_regex(r'^[a-zA-Z][a-zA-Z0-9_]{0,15}$', fullmatch=True),
+            keys=st.from_regex(r"^[a-zA-Z][a-zA-Z0-9_]{0,15}$", fullmatch=True),
             values=st.one_of(
                 st.text(max_size=100),
                 st.integers(),
                 st.floats(allow_nan=False, allow_infinity=False),
-                st.booleans()
+                st.booleans(),
             ),
-            max_size=5
+            max_size=5,
         )
     )
     @settings(max_examples=100)
@@ -130,7 +123,7 @@ class TestTemplateWithValidInputs:
         try:
             result = engine.render_string(text, context)
             # If no template syntax, should return as-is
-            if '{{' not in text and '{%' not in text:
+            if "{{" not in text and "{%" not in text:
                 assert result == text
         except AELError:
             pass  # Expected for invalid templates
@@ -147,7 +140,7 @@ class TestInputVariations:
     def test_list_inputs(self, values):
         """List inputs should be accessible."""
         engine = TemplateEngine()
-        context = make_context(inputs={'items': values})
+        context = make_context(inputs={"items": values})
 
         template = "{{ inputs.items }}"
         result = engine.render_string(template, context)
@@ -155,16 +148,14 @@ class TestInputVariations:
         # Should return the list
         assert result == values
 
-    @given(st.dictionaries(
-        st.from_regex(r'^[a-z]{1,5}$', fullmatch=True),
-        st.integers(),
-        max_size=5
-    ))
+    @given(
+        st.dictionaries(st.from_regex(r"^[a-z]{1,5}$", fullmatch=True), st.integers(), max_size=5)
+    )
     @settings(max_examples=50)
     def test_dict_inputs(self, data):
         """Dict inputs should be accessible."""
         engine = TemplateEngine()
-        context = make_context(inputs={'data': data})
+        context = make_context(inputs={"data": data})
 
         template = "{{ inputs.data }}"
         result = engine.render_string(template, context)

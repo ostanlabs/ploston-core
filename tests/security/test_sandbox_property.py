@@ -16,9 +16,22 @@ class TestImportPatternGeneration:
     """Generate and test import patterns."""
 
     DANGEROUS_MODULES = [
-        'os', 'sys', 'subprocess', 'socket', 'http', 'urllib',
-        'pickle', 'marshal', 'ctypes', 'multiprocessing', 'shutil',
-        'tempfile', 'glob', 'pathlib', 'inspect', 'gc'
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "http",
+        "urllib",
+        "pickle",
+        "marshal",
+        "ctypes",
+        "multiprocessing",
+        "shutil",
+        "tempfile",
+        "glob",
+        "pathlib",
+        "inspect",
+        "gc",
     ]
 
     @given(module=st.sampled_from(DANGEROUS_MODULES))
@@ -45,8 +58,10 @@ class TestCodePatternGeneration:
     """Generate and test code patterns."""
 
     @given(
-        builtin=st.sampled_from(['eval', 'exec', 'compile', 'open', '__import__']),
-        string_value=st.text(max_size=30).filter(lambda x: '"' not in x and "'" not in x and '\n' not in x)
+        builtin=st.sampled_from(["eval", "exec", "compile", "open", "__import__"]),
+        string_value=st.text(max_size=30).filter(
+            lambda x: '"' not in x and "'" not in x and "\n" not in x
+        ),
     )
     @settings(max_examples=50)
     @pytest.mark.asyncio
@@ -81,7 +96,7 @@ class TestArbitraryCodeHandling:
         try:
             result = await sandbox.execute(code, {})
             # If it executed, that's fine - check it returned a result
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             # Unexpected exception - this is concerning
             pytest.fail(f"Sandbox crashed with unexpected error: {type(e).__name__}: {e}")
@@ -94,10 +109,10 @@ class TestArbitraryCodeHandling:
         sandbox = PythonExecSandbox(timeout=2)
 
         try:
-            code = data.decode('utf-8', errors='replace')
+            code = data.decode("utf-8", errors="replace")
             result = await sandbox.execute(code, {})
             # Should not crash
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed with binary input: {type(e).__name__}: {e}")
 
@@ -109,7 +124,7 @@ class TestAttributeChainGeneration:
 
     @given(
         depth=st.integers(min_value=1, max_value=5),
-        attr=st.sampled_from(['__class__', '__bases__', '__mro__', '__dict__'])
+        attr=st.sampled_from(["__class__", "__bases__", "__mro__", "__dict__"]),
     )
     @settings(max_examples=50)
     @pytest.mark.asyncio
@@ -127,17 +142,19 @@ class TestAttributeChainGeneration:
         try:
             result = await sandbox.execute(code, {})
             # Should not crash - may succeed or fail
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed with attribute chain: {type(e).__name__}: {e}")
 
     @given(
-        base_obj=st.sampled_from(['()', '""', '[]', '{}', '0', 'True']),
+        base_obj=st.sampled_from(["()", '""', "[]", "{}", "0", "True"]),
         attrs=st.lists(
-            st.sampled_from(['__class__', '__bases__', '__mro__', '__subclasses__', '__init__', '__globals__']),
+            st.sampled_from(
+                ["__class__", "__bases__", "__mro__", "__subclasses__", "__init__", "__globals__"]
+            ),
             min_size=1,
-            max_size=4
-        )
+            max_size=4,
+        ),
     )
     @settings(max_examples=50)
     @pytest.mark.asyncio
@@ -147,7 +164,7 @@ class TestAttributeChainGeneration:
 
         chain = base_obj
         for attr in attrs:
-            if attr == '__subclasses__':
+            if attr == "__subclasses__":
                 chain += f".{attr}()"
             else:
                 chain += f".{attr}"
@@ -156,7 +173,7 @@ class TestAttributeChainGeneration:
 
         try:
             result = await sandbox.execute(code, {})
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed: {type(e).__name__}: {e}")
 
@@ -167,18 +184,41 @@ class TestDunderMethodGeneration:
     """Generate and test dunder method access patterns."""
 
     DUNDER_METHODS = [
-        '__init__', '__new__', '__del__', '__repr__', '__str__',
-        '__call__', '__getattr__', '__setattr__', '__delattr__',
-        '__getattribute__', '__get__', '__set__', '__delete__',
-        '__slots__', '__dict__', '__class__', '__bases__', '__mro__',
-        '__subclasses__', '__module__', '__name__', '__qualname__',
-        '__code__', '__globals__', '__closure__', '__annotations__',
-        '__builtins__', '__doc__', '__file__', '__loader__',
+        "__init__",
+        "__new__",
+        "__del__",
+        "__repr__",
+        "__str__",
+        "__call__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+        "__getattribute__",
+        "__get__",
+        "__set__",
+        "__delete__",
+        "__slots__",
+        "__dict__",
+        "__class__",
+        "__bases__",
+        "__mro__",
+        "__subclasses__",
+        "__module__",
+        "__name__",
+        "__qualname__",
+        "__code__",
+        "__globals__",
+        "__closure__",
+        "__annotations__",
+        "__builtins__",
+        "__doc__",
+        "__file__",
+        "__loader__",
     ]
 
     @given(
         dunder=st.sampled_from(DUNDER_METHODS),
-        obj=st.sampled_from(['object', 'type', 'str', 'int', 'list', 'dict'])
+        obj=st.sampled_from(["object", "type", "str", "int", "list", "dict"]),
     )
     @settings(max_examples=100)
     @pytest.mark.asyncio
@@ -190,7 +230,7 @@ class TestDunderMethodGeneration:
 
         try:
             result = await sandbox.execute(code, {})
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed accessing {obj}.{dunder}: {type(e).__name__}: {e}")
 
@@ -201,13 +241,15 @@ class TestStringManipulationAttacks:
     """Generate and test string manipulation attack patterns."""
 
     @given(
-        module=st.sampled_from(['os', 'sys', 'subprocess', 'socket']),
-        obfuscation=st.sampled_from([
-            lambda m: f"'{m}'",  # Direct string
-            lambda m: f"''.join(['{m[0]}', '{m[1:]}'])",  # Join
-            lambda m: f"chr({ord(m[0])}) + '{m[1:]}'",  # chr()
-            lambda m: f"'{m[::-1]}'[::-1]",  # Reverse
-        ])
+        module=st.sampled_from(["os", "sys", "subprocess", "socket"]),
+        obfuscation=st.sampled_from(
+            [
+                lambda m: f"'{m}'",  # Direct string
+                lambda m: f"''.join(['{m[0]}', '{m[1:]}'])",  # Join
+                lambda m: f"chr({ord(m[0])}) + '{m[1:]}'",  # chr()
+                lambda m: f"'{m[::-1]}'[::-1]",  # Reverse
+            ]
+        ),
     )
     @settings(max_examples=50)
     @pytest.mark.asyncio
@@ -229,7 +271,7 @@ class TestNestedStructureAttacks:
 
     @given(
         depth=st.integers(min_value=1, max_value=10),
-        structure=st.sampled_from(['list', 'dict', 'tuple'])
+        structure=st.sampled_from(["list", "dict", "tuple"]),
     )
     @settings(max_examples=30)
     @pytest.mark.asyncio
@@ -237,16 +279,16 @@ class TestNestedStructureAttacks:
         """Deeply nested structures should be handled safely."""
         sandbox = PythonExecSandbox(timeout=5)
 
-        if structure == 'list':
+        if structure == "list":
             code = "x = " + "[" * depth + "1" + "]" * depth + "\nresult = x"
-        elif structure == 'dict':
+        elif structure == "dict":
             code = "x = " + "{'a': " * depth + "1" + "}" * depth + "\nresult = x"
         else:  # tuple
             code = "x = " + "(" * depth + "1," + ")" * depth + "\nresult = x"
 
         try:
             result = await sandbox.execute(code, {})
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed with nested {structure}: {type(e).__name__}: {e}")
 
@@ -261,7 +303,7 @@ class TestNestedStructureAttacks:
 
         try:
             result = await sandbox.execute(code, {})
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed with large list: {type(e).__name__}: {e}")
 
@@ -272,10 +314,18 @@ class TestExceptionHandlingAttacks:
     """Generate and test exception handling attack patterns."""
 
     @given(
-        exception=st.sampled_from([
-            'Exception', 'BaseException', 'SystemExit', 'KeyboardInterrupt',
-            'GeneratorExit', 'StopIteration', 'RuntimeError', 'RecursionError'
-        ])
+        exception=st.sampled_from(
+            [
+                "Exception",
+                "BaseException",
+                "SystemExit",
+                "KeyboardInterrupt",
+                "GeneratorExit",
+                "StopIteration",
+                "RuntimeError",
+                "RecursionError",
+            ]
+        )
     )
     @settings(max_examples=30)
     @pytest.mark.asyncio
@@ -292,12 +342,12 @@ except:
 
         try:
             result = await sandbox.execute(code, {})
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
         except Exception as e:
             pytest.fail(f"Sandbox crashed raising {exception}: {type(e).__name__}: {e}")
 
     @pytest.mark.xfail(reason="Sandbox gap: SystemExit/KeyboardInterrupt escape the sandbox")
-    @given(st.sampled_from(['SystemExit', 'KeyboardInterrupt', 'GeneratorExit']))
+    @given(st.sampled_from(["SystemExit", "KeyboardInterrupt", "GeneratorExit"]))
     @settings(max_examples=10)
     @pytest.mark.asyncio
     async def test_system_exceptions_contained(self, exception):
@@ -313,7 +363,7 @@ except:
         try:
             result = await sandbox.execute(code, {})
             # Should return error result, not propagate exception
-            assert hasattr(result, 'success')
+            assert hasattr(result, "success")
             assert not result.success
         except (SystemExit, KeyboardInterrupt, GeneratorExit):
             pytest.fail(f"{exception} escaped the sandbox!")

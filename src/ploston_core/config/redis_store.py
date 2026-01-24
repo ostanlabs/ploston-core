@@ -49,9 +49,7 @@ class RedisConfigStoreOptions:
     channel: str = field(
         default_factory=lambda: os.getenv("REDIS_CONFIG_CHANNEL", "ploston:config:changed")
     )
-    instance_id: str = field(
-        default_factory=lambda: f"ploston-{os.getpid()}"
-    )
+    instance_id: str = field(default_factory=lambda: f"ploston-{os.getpid()}")
     connect_timeout: float = 5.0
     socket_timeout: float = 5.0
 
@@ -110,9 +108,7 @@ class RedisConfigStore:
             # Test connection
             await self._client.ping()
             self._connected = True
-            logger.info(
-                f"Connected to Redis at {self._sanitize_url(self._options.redis_url)}"
-            )
+            logger.info(f"Connected to Redis at {self._sanitize_url(self._options.redis_url)}")
             return True
 
         except ImportError:
@@ -183,9 +179,7 @@ class RedisConfigStore:
                 updated_at=now,
                 updated_by=self._instance_id,
             )
-            await self._client.publish(
-                self._options.channel, notification.model_dump_json()
-            )
+            await self._client.publish(self._options.channel, notification.model_dump_json())
 
             logger.info(f"Published config for {service} (version {version})")
             return True
