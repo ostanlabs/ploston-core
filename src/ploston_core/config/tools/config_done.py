@@ -1,8 +1,13 @@
 """config_done tool handler - apply config and switch to running mode."""
 
-from typing import Any
+import logging
+from typing import Any, Optional
 
 from ploston_core.config import ConfigLoader, Mode, StagedConfig
+from ploston_core.config.redis_store import RedisConfigStore
+from ploston_core.config.service_configs import build_native_tools_config
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_config_done(
@@ -12,6 +17,7 @@ async def handle_config_done(
     mode_manager: Any,
     mcp_manager: Any,
     write_location: str | None,
+    redis_store: Optional[RedisConfigStore] = None,
 ) -> dict[str, Any]:
     """Handle config_done tool call.
 
@@ -22,6 +28,7 @@ async def handle_config_done(
         mode_manager: ModeManager instance
         mcp_manager: MCPClientManager instance
         write_location: Target path for writing config
+        redis_store: Optional RedisConfigStore for publishing config
 
     Returns:
         Success/failure result with capabilities or errors
@@ -96,23 +103,55 @@ async def handle_config_done(
             ],
         }
 
-    # Step 5: Switch to running mode
+    # Step 5: Publish config to Redis (if connected)
+    redis_published = False
+    if redis_store and redis_store.connected:
+        try:
+            # Publish ploston config
+            await redis_store.publish_config("ploston", merged_config)
+
+            # Build and publish native-tools config
+            native_tools_config = build_native_tools_config(merged_config)
+            await redis_store.publish_config("native-tools", native_tools_config)
+
+            # Set mode in Redis
+            await redis_store.set_mode("RUNNING")
+
+            redis_published = True
+            logger.info("Published config to Redis")
+        except Exception as e:
+            logger.error(f"Failed to publish config to Redis: {e}")
+            # Don't fail the whole operation - file was written successfully
+            errors.append({
+                "path": "(redis)",
+                "error": f"Failed to publish to Redis: {e}",
+                "suggestion": "Config was written to file but Redis publish failed",
+            })
+
+    # Step 6: Switch to running mode
     if mode_manager:
         mode_manager.set_mode(Mode.RUNNING)
 
-    # Step 6: Clear staged changes
+    # Step 7: Clear staged changes
     staged_config.clear()
 
     # Calculate total tools
     total_tools = sum(r.get("tools", 0) for r in mcp_results.values())
 
-    return {
+    result = {
         "success": True,
         "mode": "running",
         "config_written_to": target_path,
+        "redis_published": redis_published,
         "capabilities": {
             "workflows": [],  # Would be populated from workflow registry
             "mcp_servers": mcp_results,
             "total_tools": total_tools,
         },
     }
+
+    # Include any non-fatal errors (like Redis publish failure)
+    if errors:
+        result["warnings"] = errors
+
+    return result
