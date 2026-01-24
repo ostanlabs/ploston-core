@@ -43,6 +43,18 @@ from .firecrawl import (
     search_web_firecrawl,
 )
 
+# Health management
+from .health import (
+    DEPENDENCY_TOOLS,
+    DependencyHealth,
+    DependencyStatus,
+    DependencyUnavailableError,
+    HealthManager,
+    OverallStatus,
+    get_health_manager,
+    reset_health_manager,
+)
+
 # Kafka tools (optional - requires kafka-python)
 from .kafka import (
     check_health_kafka,
@@ -105,4 +117,13 @@ __all__ = [
     "map_website_firecrawl",
     "extract_data_firecrawl",
     "check_health_firecrawl",
+    # Health management
+    "HealthManager",
+    "DependencyHealth",
+    "DependencyStatus",
+    "DependencyUnavailableError",
+    "OverallStatus",
+    "DEPENDENCY_TOOLS",
+    "get_health_manager",
+    "reset_health_manager",
 ]
