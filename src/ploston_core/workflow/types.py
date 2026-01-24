@@ -85,6 +85,7 @@ class WorkflowDefinition:
     name: str
     version: str
     description: str | None = None
+    tags: list[str] = field(default_factory=list)
 
     # Configuration
     packages: PackagesConfig | None = None

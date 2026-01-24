@@ -3,7 +3,7 @@
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, TextIO
 
 from ploston_core.logging.colors import (
@@ -132,7 +132,7 @@ class AELLogger:
             context: Additional context data
         """
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "level": level.value,
             "component": component,
             "message": message,

@@ -165,6 +165,7 @@ class MCPClientManager:
         if not conn:
             raise create_error(
                 "TOOL_UNAVAILABLE",
+                tool_name=tool_name,
                 detail=f"MCP server '{server_name}' not found",
             )
 
