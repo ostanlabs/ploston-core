@@ -201,3 +201,174 @@ class TestUnicodeObfuscation:
             # If it succeeded, verify it didn't actually import os
             assert result.result != 'escaped' or 'os' not in str(result.result)
 
+
+@pytest.mark.security
+class TestPickleMarshalAttacks:
+    """Test pickle and marshal attack patterns."""
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    PICKLE_ATTACKS = [
+        # Direct pickle usage
+        ("import pickle; pickle.loads(b'')", "pickle.loads"),
+        ("import pickle; pickle.load(open('/tmp/x', 'rb'))", "pickle.load"),
+
+        # Marshal usage
+        ("import marshal; marshal.loads(b'')", "marshal.loads"),
+
+        # Pickle via __reduce__
+        ("import pickle; class X: __reduce__ = lambda s: (eval, ('1',))", "pickle reduce"),
+
+        # Shelve (uses pickle)
+        ("import shelve; shelve.open('/tmp/x')", "shelve.open"),
+    ]
+
+    @pytest.mark.parametrize("code,description", PICKLE_ATTACKS)
+    @pytest.mark.asyncio
+    async def test_pickle_attack_blocked(self, sandbox, code, description):
+        """Pickle/marshal attacks should be blocked."""
+        full_code = f"{code}\nresult = 'escaped'"
+
+        result = await sandbox.execute(full_code, {})
+
+        assert not result.success, f"Attack should be blocked: {description}"
+
+
+@pytest.mark.security
+class TestSignalHandling:
+    """Test signal handling attack patterns."""
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    SIGNAL_ATTACKS = [
+        # Signal module access
+        ("import signal; signal.alarm(0)", "signal.alarm"),
+        ("import signal; signal.signal(2, lambda s,f: None)", "signal.signal"),
+        ("import signal; signal.raise_signal(2)", "signal.raise_signal"),
+
+        # os.kill
+        ("import os; os.kill(1, 9)", "os.kill"),
+        ("import os; os.killpg(1, 9)", "os.killpg"),
+    ]
+
+    @pytest.mark.parametrize("code,description", SIGNAL_ATTACKS)
+    @pytest.mark.asyncio
+    async def test_signal_attack_blocked(self, sandbox, code, description):
+        """Signal handling attacks should be blocked."""
+        full_code = f"{code}\nresult = 'escaped'"
+
+        result = await sandbox.execute(full_code, {})
+
+        assert not result.success, f"Attack should be blocked: {description}"
+
+
+@pytest.mark.security
+class TestComprehensionAttacks:
+    """Test comprehension-based attack patterns."""
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_list_comp_import(self, sandbox):
+        """Import in list comprehension should be blocked."""
+        code = "[__import__('os') for _ in range(1)]"
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_dict_comp_import(self, sandbox):
+        """Import in dict comprehension should be blocked."""
+        code = "{k: __import__('os') for k in ['a']}"
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_generator_import(self, sandbox):
+        """Import in generator should be blocked."""
+        code = "list((__import__('os') for _ in range(1)))"
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_nested_comprehension_attack(self, sandbox):
+        """Nested comprehension attack should be blocked."""
+        code = "[[__import__('os') for _ in range(1)] for _ in range(1)]"
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+
+@pytest.mark.security
+class TestDecoratorAttacks:
+    """Test decorator-based attack patterns."""
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_decorator_import(self, sandbox):
+        """Decorator with import should be blocked."""
+        code = """
+@(lambda f: __import__('os'))
+def foo(): pass
+result = foo
+"""
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_class_decorator_attack(self, sandbox):
+        """Class decorator attack should be blocked."""
+        code = """
+@(lambda c: setattr(c, 'x', __import__('os')))
+class Foo: pass
+result = Foo.x
+"""
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+
+@pytest.mark.security
+class TestMetaclassAttacks:
+    """Test metaclass-based attack patterns."""
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_metaclass_new_attack(self, sandbox):
+        """Metaclass __new__ attack should be blocked."""
+        code = """
+class Meta(type):
+    def __new__(cls, name, bases, dct):
+        __import__('os')
+        return super().__new__(cls, name, bases, dct)
+
+class Foo(metaclass=Meta): pass
+result = 'escaped'
+"""
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_metaclass_init_attack(self, sandbox):
+        """Metaclass __init__ attack should be blocked."""
+        code = """
+class Meta(type):
+    def __init__(cls, name, bases, dct):
+        __import__('os')
+        super().__init__(name, bases, dct)
+
+class Foo(metaclass=Meta): pass
+result = 'escaped'
+"""
+        result = await sandbox.execute(code, {})
+        assert not result.success
+
