@@ -32,7 +32,7 @@ jobs:
       - name: Trigger ploston build-rc workflow
         uses: peter-evans/repository-dispatch@v2
         with:
-          token: ${{ secrets.PLOSTON_REPO_TOKEN }}
+          token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/ploston
           event-type: core-updated
           client-payload: |
