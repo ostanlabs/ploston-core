@@ -98,3 +98,24 @@ __all__ += [
     "CONFIG_TOOL_SCHEMAS",
     "CONFIGURE_TOOL_SCHEMA",
 ]
+
+# Redis config store
+from .redis_store import (  # noqa: E402
+    ConfigChangeNotification,
+    RedisConfigStore,
+    RedisConfigStoreOptions,
+    ServiceConfigPayload,
+)
+from .service_configs import (  # noqa: E402
+    build_native_tools_config,
+    merge_configs,
+)
+
+__all__ += [
+    "RedisConfigStore",
+    "RedisConfigStoreOptions",
+    "ServiceConfigPayload",
+    "ConfigChangeNotification",
+    "build_native_tools_config",
+    "merge_configs",
+]

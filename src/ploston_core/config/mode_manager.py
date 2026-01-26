@@ -1,7 +1,17 @@
 """AEL Mode Manager - tracks configuration/running mode."""
 
+from __future__ import annotations
+
+import asyncio
+import logging
 from collections.abc import Callable
 from enum import Enum
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .redis_store import RedisConfigStore
+
+logger = logging.getLogger(__name__)
 
 
 class Mode(Enum):
@@ -22,15 +32,23 @@ class ModeManager:
     Mode transitions:
     - CONFIGURATION -> RUNNING: via config_done (validates + connects MCP)
     - RUNNING -> CONFIGURATION: via ael:configure
+
+    Optionally persists mode to Redis for recovery after restart.
     """
 
-    def __init__(self, initial_mode: Mode = Mode.CONFIGURATION):
+    def __init__(
+        self,
+        initial_mode: Mode = Mode.CONFIGURATION,
+        redis_store: Optional["RedisConfigStore"] = None,
+    ):
         """Initialize mode manager.
 
         Args:
             initial_mode: Initial operating mode (default: CONFIGURATION)
+            redis_store: Optional RedisConfigStore for mode persistence
         """
         self._mode = initial_mode
+        self._redis_store = redis_store
         self._on_change_callbacks: list[Callable[[Mode], None]] = []
         self._running_workflow_count = 0
 
@@ -67,12 +85,55 @@ class ModeManager:
         """
         if mode != self._mode:
             self._mode = mode
+
+            # Persist to Redis if available (fire and forget)
+            if self._redis_store and self._redis_store.connected:
+                try:
+                    # Use asyncio to run the coroutine
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self._persist_mode_to_redis(mode))
+                    else:
+                        loop.run_until_complete(self._persist_mode_to_redis(mode))
+                except Exception as e:
+                    logger.warning(f"Failed to persist mode to Redis: {e}")
+
             for callback in self._on_change_callbacks:
                 try:
                     callback(mode)
                 except Exception:
                     # Don't let callback errors break mode transition
                     pass
+
+    async def _persist_mode_to_redis(self, mode: Mode) -> None:
+        """Persist mode to Redis.
+
+        Args:
+            mode: Mode to persist
+        """
+        if self._redis_store:
+            await self._redis_store.set_mode(mode.value.upper())
+
+    async def restore_mode_from_redis(self) -> bool:
+        """Restore mode from Redis.
+
+        Returns:
+            True if mode was restored, False otherwise
+        """
+        if not self._redis_store or not self._redis_store.connected:
+            return False
+
+        try:
+            stored_mode = await self._redis_store.get_mode()
+            if stored_mode:
+                mode = Mode.RUNNING if stored_mode == "RUNNING" else Mode.CONFIGURATION
+                self._mode = mode
+                logger.info(f"Restored mode from Redis: {mode.value}")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to restore mode from Redis: {e}")
+
+        return False
 
     def on_mode_change(self, callback: Callable[[Mode], None]) -> None:
         """Register callback for mode changes.

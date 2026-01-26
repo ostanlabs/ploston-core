@@ -17,14 +17,24 @@ CONFIG_TOOL_SCHEMAS = [
                 "path": {
                     "type": "string",
                     "description": "Dot-notation path to config section. Empty/omit for entire config.",
-                    "examples": ["tools.mcp_servers", "logging.level"],
+                    "examples": ["tools.mcp_servers", "logging.level", "tools.native_tools.kafka"],
                 }
             },
         },
     },
     {
         "name": "ael:config_set",
-        "description": "Stage configuration changes. Changes are NOT applied until config_done is called.",
+        "description": """Stage configuration changes. Changes are NOT applied until config_done is called.
+
+Native-tools configuration paths (under tools.native_tools):
+- kafka: {enabled, bootstrap_servers, producer, consumer, security_protocol}
+- firecrawl: {enabled, base_url, api_key, timeout, max_retries}
+- ollama: {enabled, host, default_model, timeout}
+- filesystem: {enabled, workspace_dir, allowed_paths, denied_paths, max_file_size}
+- network: {enabled, timeout, max_retries, allowed_hosts, denied_hosts}
+- data: {enabled, max_data_size}
+
+Use ${VAR} syntax for secrets (e.g., ${KAFKA_SASL_PASSWORD}).""",
         "inputSchema": {
             "type": "object",
             "required": ["path", "value"],
@@ -32,10 +42,17 @@ CONFIG_TOOL_SCHEMAS = [
                 "path": {
                     "type": "string",
                     "description": "Dot-notation path to set",
-                    "examples": ["tools.mcp_servers.github", "logging.level"],
+                    "examples": [
+                        "tools.native_tools.kafka.enabled",
+                        "tools.native_tools.kafka.bootstrap_servers",
+                        "tools.native_tools.firecrawl.base_url",
+                        "tools.native_tools.ollama.host",
+                        "tools.mcp_servers.github",
+                        "logging.level",
+                    ],
                 },
                 "value": {
-                    "description": "Value to set - can be object for nested config, string, number, etc. Use ${VAR} syntax for env var references."
+                    "description": "Value to set - can be object for nested config, string, number, boolean, etc. Use ${VAR} syntax for env var references."
                 },
             },
         },
@@ -100,6 +117,7 @@ class ConfigToolRegistry:
         config_loader: ConfigLoader,
         mode_manager: Any = None,
         mcp_manager: Any = None,
+        redis_store: Any = None,
     ):
         """Initialize config tool registry.
 
@@ -108,11 +126,13 @@ class ConfigToolRegistry:
             config_loader: ConfigLoader for loading/saving config
             mode_manager: ModeManager for mode transitions
             mcp_manager: MCPClientManager for connecting to MCP servers
+            redis_store: Optional RedisConfigStore for publishing config
         """
         self._staged_config = staged_config
         self._config_loader = config_loader
         self._mode_manager = mode_manager
         self._mcp_manager = mcp_manager
+        self._redis_store = redis_store
         self._write_location: str | None = None
         self._handlers = self._register_handlers()
 
@@ -195,6 +215,7 @@ class ConfigToolRegistry:
             self._mode_manager,
             self._mcp_manager,
             self._write_location,
+            self._redis_store,
         )
 
     async def _handle_configure(self, arguments: dict[str, Any]) -> dict[str, Any]:
