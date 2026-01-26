@@ -145,9 +145,7 @@ class ConfigLoader:
             if use_defaults:
                 # Use default configuration when no file found
                 if self._logger:
-                    self._logger.info(
-                        "No config file found, using default configuration"
-                    )
+                    self._logger.info("No config file found, using default configuration")
                 return self.load_defaults()
             raise create_error(
                 "CONFIG_INVALID",
