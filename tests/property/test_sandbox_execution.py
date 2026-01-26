@@ -4,8 +4,11 @@ Tests sandbox execution with generated code and inputs.
 """
 
 import asyncio
+
 import pytest
-from hypothesis import given, strategies as st, settings, assume
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from ploston_core.sandbox import PythonExecSandbox, SandboxConfig
 
 

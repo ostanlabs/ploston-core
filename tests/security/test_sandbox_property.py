@@ -4,7 +4,8 @@ Uses Hypothesis to generate attack patterns.
 """
 
 import pytest
-from hypothesis import given, strategies as st, settings
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from ploston_core.sandbox import PythonExecSandbox
 
@@ -13,25 +14,25 @@ from ploston_core.sandbox import PythonExecSandbox
 @pytest.mark.property
 class TestImportPatternGeneration:
     """Generate and test import patterns."""
-    
+
     DANGEROUS_MODULES = [
         'os', 'sys', 'subprocess', 'socket', 'http', 'urllib',
         'pickle', 'marshal', 'ctypes', 'multiprocessing', 'shutil',
         'tempfile', 'glob', 'pathlib', 'inspect', 'gc'
     ]
-    
+
     @given(module=st.sampled_from(DANGEROUS_MODULES))
     @settings(max_examples=50)
     @pytest.mark.asyncio
     async def test_import_variations(self, module):
         """Various import syntaxes should all be blocked."""
         sandbox = PythonExecSandbox(timeout=5)
-        
+
         variations = [
             f"import {module}",
             f"from {module} import *",
         ]
-        
+
         for code in variations:
             full_code = f"{code}\nresult = 'escaped'"
             result = await sandbox.execute(full_code, {})
@@ -42,7 +43,7 @@ class TestImportPatternGeneration:
 @pytest.mark.property
 class TestCodePatternGeneration:
     """Generate and test code patterns."""
-    
+
     @given(
         builtin=st.sampled_from(['eval', 'exec', 'compile', 'open', '__import__']),
         string_value=st.text(max_size=30).filter(lambda x: '"' not in x and "'" not in x and '\n' not in x)
@@ -53,7 +54,7 @@ class TestCodePatternGeneration:
         """Calls to dangerous builtins should be blocked regardless of args."""
         sandbox = PythonExecSandbox(timeout=5)
         code = f'result = {builtin}("{string_value}")'
-        
+
         result = await sandbox.execute(code, {})
         assert not result.success, f"Builtin {builtin} should be blocked"
 
@@ -218,7 +219,7 @@ class TestStringManipulationAttacks:
         code = f"result = __import__({obfuscated})"
 
         result = await sandbox.execute(code, {})
-        assert not result.success, f"Import via string obfuscation should be blocked"
+        assert not result.success, "Import via string obfuscation should be blocked"
 
 
 @pytest.mark.security

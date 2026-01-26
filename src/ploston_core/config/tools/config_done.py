@@ -1,7 +1,7 @@
 """config_done tool handler - apply config and switch to running mode."""
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from ploston_core.config import ConfigLoader, Mode, StagedConfig
 from ploston_core.config.redis_store import RedisConfigStore
@@ -17,7 +17,7 @@ async def handle_config_done(
     mode_manager: Any,
     mcp_manager: Any,
     write_location: str | None,
-    redis_store: Optional[RedisConfigStore] = None,
+    redis_store: RedisConfigStore | None = None,
 ) -> dict[str, Any]:
     """Handle config_done tool call.
 
