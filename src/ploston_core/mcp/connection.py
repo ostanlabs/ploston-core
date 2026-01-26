@@ -591,6 +591,7 @@ class MCPConnection:
         if self._status != ConnectionStatus.CONNECTED:
             raise create_error(
                 "TOOL_UNAVAILABLE",
+                tool_name=tool_name,
                 detail=f"MCP server '{self.name}' not connected",
             )
 
@@ -598,6 +599,7 @@ class MCPConnection:
         if tool_name not in self._tools:
             raise create_error(
                 "TOOL_REJECTED",
+                tool_name=tool_name,
                 detail=f"Tool '{tool_name}' not found on server '{self.name}'",
             )
 
