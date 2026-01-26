@@ -116,22 +116,24 @@ class ConfigLoader:
         self._logger = logger
         self._change_callbacks: list[Callable[[AELConfig], None]] = []
 
-    def load(self, path: str | Path | None = None) -> AELConfig:
+    def load(self, path: str | Path | None = None, use_defaults: bool = True) -> AELConfig:
         """Load configuration from file.
 
         Resolution order if path not specified:
         1. AEL_CONFIG_PATH environment variable
         2. ./ael-config.yaml
         3. ~/.ael/config.yaml
+        4. If use_defaults=True and no file found, use default configuration
 
         Args:
             path: Optional path to config file
+            use_defaults: If True, use default config when no file found (default: True)
 
         Returns:
             Loaded AELConfig instance
 
         Raises:
-            AELError: If file not found or invalid
+            AELError: If file not found (when use_defaults=False) or invalid
         """
         # Resolve config path
         if path is None:
@@ -140,6 +142,13 @@ class ConfigLoader:
         config_path = Path(path)
 
         if not config_path.exists():
+            if use_defaults:
+                # Use default configuration when no file found
+                if self._logger:
+                    self._logger.info(
+                        "No config file found, using default configuration"
+                    )
+                return self.load_defaults()
             raise create_error(
                 "CONFIG_INVALID",
                 detail=f"Configuration file not found: {config_path}",
@@ -160,6 +169,16 @@ class ConfigLoader:
 
         # Load from dict
         return self.load_from_dict(data, config_path)
+
+    def load_defaults(self) -> AELConfig:
+        """Load default configuration without a file.
+
+        Creates an AELConfig with all default values from the dataclass.
+
+        Returns:
+            AELConfig with default values
+        """
+        return self.load_from_dict({})
 
     def load_from_dict(self, data: dict[str, Any], config_path: Path | None = None) -> AELConfig:
         """Load configuration from dictionary.
