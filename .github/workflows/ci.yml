@@ -144,6 +144,70 @@ jobs:
           check_name: Test Results
           compare_to_earlier_commit: false
 
+  report-to-dashboard:
+    name: Report to Dashboard
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: always() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-test-results*"
+          path: test-results/
+          merge-multiple: true
+
+      - name: Parse test results
+        id: parse
+        run: |
+          # Count tests from JUnit XML files
+          TOTAL_TESTS=0
+          TOTAL_PASSED=0
+          TOTAL_FAILED=0
+          TOTAL_SKIPPED=0
+
+          for xml in test-results/*.xml; do
+            if [ -f "$xml" ]; then
+              TESTS=$(grep -oP 'tests="\K[0-9]+' "$xml" | head -1 || echo 0)
+              FAILURES=$(grep -oP 'failures="\K[0-9]+' "$xml" | head -1 || echo 0)
+              ERRORS=$(grep -oP 'errors="\K[0-9]+' "$xml" | head -1 || echo 0)
+              SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "$xml" | head -1 || echo 0)
+
+              TOTAL_TESTS=$((TOTAL_TESTS + TESTS))
+              TOTAL_FAILED=$((TOTAL_FAILED + FAILURES + ERRORS))
+              TOTAL_SKIPPED=$((TOTAL_SKIPPED + SKIPPED))
+            fi
+          done
+
+          TOTAL_PASSED=$((TOTAL_TESTS - TOTAL_FAILED - TOTAL_SKIPPED))
+
+          echo "total=$TOTAL_TESTS" >> $GITHUB_OUTPUT
+          echo "passed=$TOTAL_PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$TOTAL_FAILED" >> $GITHUB_OUTPUT
+          echo "skipped=$TOTAL_SKIPPED" >> $GITHUB_OUTPUT
+
+      - name: Report to meta-repo dashboard
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.META_REPO_TOKEN }}
+          repository: ostanlabs/agent-execution-layer
+          event-type: ci-results
+          client-payload: |
+            {
+              "package": "ploston-core",
+              "sha": "${{ github.sha }}",
+              "short_sha": "${{ github.sha }}",
+              "run_id": "${{ github.run_id }}",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "tests": {
+                "total": ${{ steps.parse.outputs.total }},
+                "passed": ${{ steps.parse.outputs.passed }},
+                "failed": ${{ steps.parse.outputs.failed }},
+                "skipped": ${{ steps.parse.outputs.skipped }}
+              },
+              "status": "${{ needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success' && 'success' || 'failure' }}"
+            }
+
   build:
     name: Build
     runs-on: ubuntu-latest
