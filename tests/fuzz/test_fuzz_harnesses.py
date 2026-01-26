@@ -36,16 +36,23 @@ class TestSandboxFuzzing:
         try:
             # Note: execute is async, but we test sync behavior
             import asyncio
+
             result = asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
             # If execution succeeds, result should have expected structure
-            assert hasattr(result, 'success') or isinstance(result, dict)
+            assert hasattr(result, "success") or isinstance(result, dict)
         except Exception as e:
             # Exceptions are acceptable, but should be handled gracefully
             assert isinstance(
                 e,
-                SyntaxError | ValueError | TypeError |
-                NameError | AttributeError | RuntimeError |
-                RecursionError | MemoryError | Exception
+                SyntaxError
+                | ValueError
+                | TypeError
+                | NameError
+                | AttributeError
+                | RuntimeError
+                | RecursionError
+                | MemoryError
+                | Exception,
             )
 
     @given(st.binary(min_size=0, max_size=500))
@@ -57,12 +64,13 @@ class TestSandboxFuzzing:
         sandbox = PythonExecSandbox()
 
         try:
-            code = data.decode('utf-8', errors='replace')
+            code = data.decode("utf-8", errors="replace")
         except Exception:
             return  # Skip if can't decode
 
         try:
             import asyncio
+
             asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
         except Exception:
             pass  # Exceptions are acceptable
@@ -79,14 +87,15 @@ class TestSandboxFuzzing:
         code_parts = []
         for i, ident in enumerate(identifiers):
             # Clean identifier to be valid Python
-            clean_ident = ''.join(c if c.isalnum() or c == '_' else '_' for c in ident)
+            clean_ident = "".join(c if c.isalnum() or c == "_" else "_" for c in ident)
             if clean_ident and not clean_ident[0].isdigit():
                 code_parts.append(f"{clean_ident} = {i}")
 
         if code_parts:
-            code = '\n'.join(code_parts)
+            code = "\n".join(code_parts)
             try:
                 import asyncio
+
                 asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
             except Exception:
                 pass
@@ -104,6 +113,7 @@ class TestSandboxFuzzing:
 
         try:
             import asyncio
+
             asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
         except Exception:
             pass
@@ -136,23 +146,25 @@ class TestYAMLFuzzing:
         import yaml
 
         try:
-            yaml_str = data.decode('utf-8', errors='replace')
+            yaml_str = data.decode("utf-8", errors="replace")
             yaml.safe_load(yaml_str)  # Result intentionally unused
         except Exception:
             pass
 
-    @given(st.dictionaries(
-        keys=st.text(min_size=1, max_size=20),
-        values=st.one_of(
-            st.text(max_size=50),
-            st.integers(),
-            st.floats(allow_nan=False),
-            st.booleans(),
-            st.none()
-        ),
-        min_size=0,
-        max_size=20
-    ))
+    @given(
+        st.dictionaries(
+            keys=st.text(min_size=1, max_size=20),
+            values=st.one_of(
+                st.text(max_size=50),
+                st.integers(),
+                st.floats(allow_nan=False),
+                st.booleans(),
+                st.none(),
+            ),
+            min_size=0,
+            max_size=20,
+        )
+    )
     @settings(max_examples=50, deadline=5000)
     def test_fuzz_012_random_dict_to_yaml(self, data: dict):
         """FUZZ-012: Fuzz YAML round-trip with random dicts."""
@@ -166,16 +178,15 @@ class TestYAMLFuzzing:
         except Exception:
             pass
 
-    @given(st.lists(
-        st.one_of(
-            st.text(max_size=30),
-            st.integers(),
-            st.floats(allow_nan=False),
-            st.booleans()
-        ),
-        min_size=0,
-        max_size=20
-    ))
+    @given(
+        st.lists(
+            st.one_of(
+                st.text(max_size=30), st.integers(), st.floats(allow_nan=False), st.booleans()
+            ),
+            min_size=0,
+            max_size=20,
+        )
+    )
     @settings(max_examples=50, deadline=5000)
     def test_fuzz_013_random_list_to_yaml(self, data: list):
         """FUZZ-013: Fuzz YAML round-trip with random lists."""
@@ -193,17 +204,19 @@ class TestYAMLFuzzing:
 class TestWorkflowFuzzing:
     """Fuzz tests for workflow parsing and validation."""
 
-    @given(st.dictionaries(
-        keys=st.sampled_from(['name', 'version', 'steps', 'inputs', 'output', 'description']),
-        values=st.one_of(
-            st.text(max_size=50),
-            st.integers(),
-            st.lists(st.text(max_size=20), max_size=5),
-            st.dictionaries(st.text(max_size=10), st.text(max_size=20), max_size=3)
-        ),
-        min_size=0,
-        max_size=6
-    ))
+    @given(
+        st.dictionaries(
+            keys=st.sampled_from(["name", "version", "steps", "inputs", "output", "description"]),
+            values=st.one_of(
+                st.text(max_size=50),
+                st.integers(),
+                st.lists(st.text(max_size=20), max_size=5),
+                st.dictionaries(st.text(max_size=10), st.text(max_size=20), max_size=3),
+            ),
+            min_size=0,
+            max_size=6,
+        )
+    )
     @settings(max_examples=100, deadline=5000)
     def test_fuzz_020_random_workflow_dicts(self, workflow: dict):
         """FUZZ-020: Fuzz workflow validation with random dicts."""
@@ -215,19 +228,20 @@ class TestWorkflowFuzzing:
         try:
             result = validator.validate(workflow)
             # Validation should return a result object
-            assert hasattr(result, 'is_valid') or isinstance(result, bool | dict)
+            assert hasattr(result, "is_valid") or isinstance(result, bool | dict)
         except Exception as e:
             # Exceptions should be handled gracefully
             assert isinstance(e, ValueError | TypeError | KeyError | AttributeError | Exception)
 
-    @given(st.lists(
-        st.fixed_dictionaries({
-            'id': st.text(min_size=1, max_size=20),
-            'code': st.text(max_size=100)
-        }),
-        min_size=0,
-        max_size=10
-    ))
+    @given(
+        st.lists(
+            st.fixed_dictionaries(
+                {"id": st.text(min_size=1, max_size=20), "code": st.text(max_size=100)}
+            ),
+            min_size=0,
+            max_size=10,
+        )
+    )
     @settings(max_examples=50, deadline=5000)
     def test_fuzz_021_random_steps(self, steps: list):
         """FUZZ-021: Fuzz workflow with random steps."""
@@ -236,12 +250,7 @@ class TestWorkflowFuzzing:
         mock_registry = create_mock_tool_registry()
         validator = WorkflowValidator(mock_registry)
 
-        workflow = {
-            'name': 'fuzz-test',
-            'version': '1.0',
-            'steps': steps,
-            'output': 'result'
-        }
+        workflow = {"name": "fuzz-test", "version": "1.0", "steps": steps, "output": "result"}
 
         try:
             validator.validate(workflow)  # Result intentionally unused
@@ -271,16 +280,13 @@ class TestTemplateFuzzing:
     @given(
         st.text(min_size=0, max_size=200),
         st.dictionaries(
-            keys=st.text(min_size=1, max_size=20, alphabet='abcdefghijklmnopqrstuvwxyz'),
+            keys=st.text(min_size=1, max_size=20, alphabet="abcdefghijklmnopqrstuvwxyz"),
             values=st.one_of(
-                st.text(max_size=50),
-                st.integers(),
-                st.floats(allow_nan=False),
-                st.booleans()
+                st.text(max_size=50), st.integers(), st.floats(allow_nan=False), st.booleans()
             ),
             min_size=0,
-            max_size=10
-        )
+            max_size=10,
+        ),
     )
     @settings(max_examples=50, deadline=5000)
     def test_fuzz_031_template_with_random_context(self, template: str, context: dict):

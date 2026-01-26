@@ -32,19 +32,53 @@ class TestClassHierarchyEscapes:
 
     HIERARCHY_ESCAPES = [
         # Basic class hierarchy access
-        pytest.param("().__class__.__bases__[0].__subclasses__()", "tuple class hierarchy", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
-        pytest.param("''.__class__.__mro__[1].__subclasses__()", "string MRO traversal", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
-        pytest.param("[].__class__.__bases__[0].__subclasses__()", "list class hierarchy", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
-        pytest.param("{}.__class__.__bases__[0].__subclasses__()", "dict class hierarchy", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
-
+        pytest.param(
+            "().__class__.__bases__[0].__subclasses__()",
+            "tuple class hierarchy",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
+        pytest.param(
+            "''.__class__.__mro__[1].__subclasses__()",
+            "string MRO traversal",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
+        pytest.param(
+            "[].__class__.__bases__[0].__subclasses__()",
+            "list class hierarchy",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
+        pytest.param(
+            "{}.__class__.__bases__[0].__subclasses__()",
+            "dict class hierarchy",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
         # Subclass enumeration
-        pytest.param("[x for x in ().__class__.__bases__[0].__subclasses__() if 'warning' in str(x)]", "warning subclass", marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked")),
-        pytest.param("[x for x in ().__class__.__bases__[0].__subclasses__() if 'file' in str(x).lower()]", "file subclass", marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked")),
-        pytest.param("[x for x in ().__class__.__bases__[0].__subclasses__() if 'os' in str(x).lower()]", "os subclass", marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked")),
-
+        pytest.param(
+            "[x for x in ().__class__.__bases__[0].__subclasses__() if 'warning' in str(x)]",
+            "warning subclass",
+            marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked"),
+        ),
+        pytest.param(
+            "[x for x in ().__class__.__bases__[0].__subclasses__() if 'file' in str(x).lower()]",
+            "file subclass",
+            marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked"),
+        ),
+        pytest.param(
+            "[x for x in ().__class__.__bases__[0].__subclasses__() if 'os' in str(x).lower()]",
+            "os subclass",
+            marks=pytest.mark.xfail(reason="Sandbox gap: subclass enumeration not blocked"),
+        ),
         # Deep hierarchy traversal
-        pytest.param("().__class__.__bases__[0].__bases__", "deep bases access", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
-        pytest.param("().__class__.__mro__[-1].__subclasses__()", "object subclasses via MRO", marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked")),
+        pytest.param(
+            "().__class__.__bases__[0].__bases__",
+            "deep bases access",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
+        pytest.param(
+            "().__class__.__mro__[-1].__subclasses__()",
+            "object subclasses via MRO",
+            marks=pytest.mark.xfail(reason="Sandbox gap: class hierarchy not blocked"),
+        ),
     ]
 
     @pytest.mark.parametrize("code,description", HIERARCHY_ESCAPES)
@@ -73,14 +107,32 @@ class TestCodeObjectEscapes:
 
     CODE_OBJECT_ESCAPES = [
         # Code object access
-        pytest.param("(lambda: None).__code__", "lambda code object", marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked")),
-        pytest.param("(lambda x: x).__code__.co_code", "code bytecode access", marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked")),
-        pytest.param("(lambda: None).__code__.co_consts", "code constants access", marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked")),
-
+        pytest.param(
+            "(lambda: None).__code__",
+            "lambda code object",
+            marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked"),
+        ),
+        pytest.param(
+            "(lambda x: x).__code__.co_code",
+            "code bytecode access",
+            marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked"),
+        ),
+        pytest.param(
+            "(lambda: None).__code__.co_consts",
+            "code constants access",
+            marks=pytest.mark.xfail(reason="Sandbox gap: code object access not blocked"),
+        ),
         # Function manipulation
-        pytest.param("(lambda: None).__globals__", "function globals", marks=pytest.mark.xfail(reason="Sandbox gap: function globals not blocked")),
-        pytest.param("(lambda: None).__closure__", "function closure", marks=pytest.mark.xfail(reason="Sandbox gap: function closure not blocked")),
-
+        pytest.param(
+            "(lambda: None).__globals__",
+            "function globals",
+            marks=pytest.mark.xfail(reason="Sandbox gap: function globals not blocked"),
+        ),
+        pytest.param(
+            "(lambda: None).__closure__",
+            "function closure",
+            marks=pytest.mark.xfail(reason="Sandbox gap: function closure not blocked"),
+        ),
         # Code object construction attempts
         ("type((lambda:0).__code__)", "code type access"),
     ]
@@ -111,15 +163,23 @@ class TestBuiltinsRecovery:
 
     BUILTINS_ESCAPES = [
         # Direct builtins access - sandbox provides sanitized builtins
-        pytest.param("__builtins__", "direct builtins", marks=pytest.mark.xfail(reason="Sandbox gap: builtins accessible (though sanitized)")),
+        pytest.param(
+            "__builtins__",
+            "direct builtins",
+            marks=pytest.mark.xfail(reason="Sandbox gap: builtins accessible (though sanitized)"),
+        ),
         ("__builtins__.__dict__", "builtins dict"),  # This should fail - dict access blocked
-
         # Builtins via class
-        ("().__class__.__bases__[0].__subclasses__()[0].__init__.__globals__['__builtins__']", "builtins via subclass"),
-
+        (
+            "().__class__.__bases__[0].__subclasses__()[0].__init__.__globals__['__builtins__']",
+            "builtins via subclass",
+        ),
         # Builtins via function
-        pytest.param("(lambda: 0).__globals__['__builtins__']", "builtins via lambda globals", marks=pytest.mark.xfail(reason="Sandbox gap: function globals not blocked")),
-
+        pytest.param(
+            "(lambda: 0).__globals__['__builtins__']",
+            "builtins via lambda globals",
+            marks=pytest.mark.xfail(reason="Sandbox gap: function globals not blocked"),
+        ),
         # Builtins via type
         ("type.__dict__", "type dict access"),
     ]
@@ -148,15 +208,12 @@ class TestAttributeAccessEscapes:
         # getattr chains
         ("getattr(getattr((), '__class__'), '__bases__')", "nested getattr"),
         ("getattr(type, '__dict__')", "type dict via getattr"),
-
         # vars() access
         ("vars(type)", "vars on type"),
         ("vars(object)", "vars on object"),
-
         # dir() enumeration
         ("dir(type)", "dir on type"),
         ("[x for x in dir(type) if 'base' in x]", "filtered dir"),
-
         # hasattr probing
         ("hasattr(type, '__bases__')", "hasattr probing"),
     ]
@@ -188,13 +245,23 @@ class TestFormatStringEscapes:
     FORMAT_ESCAPES = [
         # Format string class access - returns string representation only
         ("'{0.__class__}'.format('')", "format class access"),
-        pytest.param("'{0.__class__.__mro__}'.format('')", "format MRO access", marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape")),
-        pytest.param("'{0.__class__.__bases__}'.format('')", "format bases access", marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape")),
-
+        pytest.param(
+            "'{0.__class__.__mro__}'.format('')",
+            "format MRO access",
+            marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape"),
+        ),
+        pytest.param(
+            "'{0.__class__.__bases__}'.format('')",
+            "format bases access",
+            marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape"),
+        ),
         # f-string class access
         ("f'{().__class__}'", "f-string class"),
-        pytest.param("f'{().__class__.__bases__}'", "f-string bases", marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape")),
-
+        pytest.param(
+            "f'{().__class__.__bases__}'",
+            "f-string bases",
+            marks=pytest.mark.xfail(reason="Format strings return string repr, not actual escape"),
+        ),
         # Template string
         ("'{x.__class__}'.format(x=())", "template class access"),
     ]
@@ -224,12 +291,10 @@ class TestEnvironmentEscapes:
     ENV_ESCAPES = [
         # Direct os.environ
         ("__import__('os').environ", "os.environ via import"),
-
         # File descriptor tricks (Linux-specific)
         ("open('/proc/self/environ')", "proc environ"),
         ("open('/proc/self/fd/0')", "proc fd"),
         ("open('/proc/self/cmdline')", "proc cmdline"),
-
         # Environment via subprocess
         ("__import__('subprocess').check_output('env', shell=True)", "env via subprocess"),
     ]
@@ -259,10 +324,8 @@ class TestGCManipulation:
         ("import gc; gc.get_objects()", "gc.get_objects"),
         ("import gc; gc.get_referrers(())", "gc.get_referrers"),
         ("import gc; gc.get_referents(())", "gc.get_referents"),
-
         # gc via __import__
         ("__import__('gc').get_objects()", "gc via __import__"),
-
         # gc disable (could allow memory attacks)
         ("import gc; gc.disable()", "gc.disable"),
     ]
@@ -293,11 +356,9 @@ class TestFrameInspection:
         ("import sys; sys._getframe().f_globals", "frame globals"),
         ("import sys; sys._getframe().f_locals", "frame locals"),
         ("import sys; sys._getframe().f_back", "frame back"),
-
         # inspect module
         ("import inspect; inspect.currentframe()", "inspect.currentframe"),
         ("import inspect; inspect.stack()", "inspect.stack"),
-
         # traceback module
         ("import traceback; traceback.extract_stack()", "traceback.extract_stack"),
     ]
@@ -327,10 +388,8 @@ class TestCtypesEscapes:
         ("import ctypes", "ctypes import"),
         ("from ctypes import *", "ctypes star import"),
         ("import ctypes; ctypes.CDLL(None)", "ctypes CDLL"),
-
         # ctypes via __import__
         ("__import__('ctypes')", "ctypes via __import__"),
-
         # cffi (similar to ctypes)
         ("import cffi", "cffi import"),
         ("from cffi import FFI", "cffi FFI import"),

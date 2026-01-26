@@ -18,7 +18,7 @@ from ploston_core.types import ConnectionStatus
 # =============================================================================
 
 # Valid method names
-valid_method = st.from_regex(r'^[a-z][a-z0-9_/]{0,30}$', fullmatch=True)
+valid_method = st.from_regex(r"^[a-z][a-z0-9_/]{0,30}$", fullmatch=True)
 
 # Valid request IDs
 valid_id = st.integers(min_value=1, max_value=2**31)
@@ -37,25 +37,22 @@ json_values = st.recursive(
     lambda children: st.one_of(
         st.lists(children, max_size=5),
         st.dictionaries(
-            st.from_regex(r'^[a-z][a-z0-9_]{0,10}$', fullmatch=True),
-            children,
-            max_size=5
-        )
+            st.from_regex(r"^[a-z][a-z0-9_]{0,10}$", fullmatch=True), children, max_size=5
+        ),
     ),
-    max_leaves=20
+    max_leaves=20,
 )
 
 # Valid params dict
 valid_params = st.dictionaries(
-    st.from_regex(r'^[a-z][a-z0-9_]{0,15}$', fullmatch=True),
-    json_values,
-    max_size=5
+    st.from_regex(r"^[a-z][a-z0-9_]{0,15}$", fullmatch=True), json_values, max_size=5
 )
 
 
 # =============================================================================
 # Property Tests for JSON-RPC Request Building
 # =============================================================================
+
 
 @pytest.mark.property
 class TestJSONRPCRequest:
@@ -108,6 +105,7 @@ class TestJSONRPCRequest:
 # Property Tests for JSON-RPC Notification Building
 # =============================================================================
 
+
 @pytest.mark.property
 class TestJSONRPCNotification:
     """Property tests for JSON-RPC notification building."""
@@ -136,6 +134,7 @@ class TestJSONRPCNotification:
 # =============================================================================
 # Property Tests for JSON-RPC Response Building
 # =============================================================================
+
 
 @pytest.mark.property
 class TestJSONRPCResponse:
@@ -166,7 +165,9 @@ class TestJSONRPCResponse:
         assert response["error"]["message"] == message
         assert "result" not in response
 
-    @given(valid_id, st.integers(), st.text(max_size=100), json_values.filter(lambda x: x is not None))
+    @given(
+        valid_id, st.integers(), st.text(max_size=100), json_values.filter(lambda x: x is not None)
+    )
     @settings(max_examples=30)
     def test_error_response_with_data(self, req_id, code, message, data):
         """Error responses can include additional data when provided."""
@@ -188,6 +189,7 @@ class TestJSONRPCResponse:
 # Property Tests for JSON-RPC Parsing
 # =============================================================================
 
+
 @pytest.mark.property
 class TestJSONRPCParsing:
     """Property tests for JSON-RPC message parsing."""
@@ -208,7 +210,7 @@ class TestJSONRPCParsing:
     def test_parse_bytes(self, method, params, req_id):
         """Parsing bytes should work the same as string."""
         request = JSONRPCMessage.request(method, params=params, id=req_id)
-        json_bytes = json.dumps(request).encode('utf-8')
+        json_bytes = json.dumps(request).encode("utf-8")
 
         parsed = JSONRPCMessage.parse(json_bytes)
 
@@ -232,6 +234,7 @@ class TestJSONRPCParsing:
 # =============================================================================
 # Property Tests for Response Classification
 # =============================================================================
+
 
 @pytest.mark.property
 class TestResponseClassification:
@@ -268,33 +271,26 @@ class TestResponseClassification:
 # Property Tests for MCP Types
 # =============================================================================
 
+
 @pytest.mark.property
 class TestMCPTypes:
     """Property tests for MCP data types."""
 
     @given(
-        st.from_regex(r'^[a-z][a-z0-9_]{0,20}$', fullmatch=True),
+        st.from_regex(r"^[a-z][a-z0-9_]{0,20}$", fullmatch=True),
         st.text(max_size=200),
-        valid_params
+        valid_params,
     )
     @settings(max_examples=30)
     def test_tool_schema_creation(self, name, description, input_schema):
         """ToolSchema should be creatable with valid data."""
-        schema = ToolSchema(
-            name=name,
-            description=description,
-            input_schema=input_schema
-        )
+        schema = ToolSchema(name=name, description=description, input_schema=input_schema)
 
         assert schema.name == name
         assert schema.description == description
         assert schema.input_schema == input_schema
 
-    @given(
-        st.booleans(),
-        json_values,
-        st.integers(min_value=0, max_value=10000)
-    )
+    @given(st.booleans(), json_values, st.integers(min_value=0, max_value=10000))
     @settings(max_examples=30)
     def test_mcp_call_result_creation(self, success, content, duration_ms):
         """MCPCallResult should be creatable with valid data."""
@@ -302,7 +298,7 @@ class TestMCPTypes:
             success=success,
             content=content,
             raw_response={"jsonrpc": "2.0", "id": 1, "result": content},
-            duration_ms=duration_ms
+            duration_ms=duration_ms,
         )
 
         assert result.success == success
@@ -310,17 +306,15 @@ class TestMCPTypes:
         assert result.duration_ms == duration_ms
 
     @given(
-        st.from_regex(r'^[a-z][a-z0-9_-]{0,20}$', fullmatch=True),
-        st.sampled_from([ConnectionStatus.CONNECTED, ConnectionStatus.DISCONNECTED, ConnectionStatus.CONNECTING])
+        st.from_regex(r"^[a-z][a-z0-9_-]{0,20}$", fullmatch=True),
+        st.sampled_from(
+            [ConnectionStatus.CONNECTED, ConnectionStatus.DISCONNECTED, ConnectionStatus.CONNECTING]
+        ),
     )
     @settings(max_examples=30)
     def test_server_status_creation(self, name, status):
         """ServerStatus should be creatable with valid data."""
-        server_status = ServerStatus(
-            name=name,
-            status=status,
-            tools=["tool1", "tool2"]
-        )
+        server_status = ServerStatus(name=name, status=status, tools=["tool1", "tool2"])
 
         assert server_status.name == name
         assert server_status.status == status
@@ -331,22 +325,17 @@ class TestMCPTypes:
 # Property Tests for Tool Call Message Building
 # =============================================================================
 
+
 @pytest.mark.property
 class TestToolCallMessages:
     """Property tests for tool call message building."""
 
-    @given(
-        st.from_regex(r'^[a-z][a-z0-9_]{0,20}$', fullmatch=True),
-        valid_params,
-        valid_id
-    )
+    @given(st.from_regex(r"^[a-z][a-z0-9_]{0,20}$", fullmatch=True), valid_params, valid_id)
     @settings(max_examples=50)
     def test_tools_call_request_structure(self, tool_name, arguments, req_id):
         """tools/call requests should have correct structure."""
         request = JSONRPCMessage.request(
-            "tools/call",
-            params={"name": tool_name, "arguments": arguments},
-            id=req_id
+            "tools/call", params={"name": tool_name, "arguments": arguments}, id=req_id
         )
 
         assert request["method"] == "tools/call"
@@ -371,9 +360,9 @@ class TestToolCallMessages:
             params={
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0"}
+                "clientInfo": {"name": "test", "version": "1.0"},
             },
-            id=req_id
+            id=req_id,
         )
 
         assert request["method"] == "initialize"

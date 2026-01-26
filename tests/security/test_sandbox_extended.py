@@ -33,7 +33,6 @@ class TestExtendedBlockedImports:
         ("import mmap", "mmap module"),
         ("import sysconfig", "sysconfig module"),
         ("import platform", "platform module"),
-
         # Additional network modules
         ("import ssl", "ssl module"),
         ("import ftplib", "ftplib module"),
@@ -43,7 +42,6 @@ class TestExtendedBlockedImports:
         ("import telnetlib", "telnetlib module"),
         ("import asyncio", "asyncio module"),
         ("import selectors", "selectors module"),
-
         # Code execution modules
         ("import code", "code module"),
         ("import codeop", "codeop module"),
@@ -51,7 +49,6 @@ class TestExtendedBlockedImports:
         ("import py_compile", "py_compile module"),
         ("import dis", "dis module"),
         ("import ast", "ast module"),
-
         # Debugging modules
         ("import pdb", "pdb module"),
         ("import bdb", "bdb module"),
@@ -59,16 +56,13 @@ class TestExtendedBlockedImports:
         ("import cProfile", "cProfile module"),
         ("import trace", "trace module"),
         ("import timeit", "timeit module"),
-
         # Serialization modules
         ("import copyreg", "copyreg module"),
         ("import _pickle", "_pickle module"),
-
         # Indirect imports with aliases
         ("import os as o", "os with alias"),
         ("import sys as s", "sys with alias"),
         ("import subprocess as sp", "subprocess with alias"),
-
         # From imports with aliases
         ("from os import system as sys_call", "os.system with alias"),
         ("from subprocess import Popen as P", "Popen with alias"),
@@ -99,21 +93,21 @@ class TestResourceLimitsExtended:
         code = "result = 'x' * (10 ** 7)"  # 10MB string
         result = await sandbox.execute(code, {})
         # Should either succeed (if memory available) or fail gracefully
-        assert hasattr(result, 'success')
+        assert hasattr(result, "success")
 
     @pytest.mark.asyncio
     async def test_memory_allocation_large_list(self, sandbox):
         """Large list allocation should be handled."""
         code = "result = [0] * (10 ** 7)"  # 10M element list
         result = await sandbox.execute(code, {})
-        assert hasattr(result, 'success')
+        assert hasattr(result, "success")
 
     @pytest.mark.asyncio
     async def test_memory_allocation_large_dict(self, sandbox):
         """Large dict allocation should be handled."""
         code = "result = {i: i for i in range(10 ** 6)}"  # 1M key dict
         result = await sandbox.execute(code, {})
-        assert hasattr(result, 'success')
+        assert hasattr(result, "success")
 
     @pytest.mark.asyncio
     async def test_cpu_intensive_loop(self, sandbox):
@@ -125,7 +119,7 @@ for i in range(10 ** 6):
 result = total
 """
         result = await sandbox.execute(code, {})
-        assert hasattr(result, 'success')
+        assert hasattr(result, "success")
 
     @pytest.mark.asyncio
     async def test_nested_function_calls(self, sandbox):
@@ -169,20 +163,15 @@ class TestUnicodeObfuscation:
         # Unicode lookalikes for 'import'
         ("ⅰmport os", "unicode i in import"),
         ("іmport os", "cyrillic i in import"),
-
         # Unicode lookalikes for 'eval'
         ("еval('1+1')", "cyrillic e in eval"),
-
         # Unicode lookalikes for 'exec'
         ("ехec('x=1')", "cyrillic e and x in exec"),
-
         # Unicode lookalikes for 'open'
         ("оpen('/etc/passwd')", "cyrillic o in open"),
-
         # Zero-width characters
         ("im\u200bport os", "zero-width space in import"),
         ("ev\u200bal('1')", "zero-width space in eval"),
-
         # Right-to-left override
         ("so tropmi\u202e", "RTL override"),
     ]
@@ -199,7 +188,7 @@ class TestUnicodeObfuscation:
         # Should NOT successfully import os or execute dangerous code
         if result.success:
             # If it succeeded, verify it didn't actually import os
-            assert result.result != 'escaped' or 'os' not in str(result.result)
+            assert result.result != "escaped" or "os" not in str(result.result)
 
 
 @pytest.mark.security
@@ -214,13 +203,10 @@ class TestPickleMarshalAttacks:
         # Direct pickle usage
         ("import pickle; pickle.loads(b'')", "pickle.loads"),
         ("import pickle; pickle.load(open('/tmp/x', 'rb'))", "pickle.load"),
-
         # Marshal usage
         ("import marshal; marshal.loads(b'')", "marshal.loads"),
-
         # Pickle via __reduce__
         ("import pickle; class X: __reduce__ = lambda s: (eval, ('1',))", "pickle reduce"),
-
         # Shelve (uses pickle)
         ("import shelve; shelve.open('/tmp/x')", "shelve.open"),
     ]
@@ -249,7 +235,6 @@ class TestSignalHandling:
         ("import signal; signal.alarm(0)", "signal.alarm"),
         ("import signal; signal.signal(2, lambda s,f: None)", "signal.signal"),
         ("import signal; signal.raise_signal(2)", "signal.raise_signal"),
-
         # os.kill
         ("import os; os.kill(1, 9)", "os.kill"),
         ("import os; os.killpg(1, 9)", "os.killpg"),
@@ -371,4 +356,3 @@ result = 'escaped'
 """
         result = await sandbox.execute(code, {})
         assert not result.success
-
