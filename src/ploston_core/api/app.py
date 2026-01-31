@@ -17,6 +17,8 @@ from ploston_core.api.routers import (
     config_router,
     execution_router,
     health_router,
+    runner_router,
+    runner_static_router,
     tool_router,
     workflow_router,
 )
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from ploston_core.invoker import ToolInvoker
     from ploston_core.logging import AELLogger
     from ploston_core.registry import ToolRegistry
+    from ploston_core.runner_management import RunnerRegistry
     from ploston_core.workflow import WorkflowEngine, WorkflowRegistry
 
 
@@ -36,6 +39,7 @@ def create_rest_app(
     tool_invoker: "ToolInvoker",
     config: RESTConfig,
     logger: "AELLogger | None" = None,
+    runner_registry: "RunnerRegistry | None" = None,
 ) -> FastAPI:
     """Create FastAPI application with all routes.
 
@@ -46,6 +50,7 @@ def create_rest_app(
         tool_invoker: Invoker for tool calls
         config: REST API configuration
         logger: Optional AEL logger
+        runner_registry: Optional runner registry for runner management
 
     Returns:
         Configured FastAPI application
@@ -66,6 +71,7 @@ def create_rest_app(
     app.state.tool_invoker = tool_invoker
     app.state.config = config
     app.state.logger = logger
+    app.state.runner_registry = runner_registry
 
     # Create execution store
     if config.execution_store_sqlite_path:
@@ -115,5 +121,9 @@ def create_rest_app(
     app.include_router(workflow_router, prefix=config.prefix)
     app.include_router(execution_router, prefix=config.prefix)
     app.include_router(tool_router, prefix=config.prefix)
+    app.include_router(runner_router, prefix=config.prefix)
+
+    # Runner static endpoints (no prefix - /runner/*)
+    app.include_router(runner_static_router)
 
     return app

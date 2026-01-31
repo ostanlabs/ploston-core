@@ -10,7 +10,7 @@ proper component initialization.
 
 import os
 import sys
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from ploston_core.config import ConfigLoader, MCPHTTPConfig
 from ploston_core.engine import WorkflowEngine
@@ -25,6 +25,10 @@ from ploston_core.telemetry import OTLPExporterConfig, TelemetryConfig, setup_te
 from ploston_core.template import TemplateEngine
 from ploston_core.types import MCPTransport
 from ploston_core.workflow import WorkflowRegistry
+
+if TYPE_CHECKING:
+    from ploston_core.config.redis_store import RedisConfigStore
+    from ploston_core.runner_management import RunnerRegistry
 
 
 class PlostApplication:
@@ -95,6 +99,8 @@ class PlostApplication:
         self.tool_invoker: ToolInvoker | None = None
         self.workflow_engine: WorkflowEngine | None = None
         self.mcp_frontend: MCPFrontend | None = None
+        self.redis_config_store: "RedisConfigStore | None" = None
+        self.runner_registry: "RunnerRegistry | None" = None
 
     async def initialize(self) -> None:
         """Initialize all components.
@@ -186,6 +192,30 @@ class PlostApplication:
             logger=self.logger,
         )
 
+        # 5b. Redis Config Store & Runner Registry (if Redis URL is configured)
+        redis_url = os.environ.get("PLOSTON_REDIS_URL") or os.environ.get("AEL_REDIS_URL")
+        if redis_url:
+            from ploston_core.config.redis_store import (
+                RedisConfigStore,
+                RedisConfigStoreOptions,
+            )
+            from ploston_core.runner_management import PersistentRunnerRegistry
+
+            redis_options = RedisConfigStoreOptions(redis_url=redis_url)
+            self.redis_config_store = RedisConfigStore(redis_options)
+            await self.redis_config_store.connect()
+            self.runner_registry = PersistentRunnerRegistry(self.redis_config_store)
+            await self.runner_registry.load_from_redis()
+            if self.logger:
+                from ploston_core.types.enums import LogLevel
+
+                self.logger._log(
+                    LogLevel.INFO,
+                    "runner",
+                    "Runner registry initialized with Redis persistence",
+                    {"redis_url": redis_url.split("@")[-1]},  # Hide credentials
+                )
+
         # 6. Tool Registry
         self.tool_registry = ToolRegistry(
             self.mcp_manager,
@@ -263,6 +293,7 @@ class PlostApplication:
                 tool_invoker=self.tool_invoker,
                 config=rest_config,
                 logger=self.logger,
+                runner_registry=self.runner_registry,
             )
 
         # Create mode manager in RUNNING mode

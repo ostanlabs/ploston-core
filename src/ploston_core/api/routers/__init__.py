@@ -4,6 +4,8 @@ from .capabilities import router as capabilities_router
 from .config import config_router
 from .executions import execution_router
 from .health import health_router
+from .runner_static import runner_static_router
+from .runners import runner_router
 from .tools import tool_router
 from .workflows import workflow_router
 
@@ -14,4 +16,6 @@ __all__ = [
     "workflow_router",
     "execution_router",
     "tool_router",
+    "runner_router",
+    "runner_static_router",
 ]
