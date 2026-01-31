@@ -9,6 +9,9 @@ This module provides CP-side components for managing Local Runners:
 Per DEC-125, all runner management is OSS (in ploston-core).
 """
 
+from ploston_core.runner_management.persistent_registry import (
+    PersistentRunnerRegistry,
+)
 from ploston_core.runner_management.registry import (
     Runner,
     RunnerRegistry,
@@ -34,6 +37,7 @@ from ploston_core.runner_management.websocket_server import (
 
 __all__ = [
     # Registry
+    "PersistentRunnerRegistry",
     "Runner",
     "RunnerRegistry",
     "RunnerStatus",
