@@ -247,6 +247,44 @@ async def runner_websocket(websocket: WebSocket) -> None:
                     logger.info(f"Runner '{runner.name}' reported {len(tools)} tools")
                 continue
 
+            # Handle tool/proxy - runner proxying a tool call to CP
+            if method == "tool/proxy":
+                tool_invoker = getattr(websocket.app.state, "tool_invoker", None)
+                if tool_invoker is None:
+                    await _send_error(websocket, msg_id, -32603, "Tool invoker not configured")
+                    continue
+
+                tool_name = params.get("tool")
+                tool_args = params.get("args", {})
+
+                if not tool_name:
+                    await _send_error(websocket, msg_id, -32602, "Missing tool name")
+                    continue
+
+                try:
+                    logger.info(f"Proxying tool '{tool_name}' for runner '{runner_id}'")
+                    result = await tool_invoker.invoke(
+                        tool_name=tool_name,
+                        params=tool_args,
+                    )
+
+                    if result.success:
+                        await _send_response(websocket, msg_id, {
+                            "status": "success",
+                            "output": result.output,
+                        })
+                    else:
+                        await _send_error(
+                            websocket,
+                            msg_id,
+                            -32000,
+                            str(result.error) if result.error else "Tool execution failed",
+                        )
+                except Exception as e:
+                    logger.exception(f"Tool proxy failed: {e}")
+                    await _send_error(websocket, msg_id, -32000, f"Tool execution failed: {e}")
+                continue
+
             # Handle response to our requests
             if msg_id is not None and runner_id in _runner_connections:
                 conn = _runner_connections[runner_id]
