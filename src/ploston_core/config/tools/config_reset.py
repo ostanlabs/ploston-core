@@ -10,17 +10,17 @@ if TYPE_CHECKING:
 
 async def handle_config_reset(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:config_reset tool call.
-    
+
     Discards all staged changes and resets to base configuration.
-    
+
     Args:
         arguments: Tool arguments (none required)
         staged_config: StagedConfig instance
-        
+
     Returns:
         Result with count of discarded changes
     """
@@ -29,7 +29,7 @@ async def handle_config_reset(
 
     # Clear staged changes
     staged_config.clear()
-    
+
     return {
         "success": True,
         "discarded_changes": changes_before,
@@ -37,7 +37,7 @@ async def handle_config_reset(
     }
 
 
-def _count_staged_changes(staged_config: "StagedConfig") -> int:
+def _count_staged_changes(staged_config: StagedConfig) -> int:
     """Count the number of staged changes."""
     changes = staged_config.changes
     return _count_dict_items(changes)

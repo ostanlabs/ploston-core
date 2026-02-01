@@ -7,8 +7,8 @@ Implements S-187: Runner Registry Redis Integration
 - UT-109: delete_async with persistence
 """
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -60,9 +60,9 @@ class TestLoadFromRedis:
     async def test_load_empty(self, registry, mock_config_store):
         """Test loading when no runners exist."""
         mock_config_store.list_services.return_value = []
-        
+
         count = await registry.load_from_redis()
-        
+
         assert count == 0
         assert registry._loaded is True
 
@@ -74,7 +74,7 @@ class TestLoadFromRedis:
             f"{RUNNERS_KEY_PREFIX}:runner2",
             "other:service",  # Should be ignored
         ]
-        
+
         runner1_data = {
             "id": "runner_abc123",
             "name": "runner1",
@@ -89,32 +89,32 @@ class TestLoadFromRedis:
             "created_at": "2026-01-31T11:00:00+00:00",
             "mcps": {"mcp1": {"url": "http://localhost"}},
         }
-        
+
         async def get_config_side_effect(service):
             if service == f"{RUNNERS_KEY_PREFIX}:runner1":
                 return ServiceConfigPayload(
                     version=1,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                     updated_by="test",
                     config=runner1_data,
                 )
             elif service == f"{RUNNERS_KEY_PREFIX}:runner2":
                 return ServiceConfigPayload(
                     version=1,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                     updated_by="test",
                     config=runner2_data,
                 )
             return None
-        
+
         mock_config_store.get_config.side_effect = get_config_side_effect
-        
+
         count = await registry.load_from_redis()
-        
+
         assert count == 2
         assert registry.get_by_name("runner1") is not None
         assert registry.get_by_name("runner2") is not None
-        
+
         # Verify runtime state is reset
         runner1 = registry.get_by_name("runner1")
         assert runner1.status == RunnerStatus.DISCONNECTED
@@ -125,9 +125,9 @@ class TestLoadFromRedis:
     async def test_load_not_connected(self, registry, mock_config_store):
         """Test loading when Redis not connected."""
         mock_config_store.connected = False
-        
+
         count = await registry.load_from_redis()
-        
+
         assert count == 0
 
 
@@ -138,15 +138,15 @@ class TestCreateAsync:
     async def test_create_persists_to_redis(self, registry, mock_config_store):
         """Test that create_async persists to Redis."""
         runner, token = await registry.create_async("test-runner")
-        
+
         # Verify in-memory
         assert registry.get_by_name("test-runner") is not None
-        
+
         # Verify Redis call
         mock_config_store.publish_config.assert_called_once()
         call_args = mock_config_store.publish_config.call_args
         assert call_args[0][0] == f"{RUNNERS_KEY_PREFIX}:test-runner"
-        
+
         # Verify persisted data
         persisted_data = call_args[0][1]
         assert persisted_data["id"] == runner.id
@@ -159,7 +159,7 @@ class TestCreateAsync:
         """Test creating runner with MCPs."""
         mcps = {"mcp1": {"url": "http://localhost:8080"}}
         runner, token = await registry.create_async("test-runner", mcps=mcps)
-        
+
         # Verify MCPs persisted
         call_args = mock_config_store.publish_config.call_args
         persisted_data = call_args[0][1]
@@ -169,7 +169,7 @@ class TestCreateAsync:
     async def test_create_duplicate_raises(self, registry, mock_config_store):
         """Test that creating duplicate raises ValueError."""
         await registry.create_async("test-runner")
-        
+
         with pytest.raises(ValueError, match="already exists"):
             await registry.create_async("test-runner")
 
@@ -182,9 +182,9 @@ class TestDeleteAsync:
         """Test that delete_async removes from Redis."""
         runner, _ = await registry.create_async("test-runner")
         mock_config_store.publish_config.reset_mock()
-        
+
         result = await registry.delete_async(runner.id)
-        
+
         assert result is True
         assert registry.get_by_name("test-runner") is None
         mock_config_store.delete_config.assert_called_once_with(
@@ -196,9 +196,9 @@ class TestDeleteAsync:
         """Test delete_by_name_async."""
         await registry.create_async("test-runner")
         mock_config_store.publish_config.reset_mock()
-        
+
         result = await registry.delete_by_name_async("test-runner")
-        
+
         assert result is True
         assert registry.get_by_name("test-runner") is None
 
@@ -206,6 +206,6 @@ class TestDeleteAsync:
     async def test_delete_nonexistent(self, registry, mock_config_store):
         """Test deleting nonexistent runner."""
         result = await registry.delete_async("nonexistent")
-        
+
         assert result is False
         mock_config_store.delete_config.assert_not_called()

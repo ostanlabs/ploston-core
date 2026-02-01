@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 async def handle_config_diff(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:config_diff tool call.
@@ -29,7 +29,6 @@ async def handle_config_diff(
 
     # Parse the diff to extract additions, modifications, deletions
     additions: list[dict[str, Any]] = []
-    modifications: list[dict[str, Any]] = []
     deletions: list[str] = []
 
     # Parse unified diff lines

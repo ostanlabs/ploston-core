@@ -135,14 +135,14 @@ class TestPlostontoolSchemas:
     def test_ploston_tool_schemas_count(self):
         """Verify correct number of ploston: tools."""
         from ploston_core.config.tools import PLOSTON_TOOL_SCHEMAS
-        
+
         # 8 new tools + 4 renamed tools = 12 total
         assert len(PLOSTON_TOOL_SCHEMAS) == 12
 
     def test_all_ploston_schemas_have_name(self):
         """All ploston schemas have name."""
         from ploston_core.config.tools import PLOSTON_TOOL_SCHEMAS
-        
+
         for schema in PLOSTON_TOOL_SCHEMAS:
             assert "name" in schema
             assert schema["name"].startswith("ploston:")
@@ -150,7 +150,7 @@ class TestPlostontoolSchemas:
     def test_all_ploston_schemas_have_description(self):
         """All ploston schemas have description."""
         from ploston_core.config.tools import PLOSTON_TOOL_SCHEMAS
-        
+
         for schema in PLOSTON_TOOL_SCHEMAS:
             assert "description" in schema
             assert len(schema["description"]) > 0
@@ -158,7 +158,7 @@ class TestPlostontoolSchemas:
     def test_all_ploston_schemas_have_input_schema(self):
         """All ploston schemas have inputSchema."""
         from ploston_core.config.tools import PLOSTON_TOOL_SCHEMAS
-        
+
         for schema in PLOSTON_TOOL_SCHEMAS:
             assert "inputSchema" in schema
             assert schema["inputSchema"]["type"] == "object"
@@ -166,14 +166,15 @@ class TestPlostontoolSchemas:
     def test_get_for_mcp_exposure_with_ploston_prefix(self):
         """Get ploston: prefixed tools for MCP exposure."""
         from unittest.mock import MagicMock
+
         from ploston_core.config.tools import ConfigToolRegistry
-        
+
         staged = MagicMock()
         loader = MagicMock()
         registry = ConfigToolRegistry(staged, loader)
-        
+
         tools = registry.get_for_mcp_exposure(use_ploston_prefix=True)
-        
+
         assert len(tools) == 12
         tool_names = [t["name"] for t in tools]
         assert "ploston:get_setup_context" in tool_names
@@ -192,12 +193,13 @@ class TestPlostontoolSchemas:
     def test_get_configure_tool_with_ploston_prefix(self):
         """Get ploston:configure tool for running mode."""
         from unittest.mock import MagicMock
+
         from ploston_core.config.tools import ConfigToolRegistry
-        
+
         staged = MagicMock()
         loader = MagicMock()
         registry = ConfigToolRegistry(staged, loader)
-        
+
         tool = registry.get_configure_tool_for_mcp_exposure(use_ploston_prefix=True)
-        
+
         assert tool["name"] == "ploston:configure"

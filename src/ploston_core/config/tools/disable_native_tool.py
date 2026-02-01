@@ -12,17 +12,17 @@ if TYPE_CHECKING:
 
 async def handle_disable_native_tool(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:disable_native_tool tool call.
-    
+
     Disables a native tool by setting enabled=false.
-    
+
     Args:
         arguments: Tool arguments containing tool name
         staged_config: StagedConfig instance
-        
+
     Returns:
         Result with success status and staged changes count
     """
@@ -46,7 +46,7 @@ async def handle_disable_native_tool(
     # Check if tool exists in merged config
     merged = staged_config.get_merged()
     existing_tools = merged.get("tools", {}).get("native_tools", {})
-    
+
     if tool not in existing_tools:
         return {
             "success": False,
@@ -65,7 +65,7 @@ async def handle_disable_native_tool(
     }
 
 
-def _count_staged_changes(staged_config: "StagedConfig") -> int:
+def _count_staged_changes(staged_config: StagedConfig) -> int:
     """Count the number of staged changes."""
     changes = staged_config.changes
     return _count_dict_items(changes)

@@ -12,7 +12,7 @@ The estimation model is based on typical LLM context patterns:
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opentelemetry import metrics
 

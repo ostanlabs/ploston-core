@@ -9,7 +9,7 @@ from typing import Any
 class SchemaRegistry:
     """
     Single source of truth for the Ploston configuration schema.
-    
+
     Provides schema definitions, example configs, import source info,
     and validation rules for the configuration mode tools.
     """
@@ -203,10 +203,10 @@ class SchemaRegistry:
     @staticmethod
     def get_native_tool_schema(tool: str) -> dict[str, Any] | None:
         """Return schema for a specific native tool.
-        
+
         Args:
             tool: Native tool name (kafka, firecrawl, ollama, filesystem, network)
-            
+
         Returns:
             Schema dict or None if tool not found
         """

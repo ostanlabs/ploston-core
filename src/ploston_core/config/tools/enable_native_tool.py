@@ -14,17 +14,17 @@ if TYPE_CHECKING:
 
 async def handle_enable_native_tool(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:enable_native_tool tool call.
-    
+
     Enables and configures a native tool with validation.
-    
+
     Args:
         arguments: Tool arguments containing tool name and config
         staged_config: StagedConfig instance
-        
+
     Returns:
         Result with success status, validation feedback, and staged changes count
     """
@@ -59,10 +59,10 @@ async def handle_enable_native_tool(
 
     # Get tool schema
     tool_schema = SchemaRegistry.get_native_tool_schema(tool)
-    
+
     # Build tool config
     tool_config: dict[str, Any] = {"enabled": True}
-    
+
     # Copy provided config values
     config = arguments.get("config", {})
     for key, value in config.items():
@@ -74,10 +74,10 @@ async def handle_enable_native_tool(
 
     # Validate the tool config
     validation = _validate_native_tool(tool, tool_config, tool_schema)
-    
+
     # Count staged changes
     staged_changes_count = _count_staged_changes(staged_config)
-    
+
     return {
         "success": True,
         "staged_path": path,
@@ -95,15 +95,15 @@ def _validate_native_tool(
     """Validate a native tool configuration."""
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
-    
+
     if not tool_schema:
         return {"valid": True, "errors": [], "warnings": []}
-    
+
     # Check required fields
     for field, field_schema in tool_schema.items():
         if not isinstance(field_schema, dict):
             continue
-            
+
         is_required = field_schema.get("required", False)
         if is_required and field not in tool_config:
             errors.append({
@@ -111,16 +111,16 @@ def _validate_native_tool(
                 "field": f"tools.native_tools.{tool}.{field}",
                 "message": f"Required field '{field}' is missing for {tool}",
             })
-    
+
     # Check for secrets
     secret_detector = SecretDetector()
     for key, value in tool_config.items():
         if not isinstance(value, str):
             continue
-            
+
         field_schema = tool_schema.get(key, {})
         is_secret_field = isinstance(field_schema, dict) and field_schema.get("secret", False)
-        
+
         # Check for literal secrets
         detection = secret_detector.detect(key, value)
         if detection or is_secret_field:
@@ -132,7 +132,7 @@ def _validate_native_tool(
                     "message": f"Value looks like a secret. Consider using ${{{suggested}}} syntax.",
                     "suggestion": f"${{{suggested}}}",
                 })
-        
+
         # Check for unset env var references
         env_refs = secret_detector.extract_env_var_refs(value)
         for env_var in env_refs:
@@ -142,7 +142,7 @@ def _validate_native_tool(
                     "field": f"tools.native_tools.{tool}.{key}",
                     "message": f"Environment variable '{env_var}' is not set",
                 })
-    
+
     return {
         "valid": len(errors) == 0,
         "errors": errors,
@@ -150,7 +150,7 @@ def _validate_native_tool(
     }
 
 
-def _count_staged_changes(staged_config: "StagedConfig") -> int:
+def _count_staged_changes(staged_config: StagedConfig) -> int:
     """Count the number of staged changes."""
     changes = staged_config.changes
     return _count_dict_items(changes)

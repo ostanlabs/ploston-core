@@ -6,8 +6,9 @@ Implements S-189: Test Infrastructure
 - UT-116: MockRunner context manager
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from tests.mocks.mock_runner import MockRunner
 

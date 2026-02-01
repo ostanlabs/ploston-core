@@ -435,7 +435,7 @@ class MCPConnection:
                 structured_content=structured_content,
             )
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             duration_ms = int((time.time() - start_time) * 1000)
             raise create_error(
                 "TOOL_TIMEOUT",

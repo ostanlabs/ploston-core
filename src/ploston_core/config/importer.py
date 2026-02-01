@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .secrets import SecretDetection, SecretDetector
+from .secrets import SecretDetector
 
 
 @dataclass
 class SecretConversion:
     """Record of a secret that was converted."""
-    
+
     server: str
     field: str  # e.g., "env.GITHUB_TOKEN"
     original: str  # Masked value
@@ -22,7 +22,7 @@ class SecretConversion:
 @dataclass
 class ImportError:
     """Error during import."""
-    
+
     server: str
     error: str
 
@@ -30,7 +30,7 @@ class ImportError:
 @dataclass
 class ImportResult:
     """Result of config import."""
-    
+
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)  # Converted server configs
     imported: list[str] = field(default_factory=list)  # Successfully imported server names
     skipped: list[str] = field(default_factory=list)  # Skipped server names
@@ -41,7 +41,7 @@ class ImportResult:
 class ConfigImporter:
     """
     Convert configurations from Claude Desktop and Cursor to Ploston format.
-    
+
     Handles:
     - Structure conversion (mcpServers -> tools.mcp_servers)
     - Secret detection and conversion to ${VAR} syntax
@@ -50,7 +50,7 @@ class ConfigImporter:
 
     def __init__(self, secret_detector: SecretDetector | None = None):
         """Initialize importer.
-        
+
         Args:
             secret_detector: SecretDetector instance (creates one if not provided)
         """
@@ -66,14 +66,14 @@ class ConfigImporter:
     ) -> ImportResult:
         """
         Convert source config to Ploston format.
-        
+
         Args:
             source: Source format identifier ("claude_desktop" or "cursor")
             config: The mcpServers object from source config file
             convert_secrets: Whether to convert literal secrets to ${VAR} syntax
             secret_mappings: Manual mappings from literal value to env var name
             skip_servers: Server names to skip during import
-            
+
         Returns:
             ImportResult with converted servers and detected secrets
         """
@@ -113,13 +113,13 @@ class ConfigImporter:
     ) -> tuple[dict[str, Any], list[SecretConversion]]:
         """
         Convert a single server definition.
-        
+
         Args:
             name: Server name
             server_config: Source server configuration
             convert_secrets: Whether to convert secrets
             secret_mappings: Manual secret mappings
-            
+
         Returns:
             Tuple of (converted config, list of secret conversions)
         """
@@ -203,10 +203,10 @@ class ConfigImporter:
     ) -> str | None:
         """
         Get the default config file path for a source on the current platform.
-        
+
         Args:
             source: Source identifier
-            
+
         Returns:
             Expanded path to config file, or None if not found
         """
@@ -214,7 +214,7 @@ class ConfigImporter:
         import platform
 
         system = platform.system().lower()
-        
+
         paths = {
             "claude_desktop": {
                 "darwin": "~/Library/Application Support/Claude/claude_desktop_config.json",
@@ -229,7 +229,7 @@ class ConfigImporter:
         }
 
         platform_key = "darwin" if system == "darwin" else ("windows" if system == "windows" else "linux")
-        
+
         if source in paths and platform_key in paths[source]:
             path = paths[source][platform_key]
             # Expand ~ and environment variables
@@ -244,11 +244,11 @@ class ConfigImporter:
     ) -> dict[str, Any] | None:
         """
         Load and parse a source config file.
-        
+
         Args:
             source: Source identifier
             path: Optional custom path (uses default if not provided)
-            
+
         Returns:
             The mcpServers object from the config, or None if not found
         """
@@ -262,7 +262,7 @@ class ConfigImporter:
         try:
             with open(config_path) as f:
                 data = json.load(f)
-            
+
             # Extract mcpServers
             return data.get("mcpServers", {})
         except Exception:
