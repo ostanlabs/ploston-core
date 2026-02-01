@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from ..importer import ConfigImporter
 
@@ -12,17 +12,17 @@ if TYPE_CHECKING:
 
 async def handle_import_config(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:import_config tool call.
-    
+
     Imports MCP server configurations from Claude Desktop or Cursor.
-    
+
     Args:
         arguments: Tool arguments containing source and options
         staged_config: StagedConfig instance
-        
+
     Returns:
         Result with imported servers, detected secrets, and validation
     """
@@ -114,19 +114,20 @@ async def handle_import_config(
 
 def _validate_imported_servers(
     servers: dict[str, dict[str, Any]],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """Validate all imported servers."""
     import os
+
     from ..secrets import SecretDetector
-    
+
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     secret_detector = SecretDetector()
 
     for name, server_config in servers.items():
         transport = server_config.get("transport", "stdio")
-        
+
         # Check transport-specific requirements
         if transport == "stdio" and "command" not in server_config:
             errors.append({
@@ -140,13 +141,13 @@ def _validate_imported_servers(
                 "field": f"tools.mcp_servers.{name}.url",
                 "message": f"MCP server '{name}' with http transport requires 'url' field",
             })
-        
+
         # Check env vars
         env = server_config.get("env", {})
         for key, value in env.items():
             if not isinstance(value, str):
                 continue
-            
+
             # Check for unset env var references
             env_refs = secret_detector.extract_env_var_refs(value)
             for env_var in env_refs:
@@ -164,7 +165,7 @@ def _validate_imported_servers(
     }
 
 
-def _count_staged_changes(staged_config: "StagedConfig") -> int:
+def _count_staged_changes(staged_config: StagedConfig) -> int:
     """Count the number of staged changes."""
     changes = staged_config.changes
     return _count_dict_items(changes)

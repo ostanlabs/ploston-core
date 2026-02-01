@@ -90,7 +90,7 @@ class TestChainDetectorHashing:
 
         # Tool B receives the same value as input
         input_params = {"source": {"file_path": "/tmp/data.json"}}
-        input_hashes = ChainDetector.compute_input_hashes(input_params)
+        ChainDetector.compute_input_hashes(input_params)
 
         # The hash of the nested value should match
         nested_hash = ChainDetector.compute_output_hash({"file_path": "/tmp/data.json"})

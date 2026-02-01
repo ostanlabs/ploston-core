@@ -11,7 +11,7 @@ These endpoints are used by runners to connect to the control plane.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -137,7 +137,7 @@ class RunnerConnection:
     runner_id: str
     runner_name: str
     websocket: WebSocket
-    connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending_requests: dict[int, asyncio.Future] = field(default_factory=dict)
     next_request_id: int = 1
 

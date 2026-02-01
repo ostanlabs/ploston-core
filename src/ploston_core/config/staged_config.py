@@ -345,7 +345,7 @@ class StagedConfig:
             data = json.dumps(self._changes)
 
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 asyncio.create_task(self._async_persist_to_redis(data))
             except RuntimeError:
                 # No running loop - create one
@@ -367,7 +367,7 @@ class StagedConfig:
             import asyncio
 
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 asyncio.create_task(self._async_clear_from_redis())
             except RuntimeError:
                 # No running loop - create one

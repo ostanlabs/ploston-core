@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class MockRunner:
             self.ws = None
             logger.info("MockRunner disconnected")
 
-    async def __aenter__(self) -> "MockRunner":
+    async def __aenter__(self) -> MockRunner:
         """Async context manager entry."""
         await self.connect()
         return self
@@ -200,7 +200,7 @@ class MockRunner:
         await self.send({
             "jsonrpc": "2.0",
             "method": "runner/heartbeat",
-            "params": {"timestamp": datetime.now(timezone.utc).isoformat()}
+            "params": {"timestamp": datetime.now(UTC).isoformat()}
         })
 
     async def send_tool_proxy_request(

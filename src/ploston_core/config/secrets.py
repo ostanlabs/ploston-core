@@ -9,7 +9,7 @@ from dataclasses import dataclass
 @dataclass
 class SecretDetection:
     """Result of secret detection."""
-    
+
     original_value: str
     masked_value: str
     suggested_env_var: str
@@ -20,7 +20,7 @@ class SecretDetection:
 class SecretDetector:
     """
     Detect literal secrets in configuration values and suggest environment variable names.
-    
+
     Uses pattern matching on values and key names to identify potential secrets.
     """
 
@@ -61,21 +61,21 @@ class SecretDetector:
     def detect(self, key: str, value: str) -> SecretDetection | None:
         """
         Detect if a value appears to be a literal secret.
-        
+
         Args:
             key: The configuration key name
             value: The configuration value
-            
+
         Returns:
             SecretDetection with suggested env var name, or None if not a secret
         """
         if not isinstance(value, str):
             return None
-            
+
         # Skip if already using ${VAR} syntax
         if "${" in value:
             return None
-            
+
         # Skip empty or very short values
         if len(value) < 8:
             return None
@@ -116,38 +116,38 @@ class SecretDetector:
     def mask_value(self, value: str) -> str:
         """
         Mask a secret value for logging/display.
-        
+
         Shows prefix and suffix with *** in the middle.
         Example: "ghp_abc123xyz789" -> "ghp_***789"
-        
+
         Args:
             value: The secret value to mask
-            
+
         Returns:
             Masked value safe for display
         """
         if len(value) <= 8:
             return "***"
-        
+
         # Show first 4 chars and last 3 chars
         prefix_len = min(4, len(value) // 4)
         suffix_len = min(3, len(value) // 4)
-        
+
         # For tokens with known prefixes, show more of the prefix
         for prefix in ["ghp_", "gho_", "sk-", "xoxb-", "xoxp-", "AKIA"]:
             if value.startswith(prefix):
                 prefix_len = len(prefix)
                 break
-        
+
         return f"{value[:prefix_len]}***{value[-suffix_len:]}"
 
     def _derive_env_var_name(self, key: str) -> str:
         """
         Derive an environment variable name from a key.
-        
+
         Args:
             key: The configuration key
-            
+
         Returns:
             Suggested environment variable name
         """
@@ -162,10 +162,10 @@ class SecretDetector:
     def check_env_var_set(self, env_var: str) -> bool:
         """
         Check if an environment variable is set.
-        
+
         Args:
             env_var: Environment variable name
-            
+
         Returns:
             True if set, False otherwise
         """
@@ -175,18 +175,18 @@ class SecretDetector:
     def extract_env_var_refs(self, value: str) -> list[str]:
         """
         Extract environment variable references from a value.
-        
+
         Supports ${VAR} and ${VAR:-default} syntax.
-        
+
         Args:
             value: Value to check
-            
+
         Returns:
             List of environment variable names referenced
         """
         if not isinstance(value, str):
             return []
-        
+
         # Match ${VAR} or ${VAR:-default}
         pattern = r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::-[^}]*)?\}"
         matches = re.findall(pattern, value)

@@ -41,7 +41,7 @@ class TestInstallScript:
         response = client.get("/runner/install.sh")
         assert response.status_code == 200
         assert "text/x-shellscript" in response.headers["content-type"]
-        
+
         content = response.text
         assert "#!/bin/bash" in content
         assert "ploston-runner" in content
@@ -84,7 +84,7 @@ MIIBkTCB+wIJAKtest...
 -----END CERTIFICATE-----
 """
         client = TestClient(app)
-        
+
         response = client.get("/runner/ca.crt")
         assert response.status_code == 200
         assert "application/x-pem-file" in response.headers["content-type"]
@@ -106,37 +106,53 @@ class TestWebSocket:
         assert exc_info.value.code == 1013
         assert "not configured" in exc_info.value.reason
 
-    def test_websocket_with_mock_server(self, app: FastAPI) -> None:
-        """Test WebSocket with mock server configured."""
-        # Create a mock WebSocket server
-        class MockWSServer:
-            def __init__(self):
-                self.connections = []
-            
-            async def handle_connection(self, websocket):
-                self.connections.append(websocket)
-                # Send a test message
-                await websocket.send_json({"type": "welcome"})
-                # Wait for a message
-                data = await websocket.receive_json()
-                await websocket.send_json({"type": "echo", "data": data})
-        
-        mock_server = MockWSServer()
-        app.state.runner_ws_server = mock_server
-        
+    def test_websocket_with_mock_registry(self, app: FastAPI) -> None:
+        """Test WebSocket with mock registry configured."""
+        from datetime import datetime, UTC
+        from unittest.mock import MagicMock
+        from ploston_core.runner_management.registry import Runner, RunnerStatus
+
+        # Create a mock runner
+        mock_runner = Runner(
+            id="runner_test123",
+            name="test-runner",
+            created_at=datetime.now(UTC),
+            status=RunnerStatus.DISCONNECTED,
+            available_tools=[],
+            mcps={},
+        )
+
+        # Create a mock registry
+        mock_registry = MagicMock()
+        mock_registry.get_by_token.return_value = mock_runner
+        mock_registry.set_connected.return_value = mock_runner
+        mock_registry.set_disconnected.return_value = mock_runner
+        mock_registry.update_heartbeat.return_value = mock_runner
+        mock_registry.update_available_tools.return_value = mock_runner
+        mock_registry.get.return_value = mock_runner
+
+        app.state.runner_registry = mock_registry
+
         client = TestClient(app)
         with client.websocket_connect("/runner/ws") as websocket:
-            # Should receive welcome message
-            data = websocket.receive_json()
-            assert data["type"] == "welcome"
+            # Send runner/register message (JSON-RPC format)
+            websocket.send_json({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runner/register",
+                "params": {
+                    "token": "ploston_runner_testtoken123",
+                    "name": "test-runner",
+                }
+            })
 
-            # Send a message
-            websocket.send_json({"type": "test"})
-
-            # Should receive echo
+            # Should receive success response
             data = websocket.receive_json()
-            assert data["type"] == "echo"
-            assert data["data"]["type"] == "test"
+            assert data.get("result", {}).get("status") == "ok"
+
+            # Verify registry was called
+            mock_registry.get_by_token.assert_called_once()
+            mock_registry.set_connected.assert_called_once()
 
 
 class TestRunnerConfigModels:

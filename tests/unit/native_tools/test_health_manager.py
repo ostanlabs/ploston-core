@@ -1,13 +1,11 @@
 """Unit tests for HealthManager."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ploston_core.native_tools.health import (
     DEPENDENCY_TOOLS,
-    DependencyHealth,
     DependencyStatus,
     DependencyUnavailableError,
     HealthManager,

@@ -43,7 +43,7 @@ class TestImportConfig:
     async def test_import_from_claude_desktop(self, registry, mock_staged_config):
         """Import from Claude Desktop config."""
         # Mock the importer to not read from real file
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as MockImporter:
+        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -52,8 +52,8 @@ class TestImportConfig:
             mock_result.secrets_detected = []
             mock_result.errors = []
             mock_importer.import_config.return_value = mock_result
-            MockImporter.return_value = mock_importer
-            
+            mock_importer_class.return_value = mock_importer
+
             result = await registry.call("ploston:import_config", {
                 "source": "claude_desktop",
                 "servers": {
@@ -70,7 +70,7 @@ class TestImportConfig:
     @pytest.mark.asyncio
     async def test_import_from_cursor(self, registry, mock_staged_config):
         """Import from Cursor config."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as MockImporter:
+        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -79,8 +79,8 @@ class TestImportConfig:
             mock_result.secrets_detected = []
             mock_result.errors = []
             mock_importer.import_config.return_value = mock_result
-            MockImporter.return_value = mock_importer
-            
+            mock_importer_class.return_value = mock_importer
+
             result = await registry.call("ploston:import_config", {
                 "source": "cursor",
                 "servers": {
@@ -95,7 +95,7 @@ class TestImportConfig:
     @pytest.mark.asyncio
     async def test_import_with_skip_servers(self, registry, mock_staged_config):
         """Import with skipped servers."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as MockImporter:
+        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -104,8 +104,8 @@ class TestImportConfig:
             mock_result.secrets_detected = []
             mock_result.errors = []
             mock_importer.import_config.return_value = mock_result
-            MockImporter.return_value = mock_importer
-            
+            mock_importer_class.return_value = mock_importer
+
             result = await registry.call("ploston:import_config", {
                 "source": "claude_desktop",
                 "servers": {
@@ -122,7 +122,7 @@ class TestImportConfig:
     @pytest.mark.asyncio
     async def test_import_with_convert_secrets(self, registry, mock_staged_config):
         """Import with secret conversion."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as MockImporter:
+        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -139,8 +139,8 @@ class TestImportConfig:
             ]
             mock_result.errors = []
             mock_importer.import_config.return_value = mock_result
-            MockImporter.return_value = mock_importer
-            
+            mock_importer_class.return_value = mock_importer
+
             result = await registry.call("ploston:import_config", {
                 "source": "claude_desktop",
                 "servers": {

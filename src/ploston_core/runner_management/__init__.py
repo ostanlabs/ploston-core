@@ -60,7 +60,7 @@ __all__ = [
 
 # Optional: EmbeddedCA (requires cryptography)
 try:
-    from ploston_core.runner_management.embedded_ca import (
+    from ploston_core.runner_management.embedded_ca import (  # noqa: F401
         CertificateInfo,
         EmbeddedCA,
     )

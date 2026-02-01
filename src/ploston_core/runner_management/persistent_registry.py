@@ -206,7 +206,7 @@ class PersistentRunnerRegistry(RunnerRegistry):
         """
         if not self._config_file_path or not self._config_file_path.exists():
             logger.warning(
-                f"Cannot update config file: path not set or file doesn't exist"
+                "Cannot update config file: path not set or file doesn't exist"
             )
             return False
 

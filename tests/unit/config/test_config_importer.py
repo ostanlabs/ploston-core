@@ -2,7 +2,7 @@
 
 import pytest
 
-from ploston_core.config.importer import ConfigImporter, ImportResult
+from ploston_core.config.importer import ConfigImporter
 
 
 class TestConfigImporter:
@@ -21,9 +21,9 @@ class TestConfigImporter:
                 "args": ["-y", "@modelcontextprotocol/server-github"],
             }
         }
-        
+
         result = importer.import_config("claude_desktop", config)
-        
+
         assert "github" in result.imported
         assert "github" in result.servers
         assert result.servers["github"]["command"] == "npx"
@@ -38,9 +38,9 @@ class TestConfigImporter:
                 "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
             }
         }
-        
+
         result = importer.import_config("claude_desktop", config)
-        
+
         assert result.servers["github"]["env"]["GITHUB_TOKEN"] == "${GITHUB_TOKEN}"
 
     def test_import_detects_literal_secrets(self, importer):
@@ -52,9 +52,9 @@ class TestConfigImporter:
                 "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
             }
         }
-        
+
         result = importer.import_config("claude_desktop", config, convert_secrets=True)
-        
+
         assert len(result.secrets_detected) == 1
         assert result.secrets_detected[0].server == "github"
         assert result.secrets_detected[0].converted_to == "${GITHUB_TOKEN}"
@@ -67,9 +67,9 @@ class TestConfigImporter:
                 "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
             }
         }
-        
+
         result = importer.import_config("claude_desktop", config, convert_secrets=False)
-        
+
         # Secret should be preserved as-is
         assert result.servers["github"]["env"]["GITHUB_TOKEN"] == "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
@@ -79,9 +79,9 @@ class TestConfigImporter:
             "github": {"command": "npx"},
             "slack": {"command": "npx"},
         }
-        
+
         result = importer.import_config("claude_desktop", config, skip_servers=["slack"])
-        
+
         assert "github" in result.imported
         assert "slack" in result.skipped
         assert "slack" not in result.servers
@@ -94,13 +94,13 @@ class TestConfigImporter:
                 "env": {"TOKEN": "my_secret_value"}
             }
         }
-        
+
         result = importer.import_config(
             "claude_desktop",
             config,
             secret_mappings={"my_secret_value": "MY_CUSTOM_VAR"}
         )
-        
+
         assert result.servers["github"]["env"]["TOKEN"] == "${MY_CUSTOM_VAR}"
 
     def test_import_http_transport(self, importer):
@@ -110,9 +110,9 @@ class TestConfigImporter:
                 "url": "http://localhost:8080",
             }
         }
-        
+
         result = importer.import_config("claude_desktop", config)
-        
+
         assert result.servers["api-server"]["transport"] == "http"
         assert result.servers["api-server"]["url"] == "http://localhost:8080"
 
@@ -124,14 +124,14 @@ class TestConfigImporter:
                 "args": ["-y", "@modelcontextprotocol/server-github"],
             }
         }
-        
+
         result = importer.import_config("cursor", config)
-        
+
         assert "github" in result.imported
 
     def test_get_source_config_path(self, importer):
         """Get default config path for source."""
         path = importer.get_source_config_path("claude_desktop")
-        
+
         assert path is not None
         assert "Claude" in path or "claude" in path.lower()

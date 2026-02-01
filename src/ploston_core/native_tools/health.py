@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
 
 import httpx
 from prometheus_client import Gauge
@@ -93,9 +94,9 @@ class DependencyHealth:
     """Health status for a single dependency."""
 
     status: DependencyStatus
-    latency_ms: Optional[float] = None
-    last_check: Optional[datetime] = None
-    error: Optional[str] = None
+    latency_ms: float | None = None
+    last_check: datetime | None = None
+    error: str | None = None
     tools_affected: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,14 +118,14 @@ class DependencyConfig:
     enabled: bool = False
     tools_affected: list[str] = field(default_factory=list)
     # Dependency-specific config
-    kafka_bootstrap_servers: Optional[str] = None
-    kafka_client_id: Optional[str] = None
-    kafka_security_protocol: Optional[str] = None
-    kafka_sasl_mechanism: Optional[str] = None
-    kafka_sasl_username: Optional[str] = None
-    kafka_sasl_password: Optional[str] = None
-    ollama_host: Optional[str] = None
-    firecrawl_base_url: Optional[str] = None
+    kafka_bootstrap_servers: str | None = None
+    kafka_client_id: str | None = None
+    kafka_security_protocol: str | None = None
+    kafka_sasl_mechanism: str | None = None
+    kafka_sasl_username: str | None = None
+    kafka_sasl_password: str | None = None
+    ollama_host: str | None = None
+    firecrawl_base_url: str | None = None
 
 
 # Tool to dependency mapping
@@ -182,7 +183,7 @@ class HealthManager:
         self._health: dict[str, DependencyHealth] = {}
 
         # Background task
-        self._background_task: Optional[asyncio.Task] = None
+        self._background_task: asyncio.Task | None = None
         self._running = False
 
         # Callbacks for health changes
@@ -193,9 +194,9 @@ class HealthManager:
         bootstrap_servers: str,
         client_id: str = "health-check",
         security_protocol: str = "PLAINTEXT",
-        sasl_mechanism: Optional[str] = None,
-        sasl_username: Optional[str] = None,
-        sasl_password: Optional[str] = None,
+        sasl_mechanism: str | None = None,
+        sasl_username: str | None = None,
+        sasl_password: str | None = None,
     ) -> None:
         """Configure Kafka dependency.
 
@@ -287,7 +288,7 @@ class HealthManager:
         config = self._configs.get(dependency)
         return config.enabled if config else False
 
-    def get_dependency_error(self, dependency: str) -> Optional[str]:
+    def get_dependency_error(self, dependency: str) -> str | None:
         """Get the error message for an unhealthy dependency.
 
         Args:
@@ -337,7 +338,7 @@ class HealthManager:
             return DependencyHealth(
                 status=DependencyStatus.HEALTHY,
                 latency_ms=round(latency, 2),
-                last_check=datetime.now(timezone.utc),
+                last_check=datetime.now(UTC),
                 tools_affected=DEPENDENCY_TOOLS["kafka"],
             )
         except Exception as e:
@@ -345,7 +346,7 @@ class HealthManager:
             return DependencyHealth(
                 status=DependencyStatus.UNHEALTHY,
                 latency_ms=round(latency, 2),
-                last_check=datetime.now(timezone.utc),
+                last_check=datetime.now(UTC),
                 error=str(e),
                 tools_affected=DEPENDENCY_TOOLS["kafka"],
             )
@@ -369,14 +370,14 @@ class HealthManager:
                     return DependencyHealth(
                         status=DependencyStatus.HEALTHY,
                         latency_ms=round(latency, 2),
-                        last_check=datetime.now(timezone.utc),
+                        last_check=datetime.now(UTC),
                         tools_affected=DEPENDENCY_TOOLS["ollama"],
                     )
                 else:
                     return DependencyHealth(
                         status=DependencyStatus.UNHEALTHY,
                         latency_ms=round(latency, 2),
-                        last_check=datetime.now(timezone.utc),
+                        last_check=datetime.now(UTC),
                         error=f"HTTP {response.status_code}",
                         tools_affected=DEPENDENCY_TOOLS["ollama"],
                     )
@@ -385,7 +386,7 @@ class HealthManager:
             return DependencyHealth(
                 status=DependencyStatus.UNHEALTHY,
                 latency_ms=round(latency, 2),
-                last_check=datetime.now(timezone.utc),
+                last_check=datetime.now(UTC),
                 error=str(e),
                 tools_affected=DEPENDENCY_TOOLS["ollama"],
             )
@@ -411,7 +412,7 @@ class HealthManager:
                             return DependencyHealth(
                                 status=DependencyStatus.HEALTHY,
                                 latency_ms=round(latency, 2),
-                                last_check=datetime.now(timezone.utc),
+                                last_check=datetime.now(UTC),
                                 tools_affected=DEPENDENCY_TOOLS["firecrawl"],
                             )
                     except httpx.HTTPError:
@@ -421,7 +422,7 @@ class HealthManager:
                 return DependencyHealth(
                     status=DependencyStatus.UNHEALTHY,
                     latency_ms=round(latency, 2),
-                    last_check=datetime.now(timezone.utc),
+                    last_check=datetime.now(UTC),
                     error="No valid health endpoint responded",
                     tools_affected=DEPENDENCY_TOOLS["firecrawl"],
                 )
@@ -430,7 +431,7 @@ class HealthManager:
             return DependencyHealth(
                 status=DependencyStatus.UNHEALTHY,
                 latency_ms=round(latency, 2),
-                last_check=datetime.now(timezone.utc),
+                last_check=datetime.now(UTC),
                 error=str(e),
                 tools_affected=DEPENDENCY_TOOLS["firecrawl"],
             )
@@ -575,7 +576,7 @@ class HealthManager:
         uptime = time.monotonic() - self._start_time
         return {
             "status": self.get_overall_status().value,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "version": version,
             "uptime_seconds": round(uptime, 2),
             "dependencies": {
@@ -586,7 +587,7 @@ class HealthManager:
 
 
 # Global health manager instance
-_health_manager: Optional[HealthManager] = None
+_health_manager: HealthManager | None = None
 
 
 def get_health_manager() -> HealthManager:

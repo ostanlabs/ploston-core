@@ -10,17 +10,17 @@ if TYPE_CHECKING:
 
 async def handle_remove_mcp_server(
     arguments: dict[str, Any],
-    staged_config: "StagedConfig",
+    staged_config: StagedConfig,
 ) -> dict[str, Any]:
     """
     Handle ploston:remove_mcp_server tool call.
-    
+
     Removes an MCP server from the staged configuration.
-    
+
     Args:
         arguments: Tool arguments containing server name
         staged_config: StagedConfig instance
-        
+
     Returns:
         Result with success status and staged changes count
     """
@@ -35,7 +35,7 @@ async def handle_remove_mcp_server(
     # Check if server exists in merged config
     merged = staged_config.get_merged()
     existing_servers = merged.get("tools", {}).get("mcp_servers", {})
-    
+
     if name not in existing_servers:
         return {
             "success": False,
@@ -55,7 +55,7 @@ async def handle_remove_mcp_server(
     }
 
 
-def _count_staged_changes(staged_config: "StagedConfig") -> int:
+def _count_staged_changes(staged_config: StagedConfig) -> int:
     """Count the number of staged changes."""
     changes = staged_config.changes
     return _count_dict_items(changes)

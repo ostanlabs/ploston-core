@@ -99,8 +99,8 @@ class PlostApplication:
         self.tool_invoker: ToolInvoker | None = None
         self.workflow_engine: WorkflowEngine | None = None
         self.mcp_frontend: MCPFrontend | None = None
-        self.redis_config_store: "RedisConfigStore | None" = None
-        self.runner_registry: "RunnerRegistry | None" = None
+        self.redis_config_store: RedisConfigStore | None = None
+        self.runner_registry: RunnerRegistry | None = None
 
     async def initialize(self) -> None:
         """Initialize all components.
