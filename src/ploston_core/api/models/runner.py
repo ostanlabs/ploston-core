@@ -67,3 +67,11 @@ class RunnerDeleteResponse(BaseModel):
 
     deleted: bool = Field(description="Whether the runner was deleted")
     name: str = Field(description="Name of the deleted runner")
+
+
+class RunnerTokenResponse(BaseModel):
+    """Response containing a runner token."""
+
+    name: str = Field(description="Runner name")
+    token: str = Field(description="Authentication token")
+    install_command: str = Field(description="Command to install and connect the runner")

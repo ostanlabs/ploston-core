@@ -223,8 +223,34 @@ async def runner_websocket(websocket: WebSocket) -> None:
                 logger.info(f"Runner '{name}' connected (id={runner_id})")
                 await _send_response(websocket, msg_id, {"status": "ok"})
 
+                # Build MCPs to push: config-based + API-provided (API takes precedence)
+                mcps_to_push: dict[str, dict] = {}
+
+                # 1. Get pre-configured MCPs from ael_config.runners
+                ael_config = getattr(websocket.app.state, "ael_config", None)
+                if ael_config and hasattr(ael_config, "runners"):
+                    runner_def = ael_config.runners.get(name)
+                    if runner_def and runner_def.mcp_servers:
+                        for mcp_name, mcp_def in runner_def.mcp_servers.items():
+                            # Convert dataclass to dict for JSON serialization
+                            mcps_to_push[mcp_name] = {
+                                "command": mcp_def.command,
+                                "args": mcp_def.args,
+                                "url": mcp_def.url,
+                                "env": mcp_def.env,
+                                "timeout": mcp_def.timeout,
+                            }
+                        logger.info(
+                            f"Runner '{name}' has {len(runner_def.mcp_servers)} "
+                            "pre-configured MCPs from config"
+                        )
+
+                # 2. Merge with API-provided MCPs (these take precedence)
+                if runner.mcps:
+                    mcps_to_push.update(runner.mcps)
+
                 # Push config to runner
-                await _send_notification(websocket, "config/push", {"mcps": runner.mcps})
+                await _send_notification(websocket, "config/push", {"mcps": mcps_to_push})
                 continue
 
             # All other methods require authentication

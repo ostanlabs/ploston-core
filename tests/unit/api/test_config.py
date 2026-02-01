@@ -1,6 +1,96 @@
 """Tests for REST API configuration."""
 
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from ploston_core.api.config import APIKeyConfig, RESTConfig
+from ploston_core.api.routers.config import config_router
+
+
+class TestConfigDiffEndpoint:
+    """Tests for GET /config/diff endpoint."""
+
+    @pytest.fixture
+    def app(self) -> FastAPI:
+        """Create test FastAPI app with config router."""
+        app = FastAPI()
+        app.include_router(config_router, prefix="/api/v1")
+        return app
+
+    @pytest.fixture
+    def client(self, app: FastAPI) -> TestClient:
+        """Create test client."""
+        return TestClient(app)
+
+    def test_diff_not_in_config_mode(self, app: FastAPI, client: TestClient) -> None:
+        """Test diff returns empty when not in config mode."""
+        # Set up mode manager in running mode
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = False
+        app.state.mode_manager = mode_manager
+
+        response = client.get("/api/v1/config/diff")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["in_config_mode"] is False
+        assert data["has_changes"] is False
+        assert data["diff"] == ""
+
+    def test_diff_in_config_mode_no_changes(self, app: FastAPI, client: TestClient) -> None:
+        """Test diff in config mode with no changes."""
+        # Set up mode manager in config mode
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = True
+        app.state.mode_manager = mode_manager
+
+        # Set up staged config with no changes
+        staged_config = MagicMock()
+        staged_config.has_changes.return_value = False
+        staged_config.get_diff.return_value = ""
+        app.state.staged_config = staged_config
+
+        response = client.get("/api/v1/config/diff")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["in_config_mode"] is True
+        assert data["has_changes"] is False
+        assert data["diff"] == ""
+
+    def test_diff_in_config_mode_with_changes(self, app: FastAPI, client: TestClient) -> None:
+        """Test diff in config mode with staged changes."""
+        # Set up mode manager in config mode
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = True
+        app.state.mode_manager = mode_manager
+
+        # Set up staged config with changes
+        staged_config = MagicMock()
+        staged_config.has_changes.return_value = True
+        staged_config.get_diff.return_value = "--- current\n+++ staged\n@@ -1 +1 @@\n-old\n+new"
+        app.state.staged_config = staged_config
+
+        response = client.get("/api/v1/config/diff")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["in_config_mode"] is True
+        assert data["has_changes"] is True
+        assert "--- current" in data["diff"]
+        assert "+++ staged" in data["diff"]
+
+    def test_diff_no_staged_config(self, app: FastAPI, client: TestClient) -> None:
+        """Test diff returns error when staged config not available."""
+        # Set up mode manager in config mode
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = True
+        app.state.mode_manager = mode_manager
+        # Don't set staged_config
+
+        response = client.get("/api/v1/config/diff")
+        assert response.status_code == 503
+        assert "not available" in response.json()["detail"]
 
 
 class TestAPIKeyConfig:

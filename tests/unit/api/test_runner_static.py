@@ -4,6 +4,7 @@ Implements S-186: Runner Static Endpoints
 - UT-103: GET /runner/install.sh
 - UT-104: GET /runner/ca.crt
 - UT-105: WebSocket /runner/ws
+- UT-120: Config-based runner MCPs
 """
 
 import pytest
@@ -11,6 +12,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ploston_core.api.routers.runner_static import runner_static_router
+from ploston_core.config.models import (
+    AELConfig,
+    RunnerDefinition,
+    RunnerMCPServerDefinition,
+)
 
 
 @pytest.fixture
@@ -123,11 +129,96 @@ class TestWebSocket:
             # Should receive welcome message
             data = websocket.receive_json()
             assert data["type"] == "welcome"
-            
+
             # Send a message
             websocket.send_json({"type": "test"})
-            
+
             # Should receive echo
             data = websocket.receive_json()
             assert data["type"] == "echo"
             assert data["data"]["type"] == "test"
+
+
+class TestRunnerConfigModels:
+    """Tests for runner config models (UT-120)."""
+
+    def test_runner_mcp_server_definition_defaults(self) -> None:
+        """Test RunnerMCPServerDefinition with defaults."""
+        mcp_def = RunnerMCPServerDefinition()
+        assert mcp_def.command is None
+        assert mcp_def.args == []
+        assert mcp_def.url is None
+        assert mcp_def.env == {}
+        assert mcp_def.timeout == 30
+
+    def test_runner_mcp_server_definition_stdio(self) -> None:
+        """Test RunnerMCPServerDefinition for stdio transport."""
+        mcp_def = RunnerMCPServerDefinition(
+            command="npx",
+            args=["-y", "@mcp/filesystem", "/tmp"],
+            env={"DEBUG": "1"},
+        )
+        assert mcp_def.command == "npx"
+        assert mcp_def.args == ["-y", "@mcp/filesystem", "/tmp"]
+        assert mcp_def.env == {"DEBUG": "1"}
+
+    def test_runner_definition_defaults(self) -> None:
+        """Test RunnerDefinition with defaults."""
+        runner_def = RunnerDefinition()
+        assert runner_def.mcp_servers == {}
+
+    def test_runner_definition_with_mcp_servers(self) -> None:
+        """Test RunnerDefinition with MCP servers."""
+        runner_def = RunnerDefinition(
+            mcp_servers={
+                "filesystem": RunnerMCPServerDefinition(
+                    command="npx",
+                    args=["@mcp/filesystem", "/home/user"],
+                ),
+                "docker": RunnerMCPServerDefinition(
+                    command="npx",
+                    args=["@mcp/docker"],
+                ),
+            }
+        )
+        assert len(runner_def.mcp_servers) == 2
+        assert "filesystem" in runner_def.mcp_servers
+        assert "docker" in runner_def.mcp_servers
+        assert runner_def.mcp_servers["filesystem"].command == "npx"
+
+    def test_ael_config_runners_field(self) -> None:
+        """Test AELConfig with runners field."""
+        config = AELConfig(
+            runners={
+                "marc-laptop": RunnerDefinition(
+                    mcp_servers={
+                        "filesystem": RunnerMCPServerDefinition(
+                            command="npx",
+                            args=["@mcp/filesystem", "/Users/marc"],
+                        ),
+                    }
+                ),
+                "build-server": RunnerDefinition(
+                    mcp_servers={
+                        "filesystem": RunnerMCPServerDefinition(
+                            command="npx",
+                            args=["@mcp/filesystem", "/opt/builds"],
+                        ),
+                    }
+                ),
+            }
+        )
+        assert len(config.runners) == 2
+        assert "marc-laptop" in config.runners
+        assert "build-server" in config.runners
+
+        marc_laptop = config.runners["marc-laptop"]
+        assert "filesystem" in marc_laptop.mcp_servers
+        assert marc_laptop.mcp_servers["filesystem"].args == [
+            "@mcp/filesystem", "/Users/marc"
+        ]
+
+    def test_ael_config_empty_runners(self) -> None:
+        """Test AELConfig with no runners configured."""
+        config = AELConfig()
+        assert config.runners == {}

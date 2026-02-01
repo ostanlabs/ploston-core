@@ -1,10 +1,14 @@
 """Staged configuration for in-memory config changes."""
 
+from __future__ import annotations
+
 import dataclasses
 import difflib
+import json
+import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -12,6 +16,11 @@ from ploston_core.types import ValidationIssue, ValidationResult
 
 from .loader import ConfigLoader, deep_merge
 from .models import AELConfig
+
+if TYPE_CHECKING:
+    from .redis_store import RedisConfigStore
+
+logger = logging.getLogger(__name__)
 
 # Patterns that look like secrets (should use ${VAR} instead)
 SECRET_PATTERNS = [
@@ -21,6 +30,9 @@ SECRET_PATTERNS = [
     r"^[a-zA-Z0-9]{32,}$",  # Long alphanumeric (potential secret)
 ]
 
+# Redis key for staged config
+STAGED_CONFIG_KEY = "staged_config"
+
 
 class StagedConfig:
     """
@@ -28,15 +40,21 @@ class StagedConfig:
 
     Changes are staged here, then written atomically by config_done().
     Preserves ${VAR} syntax for environment variable references.
+
+    Optionally persists staged changes to Redis for crash recovery.
     """
 
-    def __init__(self, config_loader: ConfigLoader):
+    def __init__(
+        self, config_loader: ConfigLoader, redis_store: RedisConfigStore | None = None
+    ):
         """Initialize staged config.
 
         Args:
             config_loader: ConfigLoader to get base config from
+            redis_store: Optional RedisConfigStore for persistence
         """
         self._loader = config_loader
+        self._redis_store = redis_store
         self._base: dict[str, Any] = {}
         self._changes: dict[str, Any] = {}
         self._target_path: Path | None = None
@@ -68,6 +86,7 @@ class StagedConfig:
 
         Auto-creates parent paths if they don't exist.
         Value is stored as-is (${VAR} syntax preserved).
+        Persists to Redis if available.
 
         Args:
             path: Dot-notation path (e.g., "mcp.servers.github.command")
@@ -86,6 +105,9 @@ class StagedConfig:
             current = current[key]
 
         current[keys[-1]] = value
+
+        # Persist to Redis
+        self._persist_to_redis()
 
     def get(self, path: str | None = None) -> Any:
         """Get value from merged config (base + changes).
@@ -289,8 +311,9 @@ class StagedConfig:
         return self.target_path
 
     def clear(self) -> None:
-        """Discard all staged changes."""
+        """Discard all staged changes and clear from Redis."""
         self._changes = {}
+        self._clear_from_redis()
 
     def has_changes(self) -> bool:
         """Check if there are any staged changes.
@@ -308,3 +331,73 @@ class StagedConfig:
             Dictionary of staged changes
         """
         return self._changes.copy()
+
+    # Redis persistence methods
+
+    def _persist_to_redis(self) -> None:
+        """Persist staged changes to Redis (fire and forget)."""
+        if not self._redis_store or not self._redis_store.connected:
+            return
+
+        try:
+            import asyncio
+
+            data = json.dumps(self._changes)
+
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(self._async_persist_to_redis(data))
+            except RuntimeError:
+                # No running loop - create one
+                asyncio.run(self._async_persist_to_redis(data))
+        except Exception as e:
+            logger.warning(f"Failed to persist staged config to Redis: {e}")
+
+    async def _async_persist_to_redis(self, data: str) -> None:
+        """Async helper to persist to Redis."""
+        if self._redis_store:
+            await self._redis_store.set_value(STAGED_CONFIG_KEY, data)
+
+    def _clear_from_redis(self) -> None:
+        """Clear staged changes from Redis (fire and forget)."""
+        if not self._redis_store or not self._redis_store.connected:
+            return
+
+        try:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(self._async_clear_from_redis())
+            except RuntimeError:
+                # No running loop - create one
+                asyncio.run(self._async_clear_from_redis())
+        except Exception as e:
+            logger.warning(f"Failed to clear staged config from Redis: {e}")
+
+    async def _async_clear_from_redis(self) -> None:
+        """Async helper to clear from Redis."""
+        if self._redis_store:
+            await self._redis_store.delete_value(STAGED_CONFIG_KEY)
+
+    async def restore_from_redis(self) -> bool:
+        """Restore staged changes from Redis.
+
+        Call this on startup in config mode to recover from crashes.
+
+        Returns:
+            True if changes were restored, False otherwise
+        """
+        if not self._redis_store or not self._redis_store.connected:
+            return False
+
+        try:
+            data = await self._redis_store.get_value(STAGED_CONFIG_KEY)
+            if data:
+                self._changes = json.loads(data)
+                logger.info(f"Restored staged config from Redis: {len(self._changes)} top-level keys")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to restore staged config from Redis: {e}")
+
+        return False

@@ -1,11 +1,16 @@
 """config_done tool handler - apply config and switch to running mode."""
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ploston_core.config import ConfigLoader, Mode, StagedConfig
 from ploston_core.config.redis_store import RedisConfigStore
 from ploston_core.config.service_configs import build_native_tools_config
+
+if TYPE_CHECKING:
+    from ploston_core.runner_management import PersistentRunnerRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,7 @@ async def handle_config_done(
     mcp_manager: Any,
     write_location: str | None,
     redis_store: RedisConfigStore | None = None,
+    runner_registry: PersistentRunnerRegistry | None = None,
 ) -> dict[str, Any]:
     """Handle config_done tool call.
 
@@ -29,6 +35,7 @@ async def handle_config_done(
         mcp_manager: MCPClientManager instance
         write_location: Target path for writing config
         redis_store: Optional RedisConfigStore for publishing config
+        runner_registry: Optional PersistentRunnerRegistry for creating runners
 
     Returns:
         Success/failure result with capabilities or errors
@@ -85,6 +92,25 @@ async def handle_config_done(
             "partial_results": mcp_results,
         }
 
+    # Step 3.5: Sync runners from config
+    runner_results: dict[str, dict] = {}
+    runners_config = merged_config.get("runners", {})
+    if runner_registry and runners_config:
+        try:
+            runner_results = await runner_registry.sync_from_config(runners_config)
+            created_count = sum(1 for r in runner_results.values() if r.get("created"))
+            if created_count > 0:
+                logger.info(f"Created {created_count} runner(s) from config")
+        except Exception as e:
+            logger.error(f"Failed to sync runners from config: {e}")
+            errors.append(
+                {
+                    "path": "runners",
+                    "error": f"Failed to sync runners: {e}",
+                    "suggestion": "Check runner configuration",
+                }
+            )
+
     # Step 4: Write config to file
     target_path = write_location or "./ael-config.yaml"
     try:
@@ -140,7 +166,13 @@ async def handle_config_done(
     # Calculate total tools
     total_tools = sum(r.get("tools", 0) for r in mcp_results.values())
 
-    result = {
+    # Build runners summary (without tokens for security)
+    runners_summary = {
+        name: {"created": info.get("created", False)}
+        for name, info in runner_results.items()
+    }
+
+    result: dict[str, Any] = {
         "success": True,
         "mode": "running",
         "config_written_to": target_path,
@@ -149,6 +181,7 @@ async def handle_config_done(
             "workflows": [],  # Would be populated from workflow registry
             "mcp_servers": mcp_results,
             "total_tools": total_tools,
+            "runners": runners_summary,
         },
     }
 

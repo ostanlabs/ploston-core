@@ -18,6 +18,7 @@ from ploston_core.api.models import (
     RunnerListResponse,
     RunnerStatusEnum,
     RunnerSummary,
+    RunnerTokenResponse,
 )
 from ploston_core.runner_management import RunnerRegistry, RunnerStatus
 
@@ -56,34 +57,19 @@ async def create_runner(
     request: Request,
     create_request: RunnerCreateRequest,
 ) -> RunnerCreateResponse:
-    """Create a new runner and return its authentication token.
+    """Create a new runner - DEPRECATED.
 
-    The token is only returned once and cannot be retrieved later.
+    Runners must be defined in the config file under the 'runners' section.
+    Use 'ploston runner get-token <name>' to get the connection token.
     """
-    # Auth hook: Enterprise overrides to check RBAC
-    await auth_hook.check_permission(request, RunnerPermissions.CREATE)
-
-    registry = _get_registry(request)
-
-    try:
-        runner, token = registry.create(
-            name=create_request.name,
-            mcps=create_request.mcps,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-
-    cp_url = _get_cp_url(request)
-    install_command = (
-        f"uv tool install ploston-runner && "
-        f"ploston-runner connect --token {token} --cp-url {cp_url}/runner/ws --name {runner.name}"
-    )
-
-    return RunnerCreateResponse(
-        id=runner.id,
-        name=runner.name,
-        token=token,
-        install_command=install_command,
+    # Runners can only be created via config file
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Runners must be defined in the config file. "
+            "Add the runner to the 'runners' section in ael-config.yaml, "
+            "then use 'ploston runner get-token <name>' to get the connection token."
+        ),
     )
 
 
@@ -149,19 +135,92 @@ async def get_runner(
     )
 
 
+def _is_config_mode(request: Request) -> bool:
+    """Check if the system is in configuration mode."""
+    mode_manager = getattr(request.app.state, "mode_manager", None)
+    if mode_manager is None:
+        return False
+    return mode_manager.is_configuration_mode()
+
+
 @runner_router.delete("/{name}", response_model=RunnerDeleteResponse)
 async def delete_runner(
     request: Request,
     name: str = Path(..., description="Runner name"),
 ) -> RunnerDeleteResponse:
-    """Delete a runner and revoke its token."""
+    """Delete a runner and revoke its token.
+
+    Also removes the runner from the config file immediately.
+    Not available in configuration mode - use config_delete instead.
+    """
+    # Block in config mode
+    if _is_config_mode(request):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Runner delete not available in configuration mode. "
+                f"Use 'config_delete runners.{name}' to stage runner removal, "
+                "then 'config_done' to apply."
+            ),
+        )
+
     # Auth hook: Enterprise overrides to check RBAC
     await auth_hook.check_permission(request, RunnerPermissions.DELETE)
 
     registry = _get_registry(request)
 
-    deleted = registry.delete_by_name(name)
+    # Use async version if available (PersistentRunnerRegistry)
+    # This also updates the config file
+    if hasattr(registry, "delete_by_name_async"):
+        deleted = await registry.delete_by_name_async(name)
+    else:
+        deleted = registry.delete_by_name(name)
+
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Runner '{name}' not found")
 
     return RunnerDeleteResponse(deleted=True, name=name)
+
+
+@runner_router.post("/{name}/regenerate-token", response_model=RunnerTokenResponse)
+async def regenerate_runner_token(
+    request: Request,
+    name: str = Path(..., description="Runner name"),
+) -> RunnerTokenResponse:
+    """Regenerate a runner's authentication token.
+
+    This invalidates the old token and generates a new one.
+    The new token is only shown once.
+    """
+    # Auth hook: Enterprise overrides to check RBAC
+    await auth_hook.check_permission(request, RunnerPermissions.DELETE)  # Requires elevated permission
+
+    registry = _get_registry(request)
+
+    # Check runner exists
+    runner = registry.get_by_name(name)
+    if not runner:
+        raise HTTPException(status_code=404, detail=f"Runner '{name}' not found")
+
+    # Regenerate token (only available on PersistentRunnerRegistry)
+    if not hasattr(registry, "regenerate_token"):
+        raise HTTPException(
+            status_code=501,
+            detail="Token regeneration requires Redis persistence",
+        )
+
+    token = await registry.regenerate_token(name)
+    if not token:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to regenerate token for runner '{name}'",
+        )
+
+    cp_url = _get_cp_url(request)
+    install_command = f"ploston-runner install --cp-url {cp_url} --token {token}"
+
+    return RunnerTokenResponse(
+        name=name,
+        token=token,
+        install_command=install_command,
+    )
