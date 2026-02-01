@@ -35,7 +35,7 @@ class TestConfigImporter:
             "github": {
                 "command": "npx",
                 "args": ["-y", "@modelcontextprotocol/server-github"],
-                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
             }
         }
 
@@ -49,7 +49,7 @@ class TestConfigImporter:
             "github": {
                 "command": "npx",
                 "args": ["-y", "@modelcontextprotocol/server-github"],
-                "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+                "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
             }
         }
 
@@ -64,14 +64,17 @@ class TestConfigImporter:
         config = {
             "github": {
                 "command": "npx",
-                "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+                "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
             }
         }
 
         result = importer.import_config("claude_desktop", config, convert_secrets=False)
 
         # Secret should be preserved as-is
-        assert result.servers["github"]["env"]["GITHUB_TOKEN"] == "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        assert (
+            result.servers["github"]["env"]["GITHUB_TOKEN"]
+            == "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        )
 
     def test_import_skip_servers(self, importer):
         """Import with skipped servers."""
@@ -88,17 +91,10 @@ class TestConfigImporter:
 
     def test_import_manual_secret_mappings(self, importer):
         """Import with manual secret mappings."""
-        config = {
-            "github": {
-                "command": "npx",
-                "env": {"TOKEN": "my_secret_value"}
-            }
-        }
+        config = {"github": {"command": "npx", "env": {"TOKEN": "my_secret_value"}}}
 
         result = importer.import_config(
-            "claude_desktop",
-            config,
-            secret_mappings={"my_secret_value": "MY_CUSTOM_VAR"}
+            "claude_desktop", config, secret_mappings={"my_secret_value": "MY_CUSTOM_VAR"}
         )
 
         assert result.servers["github"]["env"]["TOKEN"] == "${MY_CUSTOM_VAR}"

@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RunnerConnection:
     """Active runner connection."""
+
     runner_id: str
     runner_name: str
     websocket: WebSocketServerProtocol

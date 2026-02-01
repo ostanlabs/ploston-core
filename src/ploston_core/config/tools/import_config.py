@@ -89,10 +89,7 @@ async def handle_import_config(
         for s in result.secrets_detected
     ]
 
-    errors = [
-        {"server": e.server, "error": e.error}
-        for e in result.errors
-    ]
+    errors = [{"server": e.server, "error": e.error} for e in result.errors]
 
     # Count staged changes
     staged_changes_count = _count_staged_changes(staged_config)
@@ -130,17 +127,21 @@ def _validate_imported_servers(
 
         # Check transport-specific requirements
         if transport == "stdio" and "command" not in server_config:
-            errors.append({
-                "code": "MISSING_COMMAND",
-                "field": f"tools.mcp_servers.{name}.command",
-                "message": f"MCP server '{name}' with stdio transport requires 'command' field",
-            })
+            errors.append(
+                {
+                    "code": "MISSING_COMMAND",
+                    "field": f"tools.mcp_servers.{name}.command",
+                    "message": f"MCP server '{name}' with stdio transport requires 'command' field",
+                }
+            )
         elif transport == "http" and "url" not in server_config:
-            errors.append({
-                "code": "MISSING_URL",
-                "field": f"tools.mcp_servers.{name}.url",
-                "message": f"MCP server '{name}' with http transport requires 'url' field",
-            })
+            errors.append(
+                {
+                    "code": "MISSING_URL",
+                    "field": f"tools.mcp_servers.{name}.url",
+                    "message": f"MCP server '{name}' with http transport requires 'url' field",
+                }
+            )
 
         # Check env vars
         env = server_config.get("env", {})
@@ -152,11 +153,13 @@ def _validate_imported_servers(
             env_refs = secret_detector.extract_env_var_refs(value)
             for env_var in env_refs:
                 if env_var not in os.environ:
-                    warnings.append({
-                        "code": "ENV_NOT_SET",
-                        "field": f"tools.mcp_servers.{name}.env.{key}",
-                        "message": f"Environment variable '{env_var}' is not set",
-                    })
+                    warnings.append(
+                        {
+                            "code": "ENV_NOT_SET",
+                            "field": f"tools.mcp_servers.{name}.env.{key}",
+                            "message": f"Environment variable '{env_var}' is not set",
+                        }
+                    )
 
     return {
         "valid": len(errors) == 0,

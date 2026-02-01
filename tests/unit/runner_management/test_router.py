@@ -30,6 +30,7 @@ from ploston_core.runner_management.router import (
 @dataclass
 class MockStep:
     """Mock workflow step."""
+
     name: str
     tool: str | None = None
     code: str | None = None
@@ -38,6 +39,7 @@ class MockStep:
 @dataclass
 class MockWorkflowDefinition:
     """Mock workflow definition."""
+
     name: str
     steps: list[MockStep] = field(default_factory=list)
 

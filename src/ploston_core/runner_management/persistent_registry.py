@@ -205,9 +205,7 @@ class PersistentRunnerRegistry(RunnerRegistry):
             True if config file was updated, False otherwise
         """
         if not self._config_file_path or not self._config_file_path.exists():
-            logger.warning(
-                "Cannot update config file: path not set or file doesn't exist"
-            )
+            logger.warning("Cannot update config file: path not set or file doesn't exist")
             return False
 
         try:
@@ -242,9 +240,7 @@ class PersistentRunnerRegistry(RunnerRegistry):
             logger.error(f"Failed to update config file: {e}")
             return False
 
-    async def sync_from_config(
-        self, runners_config: dict[str, dict]
-    ) -> dict[str, dict]:
+    async def sync_from_config(self, runners_config: dict[str, dict]) -> dict[str, dict]:
         """Sync runners from config file definition.
 
         Creates runners defined in config that don't exist yet.

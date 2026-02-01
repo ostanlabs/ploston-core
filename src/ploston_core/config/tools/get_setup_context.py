@@ -76,7 +76,9 @@ def _get_status(
     try:
         config = config_loader.get()
         # Check if it has any meaningful content
-        has_existing_config = bool(config.tools.mcp_servers) or bool(config.workflows.directory != "./workflows")
+        has_existing_config = bool(config.tools.mcp_servers) or bool(
+            config.workflows.directory != "./workflows"
+        )
     except Exception:
         pass
 

@@ -93,6 +93,7 @@ class TestMockRunnerMessages:
         # Check the sent message
         call_args = runner.ws.send.call_args[0][0]
         import json
+
         sent = json.loads(call_args)
         assert sent["jsonrpc"] == "2.0"
         assert sent["id"] == 1
@@ -113,6 +114,7 @@ class TestMockRunnerMessages:
 
         call_args = runner.ws.send.call_args[0][0]
         import json
+
         sent = json.loads(call_args)
         assert sent["method"] == "runner/availability"
         assert sent["params"]["available"] == ["tool1", "tool2"]
@@ -128,6 +130,7 @@ class TestMockRunnerMessages:
 
         call_args = runner.ws.send.call_args[0][0]
         import json
+
         sent = json.loads(call_args)
         assert sent["method"] == "runner/heartbeat"
         assert "timestamp" in sent["params"]
@@ -142,6 +145,7 @@ class TestMockRunnerMessages:
 
         call_args = runner.ws.send.call_args[0][0]
         import json
+
         sent = json.loads(call_args)
         assert sent["jsonrpc"] == "2.0"
         assert sent["id"] == 42
@@ -150,8 +154,10 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_context_manager_connects_and_disconnects(self):
         """Test that context manager handles connection lifecycle."""
-        with patch("tests.mocks.mock_runner.MockRunner.connect") as mock_connect, \
-             patch("tests.mocks.mock_runner.MockRunner.disconnect") as mock_disconnect:
+        with (
+            patch("tests.mocks.mock_runner.MockRunner.connect") as mock_connect,
+            patch("tests.mocks.mock_runner.MockRunner.disconnect") as mock_disconnect,
+        ):
             mock_connect.return_value = None
             mock_disconnect.return_value = None
 

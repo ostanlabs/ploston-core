@@ -432,9 +432,7 @@ class TestConfigChangePropagation:
         await ploston_store.connect()
 
         # Publish initial config
-        await ploston_store.publish_config(
-            "native-tools", {"kafka": {"enabled": False}}
-        )
+        await ploston_store.publish_config("native-tools", {"kafka": {"enabled": False}})
 
         # Wait for notification
         notification1 = None

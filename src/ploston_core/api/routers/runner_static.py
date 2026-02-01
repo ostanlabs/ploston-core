@@ -134,6 +134,7 @@ async def get_ca_certificate(request: Request) -> PlainTextResponse:
 @dataclass
 class RunnerConnection:
     """Active runner WebSocket connection."""
+
     runner_id: str
     runner_name: str
     websocket: WebSocket
@@ -295,10 +296,14 @@ async def runner_websocket(websocket: WebSocket) -> None:
                     )
 
                     if result.success:
-                        await _send_response(websocket, msg_id, {
-                            "status": "success",
-                            "output": result.output,
-                        })
+                        await _send_response(
+                            websocket,
+                            msg_id,
+                            {
+                                "status": "success",
+                                "output": result.output,
+                            },
+                        )
                     else:
                         await _send_error(
                             websocket,
@@ -317,7 +322,9 @@ async def runner_websocket(websocket: WebSocket) -> None:
                 if msg_id in conn.pending_requests:
                     future = conn.pending_requests.pop(msg_id)
                     if "error" in data:
-                        future.set_exception(Exception(data["error"].get("message", "Unknown error")))
+                        future.set_exception(
+                            Exception(data["error"].get("message", "Unknown error"))
+                        )
                     else:
                         future.set_result(data.get("result"))
                     continue

@@ -193,7 +193,9 @@ async def regenerate_runner_token(
     The new token is only shown once.
     """
     # Auth hook: Enterprise overrides to check RBAC
-    await auth_hook.check_permission(request, RunnerPermissions.DELETE)  # Requires elevated permission
+    await auth_hook.check_permission(
+        request, RunnerPermissions.DELETE
+    )  # Requires elevated permission
 
     registry = _get_registry(request)
 

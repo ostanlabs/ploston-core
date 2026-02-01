@@ -50,6 +50,7 @@ class TestInitialization:
     def test_inherits_from_runner_registry(self, registry):
         """Test that it inherits from RunnerRegistry."""
         from ploston_core.runner_management.registry import RunnerRegistry
+
         assert isinstance(registry, RunnerRegistry)
 
 
@@ -187,9 +188,7 @@ class TestDeleteAsync:
 
         assert result is True
         assert registry.get_by_name("test-runner") is None
-        mock_config_store.delete_config.assert_called_once_with(
-            f"{RUNNERS_KEY_PREFIX}:test-runner"
-        )
+        mock_config_store.delete_config.assert_called_once_with(f"{RUNNERS_KEY_PREFIX}:test-runner")
 
     @pytest.mark.asyncio
     async def test_delete_by_name_async(self, registry, mock_config_store):

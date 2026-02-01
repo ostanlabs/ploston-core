@@ -112,12 +112,14 @@ class MockRunner:
             JSON-RPC response with result or error
         """
         msg_id = self._next_id()
-        await self.send({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "method": "runner/register",
-            "params": {"token": self.token, "name": self.name}
-        })
+        await self.send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "method": "runner/register",
+                "params": {"token": self.token, "name": self.name},
+            }
+        )
         return await self.receive()
 
     async def send_availability(
@@ -129,14 +131,13 @@ class MockRunner:
             available: List of available tool names
             unavailable: List of unavailable tool names
         """
-        await self.send({
-            "jsonrpc": "2.0",
-            "method": "runner/availability",
-            "params": {
-                "available": available,
-                "unavailable": unavailable or []
+        await self.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "runner/availability",
+                "params": {"available": available, "unavailable": unavailable or []},
             }
-        })
+        )
 
     async def receive_config(self, timeout: float = 5.0) -> dict:
         """Wait for config/push message.
@@ -169,11 +170,7 @@ class MockRunner:
             request_id: The id from the workflow/execute request
             result: The workflow execution result
         """
-        await self.send({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result
-        })
+        await self.send({"jsonrpc": "2.0", "id": request_id, "result": result})
 
     async def send_workflow_error(
         self, request_id: int, code: int, message: str, data: Any = None
@@ -189,19 +186,17 @@ class MockRunner:
         error = {"code": code, "message": message}
         if data is not None:
             error["data"] = data
-        await self.send({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": error
-        })
+        await self.send({"jsonrpc": "2.0", "id": request_id, "error": error})
 
     async def send_heartbeat(self) -> None:
         """Send runner/heartbeat notification."""
-        await self.send({
-            "jsonrpc": "2.0",
-            "method": "runner/heartbeat",
-            "params": {"timestamp": datetime.now(UTC).isoformat()}
-        })
+        await self.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "runner/heartbeat",
+                "params": {"timestamp": datetime.now(UTC).isoformat()},
+            }
+        )
 
     async def send_tool_proxy_request(
         self, tool_name: str, arguments: dict, request_id: int | None = None
@@ -217,13 +212,12 @@ class MockRunner:
             JSON-RPC response
         """
         msg_id = request_id or self._next_id()
-        await self.send({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "method": "tool/proxy",
-            "params": {
-                "tool_name": tool_name,
-                "arguments": arguments
+        await self.send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "method": "tool/proxy",
+                "params": {"tool_name": tool_name, "arguments": arguments},
             }
-        })
+        )
         return await self.receive()

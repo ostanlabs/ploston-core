@@ -137,15 +137,17 @@ class TestWebSocket:
         client = TestClient(app)
         with client.websocket_connect("/runner/ws") as websocket:
             # Send runner/register message (JSON-RPC format)
-            websocket.send_json({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "runner/register",
-                "params": {
-                    "token": "ploston_runner_testtoken123",
-                    "name": "test-runner",
+            websocket.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "runner/register",
+                    "params": {
+                        "token": "ploston_runner_testtoken123",
+                        "name": "test-runner",
+                    },
                 }
-            })
+            )
 
             # Should receive success response
             data = websocket.receive_json()
@@ -231,9 +233,7 @@ class TestRunnerConfigModels:
 
         marc_laptop = config.runners["marc-laptop"]
         assert "filesystem" in marc_laptop.mcp_servers
-        assert marc_laptop.mcp_servers["filesystem"].args == [
-            "@mcp/filesystem", "/Users/marc"
-        ]
+        assert marc_laptop.mcp_servers["filesystem"].args == ["@mcp/filesystem", "/Users/marc"]
 
     def test_ael_config_empty_runners(self) -> None:
         """Test AELConfig with no runners configured."""

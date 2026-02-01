@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 class RoutingTarget(str, Enum):
     """Where to execute a workflow."""
+
     CP = "cp"  # Control Plane
     RUNNER = "runner"  # Local Runner
 
@@ -36,6 +37,7 @@ class RoutingDecision:
         cp_tools: Tools that will be proxied to CP
         reason: Human-readable explanation
     """
+
     target: RoutingTarget
     runner_name: str | None = None
     runner_tools: list[str] | None = None
@@ -158,7 +160,7 @@ class WorkflowRouter:
             raise ToolUnavailableError(
                 tool_name=tools[0],
                 message=f"Workflow references multiple runners: {runners}. "
-                        "Multi-runner workflows not yet supported.",
+                "Multi-runner workflows not yet supported.",
             )
 
         # Single runner - validate it's connected and has the tools

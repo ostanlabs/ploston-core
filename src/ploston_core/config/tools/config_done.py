@@ -168,8 +168,7 @@ async def handle_config_done(
 
     # Build runners summary (without tokens for security)
     runners_summary = {
-        name: {"created": info.get("created", False)}
-        for name, info in runner_results.items()
+        name: {"created": info.get("created", False)} for name, info in runner_results.items()
     }
 
     result: dict[str, Any] = {

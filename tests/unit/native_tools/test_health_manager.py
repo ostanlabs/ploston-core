@@ -101,7 +101,9 @@ class TestHealthManagerStatus:
 
     def test_overall_status_healthy_when_all_disabled(self, health_manager):
         """Test overall status is healthy when all deps disabled."""
-        health_manager.configure_kafka(bootstrap_servers="localhost:9092", client_id="test", security_protocol="PLAINTEXT")
+        health_manager.configure_kafka(
+            bootstrap_servers="localhost:9092", client_id="test", security_protocol="PLAINTEXT"
+        )
         health_manager.configure_ollama(host="http://localhost:11434")
         health_manager.configure_firecrawl(base_url="http://localhost:3002")
         assert health_manager.get_overall_status() == OverallStatus.HEALTHY
@@ -181,7 +183,9 @@ class TestHealthManagerChecks:
         with patch("httpx.AsyncClient") as mock_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
 
             result = await health_manager.check_ollama()
             assert result.status == DependencyStatus.HEALTHY
@@ -209,7 +213,9 @@ class TestHealthManagerChecks:
         with patch("httpx.AsyncClient") as mock_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
 
             result = await health_manager.check_firecrawl()
             assert result.status == DependencyStatus.HEALTHY
@@ -259,9 +265,10 @@ class TestHealthManagerLifecycle:
         with patch("httpx.AsyncClient") as mock_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
 
             await health_manager.check_all()
             # Callback should be called because status changed from UNHEALTHY to HEALTHY
             callback.assert_called_once()
-
