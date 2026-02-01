@@ -33,9 +33,7 @@ class _ToolChangeMessageHandler(MessageHandler):
     def __init__(self, on_change: Callable[[], Any]):
         self._on_change = on_change
 
-    async def on_tool_list_changed(
-        self, message: mcp.types.ToolListChangedNotification
-    ) -> None:
+    async def on_tool_list_changed(self, message: mcp.types.ToolListChangedNotification) -> None:
         """Handle tool list changed notification from server."""
         await self._on_change()
 
@@ -150,8 +148,7 @@ class MCPConnection:
             if attempts > 0:
                 self._log(
                     LogLevel.INFO,
-                    f"Retry {attempts}/{max_retries} connecting to MCP server "
-                    f"(delay={delay:.1f}s)",
+                    f"Retry {attempts}/{max_retries} connecting to MCP server (delay={delay:.1f}s)",
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, max_delay)  # Exponential backoff

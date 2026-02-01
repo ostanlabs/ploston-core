@@ -19,6 +19,7 @@ from enum import Enum
 
 class RunnerStatus(str, Enum):
     """Runner connection status."""
+
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
 
@@ -37,6 +38,7 @@ class Runner:
         token_hash: SHA-256 hash of auth token
         mcps: Assigned MCP configurations
     """
+
     id: str
     name: str
     created_at: datetime
@@ -86,7 +88,7 @@ def validate_token_format(token: str) -> bool:
     """
     if not token.startswith("ploston_runner_"):
         return False
-    suffix = token[len("ploston_runner_"):]
+    suffix = token[len("ploston_runner_") :]
     return len(suffix) >= 8
 
 

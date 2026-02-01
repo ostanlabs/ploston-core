@@ -135,9 +135,7 @@ class TokenEstimator:
             Estimated token count
         """
         # Context grows with each step: step 1 adds 500, step 2 adds 1000, etc.
-        context_growth = sum(
-            self._config.tokens_per_step * i for i in range(1, steps + 1)
-        )
+        context_growth = sum(self._config.tokens_per_step * i for i in range(1, steps + 1))
         return self._config.base_tokens + context_growth
 
     def estimate_ploston_tokens(self, output_size: int) -> int:
@@ -160,9 +158,7 @@ class TokenEstimator:
         )
         return self._config.entry_tokens + exit_tokens
 
-    def estimate_cost_savings(
-        self, tokens_saved: int, model: str | None = None
-    ) -> float:
+    def estimate_cost_savings(self, tokens_saved: int, model: str | None = None) -> float:
         """Estimate cost savings in USD.
 
         Assumes 60/40 input/output token split.

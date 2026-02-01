@@ -35,7 +35,13 @@ async def handle_enable_native_tool(
             "error": "Tool name is required",
             "validation": {
                 "valid": False,
-                "errors": [{"code": "MISSING_REQUIRED", "field": "tool", "message": "Tool name is required"}],
+                "errors": [
+                    {
+                        "code": "MISSING_REQUIRED",
+                        "field": "tool",
+                        "message": "Tool name is required",
+                    }
+                ],
                 "warnings": [],
             },
             "staged_changes_count": 0,
@@ -50,7 +56,13 @@ async def handle_enable_native_tool(
             "error": f"Unknown native tool: {tool}. Valid tools: {', '.join(valid_tools)}",
             "validation": {
                 "valid": False,
-                "errors": [{"code": "UNKNOWN_TOOL", "field": "tool", "message": f"Unknown native tool: {tool}"}],
+                "errors": [
+                    {
+                        "code": "UNKNOWN_TOOL",
+                        "field": "tool",
+                        "message": f"Unknown native tool: {tool}",
+                    }
+                ],
                 "warnings": [],
             },
             "staged_changes_count": 0,
@@ -106,11 +118,13 @@ def _validate_native_tool(
 
         is_required = field_schema.get("required", False)
         if is_required and field not in tool_config:
-            errors.append({
-                "code": "MISSING_REQUIRED",
-                "field": f"tools.native_tools.{tool}.{field}",
-                "message": f"Required field '{field}' is missing for {tool}",
-            })
+            errors.append(
+                {
+                    "code": "MISSING_REQUIRED",
+                    "field": f"tools.native_tools.{tool}.{field}",
+                    "message": f"Required field '{field}' is missing for {tool}",
+                }
+            )
 
     # Check for secrets
     secret_detector = SecretDetector()
@@ -126,22 +140,26 @@ def _validate_native_tool(
         if detection or is_secret_field:
             if "${" not in value:  # Not using env var syntax
                 suggested = detection.suggested_env_var if detection else key.upper()
-                warnings.append({
-                    "code": "LITERAL_SECRET",
-                    "field": f"tools.native_tools.{tool}.{key}",
-                    "message": f"Value looks like a secret. Consider using ${{{suggested}}} syntax.",
-                    "suggestion": f"${{{suggested}}}",
-                })
+                warnings.append(
+                    {
+                        "code": "LITERAL_SECRET",
+                        "field": f"tools.native_tools.{tool}.{key}",
+                        "message": f"Value looks like a secret. Consider using ${{{suggested}}} syntax.",
+                        "suggestion": f"${{{suggested}}}",
+                    }
+                )
 
         # Check for unset env var references
         env_refs = secret_detector.extract_env_var_refs(value)
         for env_var in env_refs:
             if env_var not in os.environ:
-                warnings.append({
-                    "code": "ENV_NOT_SET",
-                    "field": f"tools.native_tools.{tool}.{key}",
-                    "message": f"Environment variable '{env_var}' is not set",
-                })
+                warnings.append(
+                    {
+                        "code": "ENV_NOT_SET",
+                        "field": f"tools.native_tools.{tool}.{key}",
+                        "message": f"Environment variable '{env_var}' is not set",
+                    }
+                )
 
     return {
         "valid": len(errors) == 0,

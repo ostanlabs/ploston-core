@@ -84,9 +84,7 @@ class TestListRunners:
         assert data["runners"] == []
         assert data["total"] == 0
 
-    def test_list_with_runners(
-        self, client: TestClient, registry: RunnerRegistry
-    ) -> None:
+    def test_list_with_runners(self, client: TestClient, registry: RunnerRegistry) -> None:
         """Test listing multiple runners."""
         # Create runners directly in registry (simulating config-based creation)
         registry.create("runner-1")
@@ -100,9 +98,7 @@ class TestListRunners:
         assert "runner-1" in names
         assert "runner-2" in names
 
-    def test_list_filter_by_status(
-        self, client: TestClient, registry: RunnerRegistry
-    ) -> None:
+    def test_list_filter_by_status(self, client: TestClient, registry: RunnerRegistry) -> None:
         """Test filtering runners by status."""
         # Create a runner directly in registry (will be disconnected by default)
         registry.create("test-runner")
@@ -123,9 +119,7 @@ class TestListRunners:
 class TestGetRunner:
     """Tests for GET /runners/{name} (UT-096)."""
 
-    def test_get_runner_success(
-        self, client: TestClient, registry: RunnerRegistry
-    ) -> None:
+    def test_get_runner_success(self, client: TestClient, registry: RunnerRegistry) -> None:
         """Test getting runner details."""
         # Create runner directly in registry
         registry.create("marc-laptop")
@@ -148,9 +142,7 @@ class TestGetRunner:
 class TestDeleteRunner:
     """Tests for DELETE /runners/{name} (UT-097)."""
 
-    def test_delete_runner_success(
-        self, client: TestClient, registry: RunnerRegistry
-    ) -> None:
+    def test_delete_runner_success(self, client: TestClient, registry: RunnerRegistry) -> None:
         """Test successful runner deletion."""
         # Create runner directly in registry
         registry.create("to-delete")

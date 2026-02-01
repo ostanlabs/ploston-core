@@ -223,6 +223,7 @@ class SchemaRegistry:
     def get_current_platform() -> str:
         """Get current platform for config location lookup."""
         import platform
+
         system = platform.system().lower()
         if system == "darwin":
             return "macos"

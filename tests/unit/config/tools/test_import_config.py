@@ -43,7 +43,7 @@ class TestImportConfig:
     async def test_import_from_claude_desktop(self, registry, mock_staged_config):
         """Import from Claude Desktop config."""
         # Mock the importer to not read from real file
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
+        with patch("ploston_core.config.tools.import_config.ConfigImporter") as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -54,15 +54,18 @@ class TestImportConfig:
             mock_importer.import_config.return_value = mock_result
             mock_importer_class.return_value = mock_importer
 
-            result = await registry.call("ploston:import_config", {
-                "source": "claude_desktop",
-                "servers": {
-                    "github": {
-                        "command": "npx",
-                        "args": ["-y", "@modelcontextprotocol/server-github"],
-                    }
+            result = await registry.call(
+                "ploston:import_config",
+                {
+                    "source": "claude_desktop",
+                    "servers": {
+                        "github": {
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-github"],
+                        }
+                    },
                 },
-            })
+            )
 
             assert result["success"] is True
             assert "github" in result["imported"]
@@ -70,7 +73,7 @@ class TestImportConfig:
     @pytest.mark.asyncio
     async def test_import_from_cursor(self, registry, mock_staged_config):
         """Import from Cursor config."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
+        with patch("ploston_core.config.tools.import_config.ConfigImporter") as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -81,21 +84,24 @@ class TestImportConfig:
             mock_importer.import_config.return_value = mock_result
             mock_importer_class.return_value = mock_importer
 
-            result = await registry.call("ploston:import_config", {
-                "source": "cursor",
-                "servers": {
-                    "github": {
-                        "command": "npx",
-                    }
+            result = await registry.call(
+                "ploston:import_config",
+                {
+                    "source": "cursor",
+                    "servers": {
+                        "github": {
+                            "command": "npx",
+                        }
+                    },
                 },
-            })
+            )
 
             assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_import_with_skip_servers(self, registry, mock_staged_config):
         """Import with skipped servers."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
+        with patch("ploston_core.config.tools.import_config.ConfigImporter") as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -106,14 +112,17 @@ class TestImportConfig:
             mock_importer.import_config.return_value = mock_result
             mock_importer_class.return_value = mock_importer
 
-            result = await registry.call("ploston:import_config", {
-                "source": "claude_desktop",
-                "servers": {
-                    "github": {"command": "npx"},
-                    "slack": {"command": "npx"},
+            result = await registry.call(
+                "ploston:import_config",
+                {
+                    "source": "claude_desktop",
+                    "servers": {
+                        "github": {"command": "npx"},
+                        "slack": {"command": "npx"},
+                    },
+                    "skip_servers": ["slack"],
                 },
-                "skip_servers": ["slack"],
-            })
+            )
 
             assert result["success"] is True
             assert "github" in result["imported"]
@@ -122,7 +131,7 @@ class TestImportConfig:
     @pytest.mark.asyncio
     async def test_import_with_convert_secrets(self, registry, mock_staged_config):
         """Import with secret conversion."""
-        with patch('ploston_core.config.tools.import_config.ConfigImporter') as mock_importer_class:
+        with patch("ploston_core.config.tools.import_config.ConfigImporter") as mock_importer_class:
             mock_importer = MagicMock()
             mock_result = MagicMock()
             mock_result.imported = ["github"]
@@ -134,23 +143,26 @@ class TestImportConfig:
                     field="env.GITHUB_TOKEN",
                     original="ghp_***",
                     converted_to="${GITHUB_TOKEN}",
-                    action_required="Set GITHUB_TOKEN"
+                    action_required="Set GITHUB_TOKEN",
                 )
             ]
             mock_result.errors = []
             mock_importer.import_config.return_value = mock_result
             mock_importer_class.return_value = mock_importer
 
-            result = await registry.call("ploston:import_config", {
-                "source": "claude_desktop",
-                "servers": {
-                    "github": {
-                        "command": "npx",
-                        "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
-                    }
+            result = await registry.call(
+                "ploston:import_config",
+                {
+                    "source": "claude_desktop",
+                    "servers": {
+                        "github": {
+                            "command": "npx",
+                            "env": {"GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+                        }
+                    },
+                    "convert_secrets": True,
                 },
-                "convert_secrets": True,
-            })
+            )
 
             assert result["success"] is True
             assert len(result.get("secrets_detected", [])) > 0

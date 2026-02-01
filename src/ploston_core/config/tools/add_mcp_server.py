@@ -34,7 +34,13 @@ async def handle_add_mcp_server(
             "error": "Server name is required",
             "validation": {
                 "valid": False,
-                "errors": [{"code": "MISSING_REQUIRED", "field": "name", "message": "Server name is required"}],
+                "errors": [
+                    {
+                        "code": "MISSING_REQUIRED",
+                        "field": "name",
+                        "message": "Server name is required",
+                    }
+                ],
                 "warnings": [],
             },
             "staged_changes_count": 0,
@@ -101,26 +107,32 @@ def _validate_mcp_server(
     # Check transport-specific requirements
     if transport == "stdio":
         if "command" not in server_config:
-            errors.append({
-                "code": "MISSING_COMMAND",
-                "field": f"tools.mcp_servers.{name}.command",
-                "message": f"MCP server '{name}' with stdio transport requires 'command' field",
-            })
+            errors.append(
+                {
+                    "code": "MISSING_COMMAND",
+                    "field": f"tools.mcp_servers.{name}.command",
+                    "message": f"MCP server '{name}' with stdio transport requires 'command' field",
+                }
+            )
     elif transport == "http":
         if "url" not in server_config:
-            errors.append({
-                "code": "MISSING_URL",
-                "field": f"tools.mcp_servers.{name}.url",
-                "message": f"MCP server '{name}' with http transport requires 'url' field",
-            })
+            errors.append(
+                {
+                    "code": "MISSING_URL",
+                    "field": f"tools.mcp_servers.{name}.url",
+                    "message": f"MCP server '{name}' with http transport requires 'url' field",
+                }
+            )
 
     # Check for mutex violation (both command and url)
     if "command" in server_config and "url" in server_config:
-        errors.append({
-            "code": "MUTEX_VIOLATION",
-            "field": f"tools.mcp_servers.{name}",
-            "message": f"MCP server '{name}' cannot have both 'command' and 'url' - choose one transport",
-        })
+        errors.append(
+            {
+                "code": "MUTEX_VIOLATION",
+                "field": f"tools.mcp_servers.{name}",
+                "message": f"MCP server '{name}' cannot have both 'command' and 'url' - choose one transport",
+            }
+        )
 
     # Check for existing server (warning only)
     merged = staged_config.get_merged()
@@ -139,22 +151,26 @@ def _validate_mcp_server(
         # Check for literal secrets
         detection = secret_detector.detect(key, value)
         if detection:
-            warnings.append({
-                "code": "LITERAL_SECRET",
-                "field": f"tools.mcp_servers.{name}.env.{key}",
-                "message": f"Value looks like a secret. Consider using ${{{detection.suggested_env_var}}} syntax.",
-                "suggestion": f"${{{detection.suggested_env_var}}}",
-            })
+            warnings.append(
+                {
+                    "code": "LITERAL_SECRET",
+                    "field": f"tools.mcp_servers.{name}.env.{key}",
+                    "message": f"Value looks like a secret. Consider using ${{{detection.suggested_env_var}}} syntax.",
+                    "suggestion": f"${{{detection.suggested_env_var}}}",
+                }
+            )
 
         # Check for unset env var references
         env_refs = secret_detector.extract_env_var_refs(value)
         for env_var in env_refs:
             if env_var not in os.environ:
-                warnings.append({
-                    "code": "ENV_NOT_SET",
-                    "field": f"tools.mcp_servers.{name}.env.{key}",
-                    "message": f"Environment variable '{env_var}' is not set",
-                })
+                warnings.append(
+                    {
+                        "code": "ENV_NOT_SET",
+                        "field": f"tools.mcp_servers.{name}.env.{key}",
+                        "message": f"Environment variable '{env_var}' is not set",
+                    }
+                )
 
     return {
         "valid": len(errors) == 0,

@@ -1,6 +1,5 @@
 """Unit tests for TokenEstimator."""
 
-
 from ploston_core.telemetry.token_estimator import (
     DEFAULT_PRICING,
     TokenEstimationConfig,

@@ -44,9 +44,7 @@ class StagedConfig:
     Optionally persists staged changes to Redis for crash recovery.
     """
 
-    def __init__(
-        self, config_loader: ConfigLoader, redis_store: RedisConfigStore | None = None
-    ):
+    def __init__(self, config_loader: ConfigLoader, redis_store: RedisConfigStore | None = None):
         """Initialize staged config.
 
         Args:
@@ -395,7 +393,9 @@ class StagedConfig:
             data = await self._redis_store.get_value(STAGED_CONFIG_KEY)
             if data:
                 self._changes = json.loads(data)
-                logger.info(f"Restored staged config from Redis: {len(self._changes)} top-level keys")
+                logger.info(
+                    f"Restored staged config from Redis: {len(self._changes)} top-level keys"
+                )
                 return True
         except Exception as e:
             logger.warning(f"Failed to restore staged config from Redis: {e}")

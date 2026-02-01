@@ -480,9 +480,7 @@ class TestStagedConfigRedisPersistence:
         loader = ConfigLoader()
         redis_store = MagicMock()
         redis_store.connected = True
-        redis_store.get_value = AsyncMock(
-            return_value=json.dumps({"server": {"port": 9000}})
-        )
+        redis_store.get_value = AsyncMock(return_value=json.dumps({"server": {"port": 9000}}))
 
         staged = StagedConfig(loader, redis_store=redis_store)
         result = await staged.restore_from_redis()

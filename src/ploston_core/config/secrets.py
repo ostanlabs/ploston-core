@@ -170,6 +170,7 @@ class SecretDetector:
             True if set, False otherwise
         """
         import os
+
         return env_var in os.environ
 
     def extract_env_var_refs(self, value: str) -> list[str]:

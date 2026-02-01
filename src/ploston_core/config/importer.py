@@ -198,9 +198,7 @@ class ConfigImporter:
 
         return converted, secrets_detected
 
-    def get_source_config_path(
-        self, source: Literal["claude_desktop", "cursor"]
-    ) -> str | None:
+    def get_source_config_path(self, source: Literal["claude_desktop", "cursor"]) -> str | None:
         """
         Get the default config file path for a source on the current platform.
 
@@ -228,7 +226,9 @@ class ConfigImporter:
             },
         }
 
-        platform_key = "darwin" if system == "darwin" else ("windows" if system == "windows" else "linux")
+        platform_key = (
+            "darwin" if system == "darwin" else ("windows" if system == "windows" else "linux")
+        )
 
         if source in paths and platform_key in paths[source]:
             path = paths[source][platform_key]

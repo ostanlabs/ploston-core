@@ -58,7 +58,10 @@ class DependencyUnavailableError(Exception):
         self.dependency = dependency
         self.code = "DEPENDENCY_UNAVAILABLE"
         self.retryable = True
-        self.message = message or f"{dependency.title()} is not available. Check native-tools health endpoint for details."
+        self.message = (
+            message
+            or f"{dependency.title()} is not available. Check native-tools health endpoint for details."
+        )
         super().__init__(self.message)
 
     def to_dict(self) -> dict[str, Any]:
@@ -579,9 +582,7 @@ class HealthManager:
             "timestamp": datetime.now(UTC).isoformat(),
             "version": version,
             "uptime_seconds": round(uptime, 2),
-            "dependencies": {
-                name: health.to_dict() for name, health in self._health.items()
-            },
+            "dependencies": {name: health.to_dict() for name, health in self._health.items()},
             "tools": self.get_tool_counts(),
         }
 
@@ -606,4 +607,3 @@ def reset_health_manager() -> None:
     """Reset the global health manager (for testing)."""
     global _health_manager
     _health_manager = None
-

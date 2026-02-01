@@ -25,6 +25,7 @@ try:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
+
     HAS_CRYPTOGRAPHY = True
 except ImportError:
     HAS_CRYPTOGRAPHY = False
@@ -38,6 +39,7 @@ except ImportError:
 @dataclass
 class CertificateInfo:
     """Certificate information."""
+
     subject: str
     issuer: str
     not_before: datetime
@@ -68,9 +70,7 @@ class EmbeddedCA:
             cert_validity_days: Runner certificate validity in days
         """
         if not HAS_CRYPTOGRAPHY:
-            raise ImportError(
-                "cryptography package required for TLS: pip install cryptography"
-            )
+            raise ImportError("cryptography package required for TLS: pip install cryptography")
 
         self._ca_dir = Path(ca_dir) if ca_dir else Path.home() / ".ploston" / "ca"
         self._ca_validity_days = ca_validity_days
@@ -109,11 +109,13 @@ class EmbeddedCA:
         )
 
         # Generate self-signed certificate
-        subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
-            x509.NameAttribute(NameOID.COMMON_NAME, "Ploston Runner CA"),
-        ])
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "Ploston Runner CA"),
+            ]
+        )
 
         now = datetime.now(UTC)
         self._ca_cert = (
@@ -222,12 +224,14 @@ class EmbeddedCA:
 
         # Generate certificate
         # Note: Use OU for runner_id since SERIAL_NUMBER has strict charset requirements
-        subject = x509.Name([
-            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
-            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, runner_id),
-            x509.NameAttribute(NameOID.COMMON_NAME, f"runner-{runner_name}"),
-        ])
+        subject = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
+                x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, runner_id),
+                x509.NameAttribute(NameOID.COMMON_NAME, f"runner-{runner_name}"),
+            ]
+        )
 
         now = datetime.now(UTC)
         runner_cert = (
@@ -257,9 +261,11 @@ class EmbeddedCA:
                 critical=True,
             )
             .add_extension(
-                x509.ExtendedKeyUsage([
-                    x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
-                ]),
+                x509.ExtendedKeyUsage(
+                    [
+                        x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
+                    ]
+                ),
                 critical=False,
             )
             .sign(self._ca_key, hashes.SHA256())
@@ -300,20 +306,23 @@ class EmbeddedCA:
 
         # Build SAN list
         san_list = [x509.DNSName(hostname)]
-        for name in (alt_names or []):
+        for name in alt_names or []:
             if name.replace(".", "").isdigit():
                 # IP address
                 import ipaddress
+
                 san_list.append(x509.IPAddress(ipaddress.ip_address(name)))
             else:
                 san_list.append(x509.DNSName(name))
 
         # Generate certificate
-        subject = x509.Name([
-            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
-            x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-        ])
+        subject = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ploston"),
+                x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+            ]
+        )
 
         now = datetime.now(UTC)
         server_cert = (
@@ -347,9 +356,11 @@ class EmbeddedCA:
                 critical=True,
             )
             .add_extension(
-                x509.ExtendedKeyUsage([
-                    x509.oid.ExtendedKeyUsageOID.SERVER_AUTH,
-                ]),
+                x509.ExtendedKeyUsage(
+                    [
+                        x509.oid.ExtendedKeyUsageOID.SERVER_AUTH,
+                    ]
+                ),
                 critical=False,
             )
             .sign(self._ca_key, hashes.SHA256())

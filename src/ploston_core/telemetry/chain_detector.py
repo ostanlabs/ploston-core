@@ -171,10 +171,12 @@ class ChainDetector:
         """
         if self._redis:
             key = f"ploston:chain:output:{output_hash}"
-            data = json.dumps({
-                "tool": tool_name,
-                "timestamp": datetime.utcnow().isoformat(),
-            })
+            data = json.dumps(
+                {
+                    "tool": tool_name,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            )
             try:
                 await self._redis.setex(key, self._ttl, data)
             except Exception:
@@ -183,9 +185,7 @@ class ChainDetector:
         else:
             self._memory_cache.set(output_hash, tool_name)
 
-    async def check_chain_link(
-        self, tool_name: str, input_hashes: set[str]
-    ) -> list[str]:
+    async def check_chain_link(self, tool_name: str, input_hashes: set[str]) -> list[str]:
         """Check if any input matches a recent output, detecting chain links.
 
         Args:

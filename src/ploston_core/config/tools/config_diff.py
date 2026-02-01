@@ -32,19 +32,19 @@ async def handle_config_diff(
     deletions: list[str] = []
 
     # Parse unified diff lines
-    lines = unified_diff.split('\n') if unified_diff else []
+    lines = unified_diff.split("\n") if unified_diff else []
     for line in lines:
-        if line.startswith('+') and not line.startswith('+++'):
+        if line.startswith("+") and not line.startswith("+++"):
             # Addition
             content = line[1:].strip()
-            if content and ':' in content:
-                key = content.split(':')[0].strip()
+            if content and ":" in content:
+                key = content.split(":")[0].strip()
                 additions.append({"line": content, "key": key})
-        elif line.startswith('-') and not line.startswith('---'):
+        elif line.startswith("-") and not line.startswith("---"):
             # Deletion
             content = line[1:].strip()
-            if content and ':' in content:
-                key = content.split(':')[0].strip()
+            if content and ":" in content:
+                key = content.split(":")[0].strip()
                 deletions.append(content)
 
     # Also get structured changes from the changes dict

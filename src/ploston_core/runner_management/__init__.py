@@ -64,6 +64,7 @@ try:
         CertificateInfo,
         EmbeddedCA,
     )
+
     __all__.extend(["CertificateInfo", "EmbeddedCA"])
 except ImportError:
     pass  # cryptography not installed

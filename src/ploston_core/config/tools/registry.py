@@ -257,7 +257,9 @@ class ConfigToolRegistry:
             return PLOSTON_TOOL_SCHEMAS
         return CONFIG_TOOL_SCHEMAS
 
-    def get_configure_tool_for_mcp_exposure(self, use_ploston_prefix: bool = False) -> dict[str, Any]:
+    def get_configure_tool_for_mcp_exposure(
+        self, use_ploston_prefix: bool = False
+    ) -> dict[str, Any]:
         """Return just configure schema (for running mode).
 
         Args:
