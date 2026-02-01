@@ -25,6 +25,8 @@ from ploston_core.api.routers import (
 from ploston_core.api.store import ExecutionStore, InMemoryExecutionStore, SQLiteExecutionStore
 
 if TYPE_CHECKING:
+    from ploston_core.config.mode_manager import ModeManager
+    from ploston_core.config.models import AELConfig
     from ploston_core.invoker import ToolInvoker
     from ploston_core.logging import AELLogger
     from ploston_core.registry import ToolRegistry
@@ -40,6 +42,8 @@ def create_rest_app(
     config: RESTConfig,
     logger: "AELLogger | None" = None,
     runner_registry: "RunnerRegistry | None" = None,
+    ael_config: "AELConfig | None" = None,
+    mode_manager: "ModeManager | None" = None,
 ) -> FastAPI:
     """Create FastAPI application with all routes.
 
@@ -51,6 +55,8 @@ def create_rest_app(
         config: REST API configuration
         logger: Optional AEL logger
         runner_registry: Optional runner registry for runner management
+        ael_config: Optional AEL configuration for pre-configured runners
+        mode_manager: Optional mode manager for config/running mode tracking
 
     Returns:
         Configured FastAPI application
@@ -72,6 +78,8 @@ def create_rest_app(
     app.state.config = config
     app.state.logger = logger
     app.state.runner_registry = runner_registry
+    app.state.ael_config = ael_config
+    app.state.mode_manager = mode_manager
 
     # Create execution store
     if config.execution_store_sqlite_path:

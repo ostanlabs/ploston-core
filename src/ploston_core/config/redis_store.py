@@ -297,6 +297,68 @@ class RedisConfigStore:
             logger.error(f"Failed to list services: {e}")
             return []
 
+    # Generic key-value methods for arbitrary data storage
+
+    async def set_value(self, key: str, value: str) -> bool:
+        """Set a value in Redis.
+
+        Args:
+            key: Key name (will be prefixed)
+            value: Value to store
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if not self._connected or not self._client:
+            return False
+
+        try:
+            full_key = f"{self._options.key_prefix}:{key}"
+            await self._client.set(full_key, value)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set value for {key}: {e}")
+            return False
+
+    async def get_value(self, key: str) -> str | None:
+        """Get a value from Redis.
+
+        Args:
+            key: Key name (will be prefixed)
+
+        Returns:
+            Value if found, None otherwise.
+        """
+        if not self._connected or not self._client:
+            return None
+
+        try:
+            full_key = f"{self._options.key_prefix}:{key}"
+            return await self._client.get(full_key)
+        except Exception as e:
+            logger.error(f"Failed to get value for {key}: {e}")
+            return None
+
+    async def delete_value(self, key: str) -> bool:
+        """Delete a value from Redis.
+
+        Args:
+            key: Key name (will be prefixed)
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if not self._connected or not self._client:
+            return False
+
+        try:
+            full_key = f"{self._options.key_prefix}:{key}"
+            await self._client.delete(full_key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete value for {key}: {e}")
+            return False
+
     @staticmethod
     def _sanitize_url(url: str) -> str:
         """Remove password from URL for logging."""

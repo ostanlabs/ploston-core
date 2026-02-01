@@ -120,7 +120,7 @@ class ConfigLoader:
         """Load configuration from file.
 
         Resolution order if path not specified:
-        1. AEL_CONFIG_PATH environment variable
+        1. PLOSTON_CONFIG_PATH or AEL_CONFIG_PATH environment variable
         2. ./ael-config.yaml
         3. ~/.ael/config.yaml
         4. If use_defaults=True and no file found, use default configuration
@@ -369,8 +369,8 @@ class ConfigLoader:
         Raises:
             AELError: If no config file found
         """
-        # 1. AEL_CONFIG_PATH environment variable
-        env_path = os.environ.get("AEL_CONFIG_PATH")
+        # 1. PLOSTON_CONFIG_PATH or AEL_CONFIG_PATH environment variable
+        env_path = os.environ.get("PLOSTON_CONFIG_PATH") or os.environ.get("AEL_CONFIG_PATH")
         if env_path:
             return Path(env_path)
 

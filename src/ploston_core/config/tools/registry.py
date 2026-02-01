@@ -118,6 +118,7 @@ class ConfigToolRegistry:
         mode_manager: Any = None,
         mcp_manager: Any = None,
         redis_store: Any = None,
+        runner_registry: Any = None,
     ):
         """Initialize config tool registry.
 
@@ -127,12 +128,14 @@ class ConfigToolRegistry:
             mode_manager: ModeManager for mode transitions
             mcp_manager: MCPClientManager for connecting to MCP servers
             redis_store: Optional RedisConfigStore for publishing config
+            runner_registry: Optional PersistentRunnerRegistry for creating runners
         """
         self._staged_config = staged_config
         self._config_loader = config_loader
         self._mode_manager = mode_manager
         self._mcp_manager = mcp_manager
         self._redis_store = redis_store
+        self._runner_registry = runner_registry
         self._write_location: str | None = None
         self._handlers = self._register_handlers()
 
@@ -216,6 +219,7 @@ class ConfigToolRegistry:
             self._mcp_manager,
             self._write_location,
             self._redis_store,
+            self._runner_registry,
         )
 
     async def _handle_configure(self, arguments: dict[str, Any]) -> dict[str, Any]:

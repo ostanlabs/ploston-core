@@ -1,7 +1,7 @@
 """Tests for Runner REST API router.
 
 Implements S-184: Runner REST API
-- UT-094: POST /runners - Create runner
+- UT-094: POST /runners - Create runner (now returns error - config-only)
 - UT-095: GET /runners - List runners
 - UT-096: GET /runners/{name} - Get runner
 - UT-097: DELETE /runners/{name} - Delete runner
@@ -17,10 +17,16 @@ from ploston_core.runner_management import RunnerRegistry
 
 
 @pytest.fixture
-def app() -> FastAPI:
+def registry() -> RunnerRegistry:
+    """Create a runner registry."""
+    return RunnerRegistry()
+
+
+@pytest.fixture
+def app(registry: RunnerRegistry) -> FastAPI:
     """Create test FastAPI app with runner router."""
     app = FastAPI()
-    app.state.runner_registry = RunnerRegistry()
+    app.state.runner_registry = registry
     app.include_router(runner_router, prefix="/api/v1")
     return app
 
@@ -32,23 +38,25 @@ def client(app: FastAPI) -> TestClient:
 
 
 class TestCreateRunner:
-    """Tests for POST /runners (UT-094)."""
+    """Tests for POST /runners (UT-094).
 
-    def test_create_runner_success(self, client: TestClient) -> None:
-        """Test successful runner creation."""
+    Runner creation via API is no longer supported.
+    Runners must be defined in config file.
+    """
+
+    def test_create_runner_returns_error(self, client: TestClient) -> None:
+        """Test that runner creation via API returns helpful error."""
         response = client.post(
             "/api/v1/runners",
             json={"name": "marc-laptop"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
-        assert data["name"] == "marc-laptop"
-        assert data["id"].startswith("runner_")
-        assert data["token"].startswith("ploston_runner_")
-        assert "install_command" in data
+        assert "config file" in data["detail"].lower()
+        assert "runners" in data["detail"]
 
-    def test_create_runner_with_mcps(self, client: TestClient) -> None:
-        """Test runner creation with MCP configs."""
+    def test_create_runner_with_mcps_returns_error(self, client: TestClient) -> None:
+        """Test that runner creation with MCPs also returns error."""
         response = client.post(
             "/api/v1/runners",
             json={
@@ -56,21 +64,11 @@ class TestCreateRunner:
                 "mcps": {"native-tools": {"url": "http://localhost:8081"}},
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == "test-runner"
-
-    def test_create_runner_duplicate_name(self, client: TestClient) -> None:
-        """Test creating runner with duplicate name."""
-        # Create first runner
-        client.post("/api/v1/runners", json={"name": "duplicate"})
-        # Try to create second with same name
-        response = client.post("/api/v1/runners", json={"name": "duplicate"})
-        assert response.status_code == 409
-        assert "already exists" in response.json()["detail"]
+        assert response.status_code == 400
+        assert "config file" in response.json()["detail"].lower()
 
     def test_create_runner_empty_name(self, client: TestClient) -> None:
-        """Test creating runner with empty name."""
+        """Test creating runner with empty name still validates."""
         response = client.post("/api/v1/runners", json={"name": ""})
         assert response.status_code == 422  # Validation error
 
@@ -86,11 +84,13 @@ class TestListRunners:
         assert data["runners"] == []
         assert data["total"] == 0
 
-    def test_list_with_runners(self, client: TestClient) -> None:
+    def test_list_with_runners(
+        self, client: TestClient, registry: RunnerRegistry
+    ) -> None:
         """Test listing multiple runners."""
-        # Create runners
-        client.post("/api/v1/runners", json={"name": "runner-1"})
-        client.post("/api/v1/runners", json={"name": "runner-2"})
+        # Create runners directly in registry (simulating config-based creation)
+        registry.create("runner-1")
+        registry.create("runner-2")
 
         response = client.get("/api/v1/runners")
         assert response.status_code == 200
@@ -100,10 +100,12 @@ class TestListRunners:
         assert "runner-1" in names
         assert "runner-2" in names
 
-    def test_list_filter_by_status(self, client: TestClient) -> None:
+    def test_list_filter_by_status(
+        self, client: TestClient, registry: RunnerRegistry
+    ) -> None:
         """Test filtering runners by status."""
-        # Create a runner (will be disconnected by default)
-        client.post("/api/v1/runners", json={"name": "test-runner"})
+        # Create a runner directly in registry (will be disconnected by default)
+        registry.create("test-runner")
 
         # Filter by disconnected
         response = client.get("/api/v1/runners?status=disconnected")
@@ -121,10 +123,12 @@ class TestListRunners:
 class TestGetRunner:
     """Tests for GET /runners/{name} (UT-096)."""
 
-    def test_get_runner_success(self, client: TestClient) -> None:
+    def test_get_runner_success(
+        self, client: TestClient, registry: RunnerRegistry
+    ) -> None:
         """Test getting runner details."""
-        # Create runner
-        client.post("/api/v1/runners", json={"name": "marc-laptop"})
+        # Create runner directly in registry
+        registry.create("marc-laptop")
 
         response = client.get("/api/v1/runners/marc-laptop")
         assert response.status_code == 200
@@ -144,10 +148,12 @@ class TestGetRunner:
 class TestDeleteRunner:
     """Tests for DELETE /runners/{name} (UT-097)."""
 
-    def test_delete_runner_success(self, client: TestClient) -> None:
+    def test_delete_runner_success(
+        self, client: TestClient, registry: RunnerRegistry
+    ) -> None:
         """Test successful runner deletion."""
-        # Create runner
-        client.post("/api/v1/runners", json={"name": "to-delete"})
+        # Create runner directly in registry
+        registry.create("to-delete")
 
         response = client.delete("/api/v1/runners/to-delete")
         assert response.status_code == 200
@@ -164,6 +170,59 @@ class TestDeleteRunner:
         response = client.delete("/api/v1/runners/nonexistent")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
+
+
+class TestDeleteRunnerConfigMode:
+    """Tests for DELETE /runners/{name} in config mode."""
+
+    def test_delete_runner_blocked_in_config_mode(self, registry: RunnerRegistry) -> None:
+        """Test that runner deletion is blocked in config mode."""
+        from unittest.mock import MagicMock
+
+        from ploston_core.config.mode_manager import Mode
+
+        # Create app with mode_manager in config mode
+        app = FastAPI()
+        app.state.runner_registry = registry
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = True
+        mode_manager.mode = Mode.CONFIGURATION
+        app.state.mode_manager = mode_manager
+        app.include_router(runner_router, prefix="/api/v1")
+        client = TestClient(app)
+
+        # Create runner directly in registry
+        registry.create("test-runner")
+
+        # Try to delete - should be blocked
+        response = client.delete("/api/v1/runners/test-runner")
+        assert response.status_code == 400
+        assert "configuration mode" in response.json()["detail"].lower()
+        assert "config_delete" in response.json()["detail"]
+
+    def test_delete_runner_allowed_in_running_mode(self, registry: RunnerRegistry) -> None:
+        """Test that runner deletion works in running mode."""
+        from unittest.mock import MagicMock
+
+        from ploston_core.config.mode_manager import Mode
+
+        # Create app with mode_manager in running mode
+        app = FastAPI()
+        app.state.runner_registry = registry
+        mode_manager = MagicMock()
+        mode_manager.is_configuration_mode.return_value = False
+        mode_manager.mode = Mode.RUNNING
+        app.state.mode_manager = mode_manager
+        app.include_router(runner_router, prefix="/api/v1")
+        client = TestClient(app)
+
+        # Create runner directly in registry
+        registry.create("test-runner")
+
+        # Delete should work
+        response = client.delete("/api/v1/runners/test-runner")
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
 
 
 class TestErrorHandling:

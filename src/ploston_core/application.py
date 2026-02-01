@@ -204,7 +204,10 @@ class PlostApplication:
             redis_options = RedisConfigStoreOptions(redis_url=redis_url)
             self.redis_config_store = RedisConfigStore(redis_options)
             await self.redis_config_store.connect()
-            self.runner_registry = PersistentRunnerRegistry(self.redis_config_store)
+            self.runner_registry = PersistentRunnerRegistry(
+                self.redis_config_store,
+                config_file_path=self._config_path,
+            )
             await self.runner_registry.load_from_redis()
             if self.logger:
                 from ploston_core.types.enums import LogLevel
@@ -294,6 +297,7 @@ class PlostApplication:
                 config=rest_config,
                 logger=self.logger,
                 runner_registry=self.runner_registry,
+                ael_config=self.config,
             )
 
         # Create mode manager in RUNNING mode
@@ -309,6 +313,8 @@ class PlostApplication:
             config_loader=self.config_loader,
             mode_manager=mode_manager,
             mcp_manager=self.mcp_manager,
+            redis_store=self.redis_config_store,
+            runner_registry=self.runner_registry,
         )
 
         self.mcp_frontend = MCPFrontend(

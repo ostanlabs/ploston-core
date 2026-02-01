@@ -264,6 +264,33 @@ class TelemetryConfig:
 
 
 @dataclass
+class RunnerMCPServerDefinition:
+    """MCP server definition for runners.
+
+    Similar to MCPServerDefinition but with args list for stdio transport.
+    Aligned with tools.mcp_servers schema.
+    """
+
+    command: str | None = None  # For stdio: command to spawn
+    args: list[str] = field(default_factory=list)  # Command arguments
+    url: str | None = None  # For http: server URL
+    transport: MCPTransport = MCPTransport.STDIO
+    env: dict[str, str] = field(default_factory=dict)
+    timeout: int = 30
+
+
+@dataclass
+class RunnerDefinition:
+    """Definition of a pre-configured runner.
+
+    Allows pre-configuring runners with MCP servers in the config file.
+    When a runner with this name connects, these MCPs are pushed to it.
+    """
+
+    mcp_servers: dict[str, RunnerMCPServerDefinition] = field(default_factory=dict)
+
+
+@dataclass
 class AELConfig:
     """Root configuration object."""
 
@@ -277,3 +304,4 @@ class AELConfig:
     plugins: list[PluginDefinition] = field(default_factory=list)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    runners: dict[str, RunnerDefinition] = field(default_factory=dict)

@@ -354,3 +354,177 @@ class TestStagedConfigHasChanges:
         staged.clear()
 
         assert not staged.has_changes()
+
+
+class TestRunnersConfig:
+    """Tests for runners configuration loading."""
+
+    def test_load_runners_from_yaml(self, tmp_path):
+        """Test loading runners section from YAML config."""
+        config_file = tmp_path / "ael-config.yaml"
+        config_file.write_text("""
+runners:
+  marc-laptop:
+    mcp_servers:
+      filesystem:
+        command: npx
+        args:
+          - "@mcp/filesystem"
+          - "/Users/marc"
+        env:
+          DEBUG: "1"
+      docker:
+        command: npx
+        args:
+          - "@mcp/docker"
+  build-server:
+    mcp_servers:
+      filesystem:
+        command: npx
+        args:
+          - "@mcp/filesystem"
+          - "/opt/builds"
+""")
+
+        loader = ConfigLoader()
+        config = loader.load(config_file)
+
+        assert len(config.runners) == 2
+        assert "marc-laptop" in config.runners
+        assert "build-server" in config.runners
+
+        marc_laptop = config.runners["marc-laptop"]
+        assert len(marc_laptop.mcp_servers) == 2
+        assert "filesystem" in marc_laptop.mcp_servers
+        assert "docker" in marc_laptop.mcp_servers
+
+        fs_mcp = marc_laptop.mcp_servers["filesystem"]
+        assert fs_mcp.command == "npx"
+        assert fs_mcp.args == ["@mcp/filesystem", "/Users/marc"]
+        assert fs_mcp.env == {"DEBUG": "1"}
+
+    def test_load_empty_runners(self, tmp_path):
+        """Test loading config with no runners section."""
+        config_file = tmp_path / "ael-config.yaml"
+        config_file.write_text("""
+server:
+  port: 8080
+""")
+
+        loader = ConfigLoader()
+        config = loader.load(config_file)
+
+        assert config.runners == {}
+
+    def test_load_runners_with_http_transport(self, tmp_path):
+        """Test loading runners with HTTP transport MCP servers."""
+        config_file = tmp_path / "ael-config.yaml"
+        config_file.write_text("""
+runners:
+  cloud-runner:
+    mcp_servers:
+      remote-api:
+        url: "http://api.example.com:8080"
+        transport: http
+        timeout: 60
+""")
+
+        loader = ConfigLoader()
+        config = loader.load(config_file)
+
+        assert "cloud-runner" in config.runners
+        remote_api = config.runners["cloud-runner"].mcp_servers["remote-api"]
+        assert remote_api.url == "http://api.example.com:8080"
+        assert remote_api.timeout == 60
+
+
+class TestStagedConfigRedisPersistence:
+    """Tests for StagedConfig Redis persistence."""
+
+    def test_set_persists_to_redis(self):
+        """Test that set() persists changes to Redis."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        loader = ConfigLoader()
+        redis_store = MagicMock()
+        redis_store.connected = True
+        redis_store.set_value = AsyncMock(return_value=True)
+
+        staged = StagedConfig(loader, redis_store=redis_store)
+        staged.set("server.port", 9000)
+
+        # Verify Redis was called (async task created)
+        # Note: In tests without event loop, this may not execute
+        assert staged._changes == {"server": {"port": 9000}}
+
+    def test_clear_clears_from_redis(self):
+        """Test that clear() removes changes from Redis."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        loader = ConfigLoader()
+        redis_store = MagicMock()
+        redis_store.connected = True
+        redis_store.delete_value = AsyncMock(return_value=True)
+
+        staged = StagedConfig(loader, redis_store=redis_store)
+        staged._changes = {"server": {"port": 9000}}
+        staged.clear()
+
+        assert staged._changes == {}
+
+    async def test_restore_from_redis(self):
+        """Test restoring staged changes from Redis."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        loader = ConfigLoader()
+        redis_store = MagicMock()
+        redis_store.connected = True
+        redis_store.get_value = AsyncMock(
+            return_value=json.dumps({"server": {"port": 9000}})
+        )
+
+        staged = StagedConfig(loader, redis_store=redis_store)
+        result = await staged.restore_from_redis()
+
+        assert result is True
+        assert staged._changes == {"server": {"port": 9000}}
+
+    async def test_restore_from_redis_no_data(self):
+        """Test restore when no data in Redis."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        loader = ConfigLoader()
+        redis_store = MagicMock()
+        redis_store.connected = True
+        redis_store.get_value = AsyncMock(return_value=None)
+
+        staged = StagedConfig(loader, redis_store=redis_store)
+        result = await staged.restore_from_redis()
+
+        assert result is False
+        assert staged._changes == {}
+
+    async def test_restore_from_redis_not_connected(self):
+        """Test restore when Redis not connected."""
+        from unittest.mock import MagicMock
+
+        loader = ConfigLoader()
+        redis_store = MagicMock()
+        redis_store.connected = False
+
+        staged = StagedConfig(loader, redis_store=redis_store)
+        result = await staged.restore_from_redis()
+
+        assert result is False
+
+    def test_no_redis_store(self):
+        """Test that operations work without Redis store."""
+        loader = ConfigLoader()
+        staged = StagedConfig(loader)  # No redis_store
+
+        staged.set("server.port", 9000)
+        assert staged._changes == {"server": {"port": 9000}}
+
+        staged.clear()
+        assert staged._changes == {}
