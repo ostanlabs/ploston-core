@@ -192,7 +192,7 @@ jobs:
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
-          event-type: ci-results
+          event-type: ci-results-ploston-core
           client-payload: |
             {
               "package": "ploston-core",
