@@ -108,8 +108,9 @@ class TestWebSocket:
 
     def test_websocket_with_mock_registry(self, app: FastAPI) -> None:
         """Test WebSocket with mock registry configured."""
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
         from unittest.mock import MagicMock
+
         from ploston_core.runner_management.registry import Runner, RunnerStatus
 
         # Create a mock runner
