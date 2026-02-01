@@ -119,3 +119,33 @@ __all__ += [
     "build_native_tools_config",
     "merge_configs",
 ]
+
+# Schema registry
+from .schema_registry import SchemaRegistry  # noqa: E402
+
+__all__ += [
+    "SchemaRegistry",
+]
+
+# Secret detection
+from .secrets import SecretDetection, SecretDetector  # noqa: E402
+
+__all__ += [
+    "SecretDetector",
+    "SecretDetection",
+]
+
+# Config importer
+from .importer import (  # noqa: E402
+    ConfigImporter,
+    ImportError,
+    ImportResult,
+    SecretConversion,
+)
+
+__all__ += [
+    "ConfigImporter",
+    "ImportResult",
+    "ImportError",
+    "SecretConversion",
+]
