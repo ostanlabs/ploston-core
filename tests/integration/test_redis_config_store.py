@@ -80,11 +80,26 @@ async def cleanup_keys(redis_client, test_prefix: str):
         await redis_client.delete(*keys)
 
 
+@pytest.fixture
+async def require_redis(redis_url: str):
+    """Skip test if Redis is not available."""
+    import redis.asyncio as redis
+
+    client = redis.from_url(redis_url, decode_responses=True)
+    try:
+        await client.ping()
+        yield
+    except Exception:
+        pytest.skip("Redis not available")
+    finally:
+        await client.aclose()
+
+
 class TestRedisConfigStoreConnection:
     """Tests for Redis connection handling."""
 
     @pytest.mark.asyncio
-    async def test_connect_success(self, redis_url: str, test_prefix: str):
+    async def test_connect_success(self, redis_url: str, test_prefix: str, require_redis):
         """Test successful connection to Redis."""
         from ploston_core.config import RedisConfigStore, RedisConfigStoreOptions
 
@@ -286,7 +301,7 @@ class TestEnvVarResolution:
 
     def test_resolve_env_var_simple(self):
         """Test resolving simple env var."""
-        from ploston.native_tools.config_watcher import resolve_env_vars
+        from ploston_core.config import resolve_env_vars
 
         with patch.dict(os.environ, {"TEST_VAR": "test_value"}):
             result = resolve_env_vars("${TEST_VAR}")
@@ -294,7 +309,7 @@ class TestEnvVarResolution:
 
     def test_resolve_env_var_with_default(self):
         """Test resolving env var with default."""
-        from ploston.native_tools.config_watcher import resolve_env_vars
+        from ploston_core.config import resolve_env_vars
 
         # Unset var uses default
         result = resolve_env_vars("${UNSET_VAR:-default_value}")
@@ -307,7 +322,7 @@ class TestEnvVarResolution:
 
     def test_resolve_env_var_in_string(self):
         """Test resolving env var embedded in string."""
-        from ploston.native_tools.config_watcher import resolve_env_vars
+        from ploston_core.config import resolve_env_vars
 
         with patch.dict(os.environ, {"HOST": "localhost", "PORT": "9092"}):
             result = resolve_env_vars("${HOST}:${PORT}")
@@ -315,7 +330,7 @@ class TestEnvVarResolution:
 
     def test_resolve_config_env_vars_recursive(self):
         """Test resolving env vars in nested config."""
-        from ploston.native_tools.config_watcher import resolve_config_env_vars
+        from ploston_core.config.loader import _resolve_env_vars_recursive
 
         with patch.dict(os.environ, {"API_KEY": "secret123", "HOST": "example.com"}):
             config = {
@@ -325,7 +340,7 @@ class TestEnvVarResolution:
                     "list": ["${HOST}", "other"],
                 },
             }
-            result = resolve_config_env_vars(config)
+            result = _resolve_env_vars_recursive(config)
 
             assert result["api_key"] == "secret123"
             assert result["nested"]["url"] == "https://example.com/api"
