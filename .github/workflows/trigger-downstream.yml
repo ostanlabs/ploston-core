@@ -1,17 +1,22 @@
 # =============================================================================
 # Trigger Downstream Builds
 # =============================================================================
-# When ploston-core CI passes on main, trigger downstream repos to rebuild
+# When ploston-core CI passes on main, trigger ALL 4 downstream repos to rebuild
 # with the new core version. This ensures changes to ploston-core are tested
 # in all dependent packages.
+#
+# Downstream packages:
+#   - ploston (Docker image)
+#   - ploston-enterprise (Docker image)
+#   - ploston-cli (PyPI package)
+#   - ploston-runner (PyPI package)
 #
 # Flow:
 #   1. Push to ploston-core/main triggers CI
 #   2. CI passes → this workflow runs
-#   3. Triggers ploston's build-rc workflow with core_sha parameter
-#   4. Triggers ploston-runner's CI workflow
-#   5. ploston builds RC image with the new ploston-core version
-#   6. Meta-repo runs E2E tests against the RC
+#   3. Triggers all 4 downstream repos with core_sha parameter
+#   4. Each downstream repo runs CI and reports to meta-repo
+#   5. Meta-repo waits for all 4 to complete, then runs integration tests
 # =============================================================================
 
 name: Trigger Downstream
@@ -23,14 +28,13 @@ on:
     branches: [main]
 
 jobs:
-  trigger-ploston-rebuild:
-    name: Trigger Ploston RC Build
+  trigger-downstream:
+    name: Trigger All Downstream Builds
     runs-on: ubuntu-latest
-    # Only run if CI succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
-      - name: Trigger ploston build-rc workflow
+      - name: Trigger ploston
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
@@ -41,10 +45,41 @@ jobs:
               "core_sha": "${{ github.event.workflow_run.head_sha }}",
               "core_short_sha": "${{ github.event.workflow_run.head_sha }}",
               "triggered_by": "ploston-core",
+              "trigger_type": "ci",
               "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
             }
 
-      - name: Trigger ploston-runner CI workflow
+      - name: Trigger ploston-enterprise
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.META_REPO_TOKEN }}
+          repository: ostanlabs/ploston-enterprise
+          event-type: core-updated
+          client-payload: |
+            {
+              "core_sha": "${{ github.event.workflow_run.head_sha }}",
+              "core_short_sha": "${{ github.event.workflow_run.head_sha }}",
+              "triggered_by": "ploston-core",
+              "trigger_type": "ci",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+            }
+
+      - name: Trigger ploston-cli
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.META_REPO_TOKEN }}
+          repository: ostanlabs/ploston-cli
+          event-type: core-updated
+          client-payload: |
+            {
+              "core_sha": "${{ github.event.workflow_run.head_sha }}",
+              "core_short_sha": "${{ github.event.workflow_run.head_sha }}",
+              "triggered_by": "ploston-core",
+              "trigger_type": "ci",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+            }
+
+      - name: Trigger ploston-runner
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
@@ -55,6 +90,22 @@ jobs:
               "core_sha": "${{ github.event.workflow_run.head_sha }}",
               "core_short_sha": "${{ github.event.workflow_run.head_sha }}",
               "triggered_by": "ploston-core",
+              "trigger_type": "ci",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+            }
+
+      - name: Notify meta-repo of cascade start
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.META_REPO_TOKEN }}
+          repository: ostanlabs/agent-execution-layer
+          event-type: cascade-started
+          client-payload: |
+            {
+              "trigger_source": "ploston-core",
+              "trigger_type": "ci",
+              "core_sha": "${{ github.event.workflow_run.head_sha }}",
+              "expected_builds": ["ploston", "ploston-enterprise", "ploston-cli", "ploston-runner"],
               "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
             }
 
@@ -62,15 +113,17 @@ jobs:
         run: |
           echo "## Downstream Builds Triggered 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Triggered downstream repos to rebuild with:" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered all downstream repos to rebuild with:" >> $GITHUB_STEP_SUMMARY
           echo "- **ploston-core SHA:** \`${{ github.event.workflow_run.head_sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Triggered Repos:" >> $GITHUB_STEP_SUMMARY
           echo "1. **ploston** - Build RC image with new ploston-core" >> $GITHUB_STEP_SUMMARY
-          echo "2. **ploston-runner** - Run CI with new ploston-core" >> $GITHUB_STEP_SUMMARY
+          echo "2. **ploston-enterprise** - Build RC image with new ploston-core" >> $GITHUB_STEP_SUMMARY
+          echo "3. **ploston-cli** - Run CI with new ploston-core" >> $GITHUB_STEP_SUMMARY
+          echo "4. **ploston-runner** - Run CI with new ploston-core" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This will:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Build \`ploston:rc-<sha>\` image with new ploston-core" >> $GITHUB_STEP_SUMMARY
-          echo "2. Run ploston-runner tests with new ploston-core" >> $GITHUB_STEP_SUMMARY
-          echo "3. Trigger meta-repo E2E tests" >> $GITHUB_STEP_SUMMARY
-          echo "4. Promote to stable if tests pass" >> $GITHUB_STEP_SUMMARY
+          echo "### Flow:" >> $GITHUB_STEP_SUMMARY
+          echo "1. All 4 downstream repos run CI in parallel" >> $GITHUB_STEP_SUMMARY
+          echo "2. Each reports status to meta-repo" >> $GITHUB_STEP_SUMMARY
+          echo "3. Meta-repo waits for all 4 to complete" >> $GITHUB_STEP_SUMMARY
+          echo "4. Meta-repo runs integration tests with all artifacts" >> $GITHUB_STEP_SUMMARY
