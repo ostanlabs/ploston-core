@@ -66,6 +66,7 @@ SAFE_IMPORTS = {
     "operator",
     "copy",
     "uuid",
+    "hashlib",  # For hashing
 }
 
 DANGEROUS_BUILTINS = {

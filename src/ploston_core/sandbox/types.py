@@ -21,18 +21,24 @@ class SandboxConfig:
     def __post_init__(self) -> None:
         """Initialize default allowed imports if not provided."""
         if self.allowed_imports is None:
+            # Keep in sync with SAFE_IMPORTS in sandbox.py
             self.allowed_imports = [
                 "json",
-                "re",
-                "datetime",
                 "math",
+                "datetime",
+                "time",
                 "random",
-                "typing",
-                "collections",
                 "itertools",
                 "functools",
-                "hashlib",
+                "collections",
+                "typing",
+                "re",
+                "decimal",
+                "statistics",
+                "operator",
+                "copy",
                 "uuid",
+                "hashlib",  # Additional for hashing
             ]
 
 
