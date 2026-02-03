@@ -115,7 +115,27 @@ class PythonExecConfig:
 
     timeout: int = 30
     max_tool_calls: int = 10
-    default_imports: list[str] = field(default_factory=lambda: ["json", "re", "datetime"])
+    # Keep in sync with SAFE_IMPORTS in sandbox.py and SandboxConfig in types.py
+    default_imports: list[str] = field(
+        default_factory=lambda: [
+            "json",
+            "math",
+            "datetime",
+            "time",
+            "random",
+            "itertools",
+            "functools",
+            "collections",
+            "typing",
+            "re",
+            "decimal",
+            "statistics",
+            "operator",
+            "copy",
+            "uuid",
+            "hashlib",
+        ]
+    )
     packages: PythonExecPackagesConfig = field(default_factory=PythonExecPackagesConfig)
 
 
