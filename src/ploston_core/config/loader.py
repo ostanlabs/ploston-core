@@ -241,6 +241,8 @@ class ConfigLoader:
             "plugins",
             "security",
             "telemetry",
+            "runners",
+            "redis",
         }
 
         for key in data:

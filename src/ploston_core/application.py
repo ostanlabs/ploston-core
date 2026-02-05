@@ -209,6 +209,36 @@ class PlostApplication:
                 config_file_path=self._config_path,
             )
             await self.runner_registry.load_from_redis()
+
+            # Sync runners from config file if any are defined
+            if self.config.runners:
+                # Convert RunnerDefinition dataclasses to dicts for sync_from_config
+                runners_dict = {}
+                for name, runner_def in self.config.runners.items():
+                    runners_dict[name] = {
+                        "mcp_servers": {
+                            mcp_name: {
+                                k: v
+                                for k, v in mcp_def.__dict__.items()
+                                if v is not None and v != {} and v != []
+                            }
+                            for mcp_name, mcp_def in runner_def.mcp_servers.items()
+                        }
+                        if runner_def.mcp_servers
+                        else {}
+                    }
+                sync_results = await self.runner_registry.sync_from_config(runners_dict)
+                if self.logger:
+                    from ploston_core.types.enums import LogLevel
+
+                    created_count = sum(1 for r in sync_results.values() if r.get("created"))
+                    self.logger._log(
+                        LogLevel.INFO,
+                        "runner",
+                        f"Synced {len(runners_dict)} runners from config ({created_count} created)",
+                        {"runners": list(runners_dict.keys())},
+                    )
+
             if self.logger:
                 from ploston_core.types.enums import LogLevel
 
