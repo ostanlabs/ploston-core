@@ -202,6 +202,7 @@ jobs:
 
       - name: Report to meta-repo dashboard
         uses: peter-evans/repository-dispatch@v2
+        continue-on-error: true  # Don't fail CI if dashboard reporting fails
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
