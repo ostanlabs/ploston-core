@@ -7,10 +7,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Prevent concurrent runs on the same branch/ref
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +42,7 @@ jobs:
   unit-tests:
     name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +92,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       redis:
         image: redis:7-alpine
@@ -125,6 +133,7 @@ jobs:
     name: Test Summary
     needs: [unit-tests, integration-tests]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     permissions:
       contents: read
@@ -157,6 +166,8 @@ jobs:
   report-to-dashboard:
     name: Report to Dashboard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
     needs: [lint, unit-tests, integration-tests]
     if: always() && github.ref == 'refs/heads/main'
     steps:
@@ -201,8 +212,7 @@ jobs:
         run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Report to meta-repo dashboard
-        uses: peter-evans/repository-dispatch@v2
-        continue-on-error: true  # Don't fail CI if dashboard reporting fails
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
@@ -228,6 +238,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [lint, unit-tests]
     steps:
       - uses: actions/checkout@v4
@@ -256,6 +267,7 @@ jobs:
   notify-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [lint, unit-tests, integration-tests, build]
     if: failure() && github.ref == 'refs/heads/main'
     steps:
