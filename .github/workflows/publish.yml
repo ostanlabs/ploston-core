@@ -85,7 +85,7 @@ jobs:
 
     steps:
       - name: Trigger ploston rebuild
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/ploston
@@ -99,7 +99,7 @@ jobs:
             }
 
       - name: Trigger ploston-enterprise rebuild
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/ploston-enterprise
@@ -113,7 +113,7 @@ jobs:
             }
 
       - name: Trigger ploston-cli rebuild
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/ploston-cli
@@ -127,7 +127,7 @@ jobs:
             }
 
       - name: Trigger ploston-runner rebuild
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/ploston-runner
@@ -141,7 +141,7 @@ jobs:
             }
 
       - name: Notify meta-repo of release cascade
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
@@ -163,7 +163,7 @@ jobs:
 
     steps:
       - name: Trigger dashboard refresh
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
