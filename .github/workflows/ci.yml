@@ -15,7 +15,7 @@ env:
 
 jobs:
   lint-and-test:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +40,7 @@ jobs:
   build-and-publish:
     needs: lint-and-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -71,7 +71,7 @@ jobs:
   dispatch-core-updated:
     needs: build-and-publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Dispatch core-updated to meta-repo
         uses: peter-evans/repository-dispatch@v3

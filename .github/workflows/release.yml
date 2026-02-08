@@ -10,7 +10,7 @@ env:
 
 jobs:
   release:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       id-token: write  # For trusted publishing
       contents: read
@@ -43,7 +43,7 @@ jobs:
 
   dispatch-core-released:
     needs: release
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Dispatch core-released to meta-repo
         uses: peter-evans/repository-dispatch@v3
