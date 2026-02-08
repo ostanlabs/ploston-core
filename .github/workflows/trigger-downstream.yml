@@ -70,11 +70,11 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   trigger-meta-repo:
-    name: Trigger Meta-Repo CI
+    name: Trigger Meta-Repo Cascade
     runs-on: ubuntu-latest
     needs: publish-dev
     steps:
-      - name: Trigger meta-repo to rebuild ALL dependents
+      - name: Dispatch core-updated to meta-repo
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
@@ -82,9 +82,9 @@ jobs:
           event-type: core-updated
           client-payload: |
             {
-              "trigger_repo": "ploston-core",
-              "trigger_sha": "${{ github.event.workflow_run.head_sha }}",
-              "core_dev_version": "${{ needs.publish-dev.outputs.dev_version }}"
+              "core_version": "${{ needs.publish-dev.outputs.dev_version }}",
+              "source": "test-pypi",
+              "sha": "${{ github.event.workflow_run.head_sha }}"
             }
 
       - name: Summary
@@ -96,11 +96,13 @@ jobs:
           echo "- **PyPI:** https://pypi.org/project/ploston-core/${{ needs.publish-dev.outputs.dev_version }}/" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Triggered meta-repo with:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event:** \`core-updated\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ploston-core SHA:** \`${{ github.event.workflow_run.head_sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ploston-core version:** \`${{ needs.publish-dev.outputs.dev_version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### What happens next:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Meta-repo rebuilds: ploston, ploston-enterprise, ploston-cli, ploston-runner" >> $GITHUB_STEP_SUMMARY
+          echo "1. Meta-repo dispatches rebuild to: ploston, ploston-enterprise, ploston-cli, ploston-runner" >> $GITHUB_STEP_SUMMARY
           echo "2. All packages will use ploston-core==${{ needs.publish-dev.outputs.dev_version }}" >> $GITHUB_STEP_SUMMARY
-          echo "3. Runs integration tests (Docker Compose + K8s)" >> $GITHUB_STEP_SUMMARY
-          echo "4. Promotes images to :edge on success" >> $GITHUB_STEP_SUMMARY
+          echo "3. Meta-repo waits for all builds to complete" >> $GITHUB_STEP_SUMMARY
+          echo "4. Runs integration tests (Docker Compose + K8s)" >> $GITHUB_STEP_SUMMARY
+          echo "5. Promotes images to :edge on success" >> $GITHUB_STEP_SUMMARY
