@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  release:
+    runs-on: self-hosted
+    permissions:
+      id-token: write  # For trusted publishing
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Build package
+        run: make build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  dispatch-core-released:
+    needs: release
+    runs-on: self-hosted
+    steps:
+      - name: Dispatch core-released to meta-repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.REPO_DISPATCH_TOKEN }}
+          repository: ostanlabs/agent-execution-layer
+          event-type: core-released
+          client-payload: |
+            {
+              "core_version": "${{ needs.release.outputs.version }}",
+              "source": "pypi",
+              "sha": "${{ github.sha }}"
+            }
+
+      - name: Notify Slack
+        if: success()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "🚀 ploston-core ${{ needs.release.outputs.version }} released to production"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
