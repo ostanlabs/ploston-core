@@ -78,7 +78,7 @@ jobs:
       - name: Dispatch core-updated to meta-repo
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.REPO_DISPATCH_TOKEN }}
+          token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
           event-type: core-updated
           client-payload: |
