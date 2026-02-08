@@ -77,82 +77,24 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
-  trigger-downstream-releases:
-    name: Trigger Downstream Rebuilds
+  trigger-meta-repo-cascade:
+    name: Trigger Meta-Repo Cascade
     if: github.event_name == 'release'
     needs: [publish-to-pypi]
     runs-on: ubuntu-latest
 
     steps:
-      - name: Trigger ploston rebuild
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.META_REPO_TOKEN }}
-          repository: ostanlabs/ploston
-          event-type: core-released
-          client-payload: |
-            {
-              "core_version": "${{ github.event.release.tag_name }}",
-              "triggered_by": "ploston-core",
-              "trigger_type": "release",
-              "release_url": "${{ github.event.release.html_url }}"
-            }
-
-      - name: Trigger ploston-enterprise rebuild
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.META_REPO_TOKEN }}
-          repository: ostanlabs/ploston-enterprise
-          event-type: core-released
-          client-payload: |
-            {
-              "core_version": "${{ github.event.release.tag_name }}",
-              "triggered_by": "ploston-core",
-              "trigger_type": "release",
-              "release_url": "${{ github.event.release.html_url }}"
-            }
-
-      - name: Trigger ploston-cli rebuild
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.META_REPO_TOKEN }}
-          repository: ostanlabs/ploston-cli
-          event-type: core-released
-          client-payload: |
-            {
-              "core_version": "${{ github.event.release.tag_name }}",
-              "triggered_by": "ploston-core",
-              "trigger_type": "release",
-              "release_url": "${{ github.event.release.html_url }}"
-            }
-
-      - name: Trigger ploston-runner rebuild
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.META_REPO_TOKEN }}
-          repository: ostanlabs/ploston-runner
-          event-type: core-released
-          client-payload: |
-            {
-              "core_version": "${{ github.event.release.tag_name }}",
-              "triggered_by": "ploston-core",
-              "trigger_type": "release",
-              "release_url": "${{ github.event.release.html_url }}"
-            }
-
-      - name: Notify meta-repo of release cascade
+      - name: Dispatch core-released to meta-repo
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
           repository: ostanlabs/agent-execution-layer
-          event-type: cascade-started
+          event-type: core-released
           client-payload: |
             {
-              "trigger_source": "ploston-core",
-              "trigger_type": "release",
               "core_version": "${{ github.event.release.tag_name }}",
-              "expected_builds": ["ploston", "ploston-enterprise", "ploston-cli", "ploston-runner"],
-              "release_url": "${{ github.event.release.html_url }}"
+              "source": "pypi",
+              "sha": "${{ github.sha }}"
             }
 
   notify-dashboard:
@@ -162,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Trigger dashboard refresh
+      - name: Dispatch release-published to meta-repo
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.META_REPO_TOKEN }}
@@ -170,11 +112,9 @@ jobs:
           event-type: release-published
           client-payload: |
             {
-              "package": "ploston-core",
+              "repo": "ploston-core",
               "version": "${{ github.event.release.tag_name }}",
-              "release_url": "${{ github.event.release.html_url }}",
-              "run_id": "${{ github.run_id }}",
-              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              "sha": "${{ github.sha }}"
             }
 
   notify-slack:
@@ -219,7 +159,7 @@ jobs:
                   "elements": [
                     {
                       "type": "mrkdwn",
-                      "text": "Downstream rebuilds triggered for: ploston, ploston-enterprise, ploston-cli, ploston-runner"
+                      "text": "Meta-repo cascade triggered for: ploston, ploston-enterprise, ploston-cli, ploston-runner"
                     }
                   ]
                 },
