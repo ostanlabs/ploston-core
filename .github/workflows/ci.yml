@@ -41,6 +41,10 @@ jobs:
     needs: lint-and-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: test-pypi
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -64,9 +68,7 @@ jobs:
           echo "Built version: $VERSION"
 
       - name: Publish to Test PyPI
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
-        run: make publish-test-pypi
+        run: uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always
 
   dispatch-core-updated:
     needs: build-and-publish
