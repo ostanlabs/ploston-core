@@ -1,0 +1,127 @@
+name: 'Update CI/CD Dashboard'
+description: 'Update the CI/CD dashboard gist with build results'
+
+inputs:
+  repo:
+    description: 'Repository name (e.g., ploston, ploston-cli)'
+    required: true
+  cascade_id:
+    description: 'Cascade ID from the triggering event'
+    required: true
+  sha:
+    description: 'Commit SHA of the build'
+    required: true
+  core_version:
+    description: 'Core version being built against'
+    required: true
+  status:
+    description: 'Build status (success/failure)'
+    required: true
+  error:
+    description: 'Error message if build failed'
+    required: false
+    default: ''
+  artifact_image_tag:
+    description: 'Docker image tag (for ploston/ploston-enterprise)'
+    required: false
+    default: ''
+  artifact_version:
+    description: 'Package version (for ploston-cli/ploston-runner)'
+    required: false
+    default: ''
+  artifact_source:
+    description: 'Package source (test-pypi/pypi)'
+    required: false
+    default: ''
+  gist_id:
+    description: 'Dashboard gist ID'
+    required: true
+  token:
+    description: 'GitHub token with gist scope'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update dashboard with build result
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        GIST_API_URL: https://api.github.com/gists/${{ inputs.gist_id }}
+      run: |
+        set -e
+
+        REPO="${{ inputs.repo }}"
+        CASCADE_ID="${{ inputs.cascade_id }}"
+        SHA="${{ inputs.sha }}"
+        CORE_VERSION="${{ inputs.core_version }}"
+        STATUS="${{ inputs.status }}"
+        ERROR="${{ inputs.error }}"
+        NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+        echo "Updating dashboard for $REPO (cascade: $CASCADE_ID, status: $STATUS)"
+
+        # Fetch current dashboard
+        RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$GIST_API_URL")
+        CURRENT=$(echo "$RESPONSE" | jq -r '.files["dashboard.json"].content')
+
+        if [[ -z "$CURRENT" || "$CURRENT" == "null" ]]; then
+          echo "ERROR: Could not extract dashboard content"
+          exit 1
+        fi
+
+        # Verify cascade_id matches (skip update if superseded)
+        CURRENT_CASCADE=$(echo "$CURRENT" | jq -r '.cascade.cascade_id')
+        echo "Current cascade: $CURRENT_CASCADE, received: $CASCADE_ID"
+        if [[ "$CURRENT_CASCADE" != "$CASCADE_ID" ]]; then
+          echo "Cascade was superseded ($CURRENT_CASCADE != $CASCADE_ID), skipping update"
+          exit 0
+        fi
+
+        # Build artifact JSON based on repo type
+        if [[ "$REPO" == "ploston" || "$REPO" == "ploston-enterprise" ]]; then
+          ARTIFACT_JSON=$(jq -n --arg tag "${{ inputs.artifact_image_tag }}" '{"image_tag": $tag}')
+        else
+          ARTIFACT_JSON=$(jq -n \
+            --arg version "${{ inputs.artifact_version }}" \
+            --arg source "${{ inputs.artifact_source }}" \
+            '{"version": $version, "source": $source}')
+        fi
+
+        # Apply update
+        UPDATED=$(echo "$CURRENT" | jq \
+          --arg repo "$REPO" \
+          --arg cascade_id "$CASCADE_ID" \
+          --arg sha "$SHA" \
+          --arg core_version "$CORE_VERSION" \
+          --arg status "$STATUS" \
+          --arg error "$ERROR" \
+          --arg now "$NOW" \
+          --argjson artifact "$ARTIFACT_JSON" \
+          '.cascade.builds[$repo] = {
+            "cascade_id": $cascade_id,
+            "sha": $sha,
+            "core_version": $core_version,
+            "status": $status,
+            "error": $error,
+            "completed_at": $now,
+            "artifact": $artifact
+          }')
+
+        # Update gist
+        echo "Updating gist..."
+        UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "$GIST_API_URL" \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"files\": {\"dashboard.json\": {\"content\": $(echo "$UPDATED" | jq -Rs .)}}}")
+
+        UPDATE_STATUS=$(echo "$UPDATE_RESPONSE" | tail -1)
+        echo "Update HTTP status: $UPDATE_STATUS"
+
+        if [[ "$UPDATE_STATUS" == "200" ]]; then
+          echo "Dashboard updated successfully for $REPO"
+        else
+          echo "ERROR: Failed to update dashboard: HTTP $UPDATE_STATUS"
+          echo "Response: $(echo "$UPDATE_RESPONSE" | sed '$d')"
+          exit 1
+        fi
