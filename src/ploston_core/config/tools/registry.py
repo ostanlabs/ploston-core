@@ -182,7 +182,7 @@ Use ${VAR} syntax for secrets (e.g., ${KAFKA_SASL_PASSWORD}).""",
 ]
 
 CONFIGURE_TOOL_SCHEMA = {
-    "name": "ael:configure",
+    "name": "configure",
     "description": "Switch back to Configuration Mode to modify settings. Running workflows will continue.",
     "inputSchema": {"type": "object", "properties": {}},
 }
@@ -229,7 +229,7 @@ class ConfigToolRegistry:
             "ael:config_schema": self._handle_config_schema,
             "ael:config_location": self._handle_config_location,
             "ael:config_done": self._handle_config_done,
-            "ael:configure": self._handle_configure,
+            "configure": self._handle_configure,
             # New ploston: prefixed tools (M-059)
             "ploston:get_setup_context": self._handle_get_setup_context,
             "ploston:add_mcp_server": self._handle_add_mcp_server,
@@ -263,7 +263,7 @@ class ConfigToolRegistry:
         """Return just configure schema (for running mode).
 
         Args:
-            use_ploston_prefix: If True, return ploston:configure. If False, return ael:configure.
+            use_ploston_prefix: If True, return ploston:configure. If False, return configure.
         """
         if use_ploston_prefix:
             return PLOSTON_CONFIGURE_SCHEMA
@@ -337,7 +337,7 @@ class ConfigToolRegistry:
         )
 
     async def _handle_configure(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Handle ael:configure tool call."""
+        """Handle configure tool call."""
         from .configure import handle_configure
 
         return await handle_configure(arguments, self._mode_manager)

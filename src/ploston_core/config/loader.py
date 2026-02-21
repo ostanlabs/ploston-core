@@ -115,6 +115,25 @@ class ConfigLoader:
         self._config_path: Path | None = None
         self._logger = logger
         self._change_callbacks: list[Callable[[AELConfig], None]] = []
+        self._used_defaults: bool = False
+
+    @property
+    def used_defaults(self) -> bool:
+        """Check if defaults were used (no config file found).
+
+        Returns:
+            True if load() used default configuration because no config file was found
+        """
+        return self._used_defaults
+
+    @property
+    def has_config_file(self) -> bool:
+        """Check if a config file was loaded.
+
+        Returns:
+            True if a config file was found and loaded
+        """
+        return not self._used_defaults
 
     def load(self, path: str | Path | None = None, use_defaults: bool = True) -> AELConfig:
         """Load configuration from file.
@@ -146,6 +165,7 @@ class ConfigLoader:
                 # Use default configuration when no file found
                 if self._logger:
                     self._logger.info("No config file found, using default configuration")
+                self._used_defaults = True
                 return self.load_defaults()
             raise create_error(
                 "CONFIG_INVALID",
@@ -161,6 +181,17 @@ class ConfigLoader:
                 "CONFIG_INVALID",
                 detail=f"Invalid YAML in config file: {e}",
             ) from e
+
+        # Empty config file is treated as "no config" (CONFIGURATION mode)
+        # A valid config file must have at least one configuration key
+        if not data:
+            if self._logger:
+                self._logger.info("Config file is empty, using default configuration")
+            self._used_defaults = True
+            return self.load_defaults()
+
+        # Config file has content - mark that we're not using defaults
+        self._used_defaults = False
 
         # Resolve environment variables
         data = _resolve_env_vars_recursive(data)

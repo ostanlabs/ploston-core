@@ -149,7 +149,7 @@ class TestChainDetector:
     async def test_skip_workflow_calls(self, detector):
         """Test that workflow calls are skipped."""
         predecessors = await detector.process_tool_call(
-            tool_name="workflow:my_workflow",
+            tool_name="workflow_my_workflow",
             params={"input": "data"},
             result={"output": "result"},
         )

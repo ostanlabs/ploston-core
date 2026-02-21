@@ -1,4 +1,4 @@
-"""ael:configure tool handler - switch back to configuration mode."""
+"""configure tool handler - switch back to configuration mode."""
 
 from typing import Any
 
@@ -9,7 +9,7 @@ async def handle_configure(
     arguments: dict[str, Any],
     mode_manager: Any,
 ) -> dict[str, Any]:
-    """Handle ael:configure tool call.
+    """Handle configure tool call.
 
     Args:
         arguments: Tool arguments (none required)

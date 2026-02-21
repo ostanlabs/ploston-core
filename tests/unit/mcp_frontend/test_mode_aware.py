@@ -32,7 +32,7 @@ class TestModeAwareMCPFrontend:
         """Create mock workflow registry."""
         registry = MagicMock()
         registry.get_for_mcp_exposure.return_value = [
-            {"name": "workflow:test", "description": "Test workflow"},
+            {"name": "workflow_test", "description": "Test workflow"},
         ]
         return registry
 
@@ -50,7 +50,7 @@ class TestModeAwareMCPFrontend:
             {"name": "ael:config_set", "description": "Set config"},
         ]
         registry.get_configure_tool_for_mcp_exposure.return_value = {
-            "name": "ael:configure",
+            "name": "configure",
             "description": "Switch to config mode",
         }
         registry.call = AsyncMock(return_value={"content": [{"type": "text", "text": "ok"}]})
@@ -118,10 +118,10 @@ class TestModeAwareMCPFrontend:
         assert "ael:config_get" in tool_names
         assert "ael:config_set" in tool_names
         assert "tool1" not in tool_names
-        assert "workflow:test" not in tool_names
+        assert "workflow_test" not in tool_names
 
     async def test_tools_list_running_mode_returns_all_tools(self, frontend_running_mode):
-        """In running mode, tools/list returns all tools + workflows + ael:configure."""
+        """In running mode, tools/list returns all tools + workflows + configure."""
         result = await frontend_running_mode._handle_tools_list({})
 
         tools = result["tools"]
@@ -129,8 +129,8 @@ class TestModeAwareMCPFrontend:
 
         assert "tool1" in tool_names
         assert "tool2" in tool_names
-        assert "workflow:test" in tool_names
-        assert "ael:configure" in tool_names
+        assert "workflow_test" in tool_names
+        assert "configure" in tool_names
         # Config tools should NOT be in running mode
         assert "ael:config_get" not in tool_names
 
@@ -146,11 +146,11 @@ class TestModeAwareMCPFrontend:
 
         mock_config_tool_registry.call.assert_called_once()
 
-    async def test_tools_call_config_mode_blocks_ael_configure(self, frontend_config_mode):
-        """In config mode, ael:configure is not available."""
+    async def test_tools_call_config_mode_blocks_configure(self, frontend_config_mode):
+        """In config mode, configure is not available."""
         with pytest.raises(AELError) as exc_info:
             await frontend_config_mode._handle_tools_call(
-                {"name": "ael:configure", "arguments": {}}
+                {"name": "configure", "arguments": {}}
             )
 
         assert "only available in running mode" in exc_info.value.message
@@ -159,7 +159,7 @@ class TestModeAwareMCPFrontend:
         """In config mode, workflows are blocked."""
         with pytest.raises(AELError) as exc_info:
             await frontend_config_mode._handle_tools_call(
-                {"name": "workflow:test", "arguments": {}}
+                {"name": "workflow_test", "arguments": {}}
             )
 
         assert "not available in configuration mode" in exc_info.value.message
@@ -173,16 +173,16 @@ class TestModeAwareMCPFrontend:
 
     # Tools call tests - running mode
 
-    async def test_tools_call_running_mode_allows_ael_configure(
+    async def test_tools_call_running_mode_allows_configure(
         self, frontend_running_mode, mock_config_tool_registry
     ):
-        """In running mode, ael:configure can be called."""
-        await frontend_running_mode._handle_tools_call({"name": "ael:configure", "arguments": {}})
+        """In running mode, configure can be called."""
+        await frontend_running_mode._handle_tools_call({"name": "configure", "arguments": {}})
 
-        mock_config_tool_registry.call.assert_called_once_with("ael:configure", {})
+        mock_config_tool_registry.call.assert_called_once_with("configure", {})
 
     async def test_tools_call_running_mode_blocks_config_tools(self, frontend_running_mode):
-        """In running mode, config tools (except ael:configure) are blocked."""
+        """In running mode, config tools (except configure) are blocked."""
         with pytest.raises(AELError) as exc_info:
             await frontend_running_mode._handle_tools_call(
                 {"name": "ael:config_get", "arguments": {}}

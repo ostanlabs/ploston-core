@@ -257,7 +257,7 @@ class WorkflowRegistry:
     def get_for_mcp_exposure(self) -> list[dict[str, Any]]:
         """Get workflows formatted as MCP tools.
 
-        Returns list of tool definitions with workflow: prefix.
+        Returns list of tool definitions with workflow_ prefix.
 
         Returns:
             List of MCP tool definitions
@@ -295,7 +295,7 @@ class WorkflowRegistry:
 
             # Create tool definition
             tool = {
-                "name": f"workflow:{workflow.name}",
+                "name": f"workflow_{workflow.name}",
                 "description": workflow.description or f"Execute {workflow.name} workflow",
                 "inputSchema": input_schema,
             }
