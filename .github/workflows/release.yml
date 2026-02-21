@@ -39,7 +39,25 @@ jobs:
         run: make build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        run: |
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          DELAY=10
+          while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
+            echo "Publish attempt $ATTEMPT of $MAX_ATTEMPTS..."
+            if uv publish --trusted-publishing always; then
+              echo "Successfully published to PyPI"
+              exit 0
+            fi
+            if [[ $ATTEMPT -eq $MAX_ATTEMPTS ]]; then
+              echo "Failed to publish after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+            echo "Publish failed, waiting ${DELAY}s before retry..."
+            sleep $DELAY
+            DELAY=$((DELAY * 2))  # Exponential backoff
+            ((ATTEMPT++))
+          done
 
   dispatch-core-released:
     needs: release
@@ -68,4 +86,3 @@ jobs:
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-

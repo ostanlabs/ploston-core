@@ -68,7 +68,25 @@ jobs:
           echo "Built version: $VERSION"
 
       - name: Publish to Test PyPI
-        run: uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always
+        run: |
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          DELAY=10
+          while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
+            echo "Publish attempt $ATTEMPT of $MAX_ATTEMPTS..."
+            if uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always; then
+              echo "Successfully published to Test PyPI"
+              exit 0
+            fi
+            if [[ $ATTEMPT -eq $MAX_ATTEMPTS ]]; then
+              echo "Failed to publish after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+            echo "Publish failed, waiting ${DELAY}s before retry..."
+            sleep $DELAY
+            DELAY=$((DELAY * 2))  # Exponential backoff
+            ((ATTEMPT++))
+          done
 
   dispatch-core-updated:
     needs: build-and-publish
@@ -87,4 +105,3 @@ jobs:
               "source": "test-pypi",
               "sha": "${{ github.sha }}"
             }
-
