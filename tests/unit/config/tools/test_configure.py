@@ -1,4 +1,4 @@
-"""Unit tests for ael:configure tool."""
+"""Unit tests for configure tool."""
 
 from unittest.mock import MagicMock
 

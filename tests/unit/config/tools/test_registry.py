@@ -60,7 +60,7 @@ class TestConfigToolRegistry:
         """Get configure tool for running mode."""
         tool = registry.get_configure_tool_for_mcp_exposure()
 
-        assert tool["name"] == "ael:configure"
+        assert tool["name"] == "configure"
 
     @pytest.mark.asyncio
     async def test_call_config_get(self, registry):
@@ -124,7 +124,7 @@ class TestConfigToolSchemas:
 
     def test_configure_tool_schema(self):
         """Configure tool schema is valid."""
-        assert CONFIGURE_TOOL_SCHEMA["name"] == "ael:configure"
+        assert CONFIGURE_TOOL_SCHEMA["name"] == "configure"
         assert "description" in CONFIGURE_TOOL_SCHEMA
         assert "inputSchema" in CONFIGURE_TOOL_SCHEMA
 

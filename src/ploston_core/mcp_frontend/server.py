@@ -28,7 +28,7 @@ class MCPFrontend:
 
     Exposes:
     - All registered tools (passthrough)
-    - All registered workflows (as workflow:* tools)
+    - All registered workflows (as workflow_* tools)
 
     Transport: stdio (default) or HTTP
     """
@@ -239,7 +239,7 @@ class MCPFrontend:
                 "version": self._config.version,
             },
             "capabilities": {
-                "tools": {},
+                "tools": {"listChanged": True},
             },
         }
 
@@ -259,7 +259,7 @@ class MCPFrontend:
             if self._config_tool_registry:
                 tools = self._config_tool_registry.get_for_mcp_exposure()
         else:
-            # Running mode: all tools + workflows + ael:configure
+            # Running mode: all tools + workflows + configure
             if self._config.expose_tools:
                 for tool in self._tool_registry.get_for_mcp_exposure():
                     tools.append(tool)
@@ -268,7 +268,7 @@ class MCPFrontend:
                 for workflow in self._workflow_registry.get_for_mcp_exposure():
                     tools.append(workflow)
 
-            # Add ael:configure for switching back to config mode
+            # Add configure for switching back to config mode
             if self._config_tool_registry:
                 configure_tool = self._config_tool_registry.get_configure_tool_for_mcp_exposure()
                 if configure_tool:
@@ -292,11 +292,11 @@ class MCPFrontend:
             raise create_error("PARAM_INVALID", message="Tool name is required")
 
         # Config tools (ael:* namespace)
-        if name.startswith("ael:"):
+        if name.startswith("ael:") or name == "configure":
             return await self._handle_config_tool_call(name, arguments)
 
         # Workflow calls
-        if name.startswith("workflow:"):
+        if name.startswith("workflow_"):
             if self._mode_manager.mode == Mode.CONFIGURATION:
                 raise AELError(
                     code="TOOL_UNAVAILABLE",
@@ -305,7 +305,7 @@ class MCPFrontend:
                     tool_name=name,
                     http_status=503,
                 )
-            workflow_id = name[len("workflow:") :]
+            workflow_id = name[len("workflow_") :]
             return await self._execute_workflow(workflow_id, arguments)
 
         # Regular tool calls
@@ -341,25 +341,25 @@ class MCPFrontend:
             )
 
         if self._mode_manager.mode == Mode.CONFIGURATION:
-            # In config mode, ael:configure is not available
-            if name == "ael:configure":
+            # In config mode, configure is not available
+            if name == "configure":
                 raise AELError(
                     code="TOOL_UNAVAILABLE",
                     category=ErrorCategory.TOOL,
-                    message="ael:configure only available in running mode",
+                    message="configure only available in running mode",
                     tool_name=name,
                     http_status=503,
                 )
             return await self._config_tool_registry.call(name, arguments)
         else:
-            # In running mode, only ael:configure is available
-            if name == "ael:configure":
+            # In running mode, only configure is available
+            if name == "configure":
                 return await self._config_tool_registry.call(name, arguments)
             else:
                 raise AELError(
                     code="TOOL_UNAVAILABLE",
                     category=ErrorCategory.TOOL,
-                    message=f"{name} only available in configuration mode. Call ael:configure first.",
+                    message=f"{name} only available in configuration mode. Call configure first.",
                     tool_name=name,
                     http_status=503,
                 )
@@ -419,7 +419,7 @@ class MCPFrontend:
 
         # Chain detection (T-446): Process tool call for chain detection
         # Only for direct tool calls (not workflows)
-        if self._chain_detector and result.success and not tool_name.startswith("workflow:"):
+        if self._chain_detector and result.success and not tool_name.startswith("workflow_"):
             try:
                 await self._chain_detector.process_tool_call(
                     tool_name=tool_name,

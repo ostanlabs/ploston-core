@@ -157,6 +157,70 @@ CONFIG_SCHEMA = {
             },
         },
     },
+    "runners": {
+        "description": "Local runners for executing tools on user machines",
+        "workflow": (
+            "1. Define runner here with mcp_servers. "
+            "2. Use 'ploston runner regenerate-token <name>' to get connection token. "
+            "3. Install ploston-runner on target machine. "
+            "4. Connect with: ploston-runner connect --token <token> --cp-url <url>"
+        ),
+        "fields": {
+            "<runner_name>": {
+                "type": "object",
+                "description": "Runner definition - name is the runner identifier",
+                "properties": {
+                    "mcp_servers": {
+                        "type": "object",
+                        "description": "MCP servers to push to this runner when it connects",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "command": {
+                                    "type": "string",
+                                    "description": "Command to spawn the MCP server on the runner",
+                                },
+                                "args": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Command arguments",
+                                },
+                                "url": {
+                                    "type": "string",
+                                    "description": "Server URL for HTTP transport",
+                                },
+                                "transport": {
+                                    "type": "string",
+                                    "enum": ["stdio", "http"],
+                                    "default": "stdio",
+                                },
+                                "env": {
+                                    "type": "object",
+                                    "description": "Environment variables for server",
+                                },
+                                "timeout": {
+                                    "type": "integer",
+                                    "default": 30,
+                                    "description": "Connection timeout in seconds",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "example": {
+            "my-laptop": {
+                "mcp_servers": {
+                    "filesystem": {
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+                        "transport": "stdio",
+                    },
+                },
+            },
+        },
+    },
 }
 
 

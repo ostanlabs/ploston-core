@@ -330,11 +330,14 @@ class PlostApplication:
                 ael_config=self.config,
             )
 
-        # Create mode manager in RUNNING mode
+        # Create mode manager based on whether config file exists
+        # - RUNNING mode: config file was found and loaded
+        # - CONFIGURATION mode: no config file, using defaults (initial setup)
         from ploston_core.config import Mode, ModeManager, StagedConfig
         from ploston_core.config.tools import ConfigToolRegistry
 
-        mode_manager = ModeManager(initial_mode=Mode.RUNNING)
+        initial_mode = Mode.CONFIGURATION if self.config_loader.used_defaults else Mode.RUNNING
+        mode_manager = ModeManager(initial_mode=initial_mode)
 
         # Create config tool registry
         staged_config = StagedConfig(self.config_loader)

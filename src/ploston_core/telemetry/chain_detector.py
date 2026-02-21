@@ -252,7 +252,7 @@ class ChainDetector:
             List of predecessor tools (chain links detected)
         """
         # Skip workflow calls - we only detect chains in direct tool calls
-        if tool_name.startswith("workflow:"):
+        if tool_name.startswith("workflow_"):
             return []
 
         # Compute hashes

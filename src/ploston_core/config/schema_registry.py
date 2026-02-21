@@ -126,6 +126,53 @@ class SchemaRegistry:
                     }
                 },
             },
+            "runners": {
+                "_description": "Local runners for executing tools on user machines",
+                "_pattern": "<runner_name>: RunnerDefinition",
+                "_workflow": (
+                    "1. Define runner in config: runners.<name>.mcp_servers "
+                    "2. Use 'ploston runner regenerate-token <name>' to get token "
+                    "3. Install ploston-runner on target machine "
+                    "4. Connect with: ploston-runner connect --token <token> --cp-url <url>"
+                ),
+                "RunnerDefinition": {
+                    "mcp_servers": {
+                        "_description": "MCP servers to push to this runner when it connects",
+                        "_pattern": "<server_name>: ServerDefinition",
+                        "ServerDefinition": {
+                            "command": {
+                                "type": "string",
+                                "required_when": "transport is stdio",
+                                "description": "Command to spawn the server process on the runner",
+                                "example": "npx",
+                            },
+                            "args": {
+                                "type": "array[string]",
+                                "required": False,
+                                "description": "Arguments passed to command",
+                                "example": ["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+                            },
+                            "url": {
+                                "type": "string",
+                                "required_when": "transport is http",
+                                "description": "Server URL for HTTP transport",
+                                "example": "http://localhost:8081",
+                            },
+                            "transport": {
+                                "type": "string",
+                                "enum": ["stdio", "http"],
+                                "default": "stdio",
+                            },
+                            "env": {
+                                "type": "object[string, string]",
+                                "secret_syntax": "${VAR_NAME} or ${VAR_NAME:-default}",
+                                "example": {"API_KEY": "${API_KEY}"},
+                            },
+                            "timeout": {"type": "integer", "default": 30},
+                        },
+                    },
+                },
+            },
         }
 
     @staticmethod
@@ -153,6 +200,17 @@ class SchemaRegistry:
             },
             "workflows": {"directory": "./workflows"},
             "logging": {"level": "INFO"},
+            "runners": {
+                "my-laptop": {
+                    "mcp_servers": {
+                        "filesystem": {
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+                            "transport": "stdio",
+                        },
+                    },
+                },
+            },
         }
 
     @staticmethod
