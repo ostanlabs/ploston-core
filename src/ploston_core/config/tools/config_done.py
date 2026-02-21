@@ -182,6 +182,13 @@ async def handle_config_done(
             "total_tools": total_tools,
             "runners": runners_summary,
         },
+        "message": "Configuration applied successfully. Now in running mode.",
+        "next_steps": (
+            "IMPORTANT: Call tools/list to refresh available tools. "
+            "Configuration tools are no longer available. "
+            "Workflow and MCP tools are now active. "
+            "Use the 'configure' tool to return to configuration mode."
+        ),
     }
 
     # Include any non-fatal errors (like Redis publish failure)
