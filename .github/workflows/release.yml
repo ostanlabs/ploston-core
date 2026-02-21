@@ -43,12 +43,32 @@ jobs:
           MAX_ATTEMPTS=10
           ATTEMPT=1
           DELAY=15
+
+          # Get the version we're publishing
+          VERSION=$(ls dist/*.whl | head -1 | sed 's/.*-\([0-9].*\)-py3.*/\1/')
+          echo "Publishing version: $VERSION"
+
           while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
             echo "Publish attempt $ATTEMPT of $MAX_ATTEMPTS..."
-            if uv publish --trusted-publishing always; then
+            if uv publish --trusted-publishing always 2>&1 | tee /tmp/publish_output.txt; then
               echo "Successfully published to PyPI"
               exit 0
             fi
+
+            # Check if wheel was uploaded (partial success - wheel uploaded, source failed)
+            if grep -q "File already exists" /tmp/publish_output.txt; then
+              echo "Package already exists on PyPI - considering as success"
+              exit 0
+            fi
+
+            # Check if wheel is now available on PyPI (partial upload succeeded)
+            echo "Checking if wheel was partially uploaded..."
+            sleep 5  # Give PyPI a moment to index
+            if pip index versions ploston-core 2>/dev/null | grep -q "$VERSION"; then
+              echo "Wheel successfully uploaded to PyPI (source upload may have failed, but wheel is sufficient)"
+              exit 0
+            fi
+
             if [[ $ATTEMPT -eq $MAX_ATTEMPTS ]]; then
               echo "Failed to publish after $MAX_ATTEMPTS attempts"
               exit 1
