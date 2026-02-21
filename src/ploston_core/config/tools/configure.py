@@ -33,7 +33,9 @@ async def handle_configure(
 
     # Build message with workflow info
     if running_workflows > 0:
-        base_message = f"Switched to configuration mode. {running_workflows} workflow(s) still running."
+        base_message = (
+            f"Switched to configuration mode. {running_workflows} workflow(s) still running."
+        )
     else:
         base_message = "Switched to configuration mode."
 

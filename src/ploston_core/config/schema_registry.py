@@ -150,7 +150,11 @@ class SchemaRegistry:
                                 "type": "array[string]",
                                 "required": False,
                                 "description": "Arguments passed to command",
-                                "example": ["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+                                "example": [
+                                    "-y",
+                                    "@modelcontextprotocol/server-filesystem",
+                                    "/home",
+                                ],
                             },
                             "url": {
                                 "type": "string",

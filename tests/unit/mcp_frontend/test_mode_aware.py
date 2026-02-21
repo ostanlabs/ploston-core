@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from ploston_core.config import Mode, ModeManager
 from ploston_core.errors import AELError
 from ploston_core.mcp_frontend.server import MCPFrontend
@@ -149,9 +148,7 @@ class TestModeAwareMCPFrontend:
     async def test_tools_call_config_mode_blocks_configure(self, frontend_config_mode):
         """In config mode, configure is not available."""
         with pytest.raises(AELError) as exc_info:
-            await frontend_config_mode._handle_tools_call(
-                {"name": "configure", "arguments": {}}
-            )
+            await frontend_config_mode._handle_tools_call({"name": "configure", "arguments": {}})
 
         assert "only available in running mode" in exc_info.value.message
 
