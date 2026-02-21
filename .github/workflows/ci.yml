@@ -69,9 +69,9 @@ jobs:
 
       - name: Publish to Test PyPI
         run: |
-          MAX_ATTEMPTS=5
+          MAX_ATTEMPTS=10
           ATTEMPT=1
-          DELAY=10
+          DELAY=15
           while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
             echo "Publish attempt $ATTEMPT of $MAX_ATTEMPTS..."
             if uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always; then
