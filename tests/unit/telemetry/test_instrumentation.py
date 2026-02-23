@@ -124,6 +124,32 @@ class TestInstrumentToolCall:
         assert result["status"] == MetricLabels.STATUS_ERROR
         assert result["error_code"] == "TimeoutError"
 
+    @pytest.mark.asyncio
+    async def test_instrument_tool_call_with_source(self):
+        """Test tool call instrumentation with source parameter."""
+        async with instrument_tool_call("test-tool", source="native") as result:
+            pass
+        assert result["status"] == MetricLabels.STATUS_SUCCESS
+        assert result.get("source") == "native"
+
+    @pytest.mark.asyncio
+    async def test_instrument_tool_call_with_all_source_types(self):
+        """Test tool call instrumentation with all source types."""
+        for source in ["native", "local", "system", "configured"]:
+            async with instrument_tool_call(f"test-tool-{source}", source=source) as result:
+                pass
+            assert result["status"] == MetricLabels.STATUS_SUCCESS
+            assert result.get("source") == source
+
+    @pytest.mark.asyncio
+    async def test_instrument_tool_call_source_on_error(self):
+        """Test that source is preserved on error."""
+        with pytest.raises(ValueError):
+            async with instrument_tool_call("test-tool", source="system") as result:
+                raise ValueError("Test error")
+        assert result["status"] == MetricLabels.STATUS_ERROR
+        assert result.get("source") == "system"
+
 
 class TestRecordToolResult:
     """Tests for record_tool_result helper."""

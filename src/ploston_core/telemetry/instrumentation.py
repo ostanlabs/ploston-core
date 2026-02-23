@@ -141,7 +141,7 @@ async def instrument_step(workflow_id: str, step_id: str):
 
 
 @asynccontextmanager
-async def instrument_tool_call(tool_name: str):
+async def instrument_tool_call(tool_name: str, source: str | None = None):
     """Context manager for instrumenting tool invocations.
 
     Records:
@@ -151,13 +151,14 @@ async def instrument_tool_call(tool_name: str):
 
     Args:
         tool_name: Tool name (server:tool format)
+        source: Tool source category (native, local, system, configured)
 
     Yields:
-        Dictionary to store execution status
+        Dictionary to store execution status and source
     """
     telemetry = get_telemetry()
     start_time = time.time()
-    result = {"status": MetricLabels.STATUS_SUCCESS, "error_code": None}
+    result = {"status": MetricLabels.STATUS_SUCCESS, "error_code": None, "source": source}
 
     # Get tracer
     tracer = telemetry["tracer"] if telemetry else None
@@ -168,6 +169,8 @@ async def instrument_tool_call(tool_name: str):
     if tracer:
         span = tracer.start_span(f"tool:{tool_name}")
         span.set_attribute("tool.name", tool_name)
+        if source:
+            span.set_attribute("tool.source", source)
 
     try:
         yield result
@@ -188,6 +191,7 @@ async def instrument_tool_call(tool_name: str):
                 duration_seconds=duration,
                 status=result["status"],
                 error_code=result.get("error_code"),
+                source=result.get("source"),
             )
 
         # End span
