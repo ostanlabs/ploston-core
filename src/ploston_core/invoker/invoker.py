@@ -6,9 +6,18 @@ from typing import TYPE_CHECKING, Any
 from ploston_core.errors import create_error
 from ploston_core.sandbox import ToolCallerProtocol
 from ploston_core.telemetry import instrument_tool_call, record_tool_result
+from ploston_core.telemetry.metrics import MetricLabels
 from ploston_core.types import LogLevel, ToolSource, ToolStatus
 
 from .types import ToolCallResult
+
+# Map ToolSource enum to metric source labels
+_SOURCE_TO_METRIC_LABEL = {
+    ToolSource.MCP: MetricLabels.SOURCE_CONFIGURED,  # MCP servers = "configured"
+    ToolSource.NATIVE: MetricLabels.SOURCE_NATIVE,  # Native tools = "native"
+    ToolSource.SYSTEM: MetricLabels.SOURCE_SYSTEM,  # System tools = "system"
+    # Note: RUNNER source is handled separately via tool name prefix
+}
 
 if TYPE_CHECKING:
     from ploston_core.errors import ErrorFactory
@@ -86,6 +95,23 @@ class ToolInvoker(ToolCallerProtocol):
     # Main interface
     # ─────────────────────────────────────────────────────────────
 
+    def _get_source_label(self, tool_name: str, tool_source: ToolSource) -> str:
+        """Get the metric source label for a tool.
+
+        Args:
+            tool_name: Tool name (may have runner prefix)
+            tool_source: Tool source enum
+
+        Returns:
+            Source label for metrics (native, local, system, configured)
+        """
+        # Check for runner prefix (e.g., "runner__mcp__tool_name")
+        if tool_name.startswith("runner__") or "__runner__" in tool_name:
+            return MetricLabels.SOURCE_LOCAL
+
+        # Map ToolSource to metric label
+        return _SOURCE_TO_METRIC_LABEL.get(tool_source, MetricLabels.SOURCE_CONFIGURED)
+
     async def invoke(
         self,
         tool_name: str,
@@ -111,12 +137,24 @@ class ToolInvoker(ToolCallerProtocol):
             AELError(TOOL_TIMEOUT) if call times out
             AELError(TOOL_FAILED) if tool returns error
         """
-        # Instrument tool invocation with telemetry
-        async with instrument_tool_call(tool_name) as telemetry_result:
-            # 1. Get tool from registry
-            tool = self._registry.get_or_raise(tool_name)
+        # 1. Get tool from registry first to determine source for telemetry
+        tool = self._registry.get_or_raise(tool_name)
 
-            # 2. Check availability
+        # 2. Get routing info to determine source
+        router = self._registry.get_router(tool_name)
+        if router is None:
+            raise create_error(
+                "TOOL_UNAVAILABLE",
+                tool_name=tool_name,
+                reason="No routing information available for tool",
+            )
+
+        # 3. Determine source label for metrics
+        source_label = self._get_source_label(tool_name, router.source)
+
+        # Instrument tool invocation with telemetry (including source)
+        async with instrument_tool_call(tool_name, source=source_label) as telemetry_result:
+            # 4. Check availability
             if tool.status != ToolStatus.AVAILABLE:
                 raise create_error(
                     "TOOL_UNAVAILABLE",
@@ -124,7 +162,7 @@ class ToolInvoker(ToolCallerProtocol):
                     reason="Tool is currently unavailable",
                 )
 
-            # 3. Log invocation
+            # 5. Log invocation
             if self._logger:
                 self._logger._log(
                     LogLevel.INFO,
@@ -132,21 +170,13 @@ class ToolInvoker(ToolCallerProtocol):
                     f"Invoking tool: {tool_name}",
                     {
                         "tool_name": tool_name,
+                        "source": source_label,
                         "step_id": step_id,
                         "execution_id": execution_id,
                     },
                 )
 
-            # 4. Route to appropriate backend
-            router = self._registry.get_router(tool_name)
-
-            if router is None:
-                raise create_error(
-                    "TOOL_UNAVAILABLE",
-                    tool_name=tool_name,
-                    reason="No routing information available for tool",
-                )
-
+            # 6. Route to appropriate backend
             if router.source == ToolSource.MCP:
                 if router.server_name is None:
                     raise create_error(

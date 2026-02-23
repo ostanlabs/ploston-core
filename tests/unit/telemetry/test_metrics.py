@@ -171,6 +171,33 @@ class TestAELMetrics:
             status=MetricLabels.STATUS_SUCCESS,
         )
 
+    def test_record_tool_invocation_with_source(self):
+        """Test recording tool invocation with source label."""
+        # Should not raise - test all source types
+        for source in [
+            MetricLabels.SOURCE_NATIVE,
+            MetricLabels.SOURCE_LOCAL,
+            MetricLabels.SOURCE_SYSTEM,
+            MetricLabels.SOURCE_CONFIGURED,
+        ]:
+            self.metrics.record_tool_invocation(
+                tool_name=f"test-tool-{source}",
+                duration_seconds=0.05,
+                status=MetricLabels.STATUS_SUCCESS,
+                source=source,
+            )
+
+    def test_record_tool_invocation_with_source_and_error(self):
+        """Test recording failed tool invocation with source label."""
+        # Should not raise
+        self.metrics.record_tool_invocation(
+            tool_name="test-tool",
+            duration_seconds=0.1,
+            status=MetricLabels.STATUS_ERROR,
+            error_code="TestError",
+            source=MetricLabels.SOURCE_NATIVE,
+        )
+
 
 class TestMetricLabels:
     """Tests for MetricLabels constants."""
@@ -196,3 +223,14 @@ class TestMetricLabels:
         assert MetricLabels.STATUS_ERROR == "error"
         assert MetricLabels.STATUS_TIMEOUT == "timeout"
         assert MetricLabels.STATUS_CANCELLED == "cancelled"
+
+    def test_tool_source_label(self):
+        """Test tool source label constant."""
+        assert MetricLabels.TOOL_SOURCE == "tool_source"
+
+    def test_tool_source_values(self):
+        """Test tool source value constants."""
+        assert MetricLabels.SOURCE_NATIVE == "native"
+        assert MetricLabels.SOURCE_LOCAL == "local"
+        assert MetricLabels.SOURCE_SYSTEM == "system"
+        assert MetricLabels.SOURCE_CONFIGURED == "configured"

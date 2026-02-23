@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ploston_core.config.models import ToolsConfig
 from ploston_core.errors import create_error
 from ploston_core.logging.logger import AELLogger
 from ploston_core.mcp.manager import MCPClientManager
 from ploston_core.types import LogLevel, ToolSource, ToolStatus
+from ploston_core.types.internal import InternalToolSource
 
 from .types import RefreshResult, ToolDefinition, ToolRouter
+
+if TYPE_CHECKING:
+    from ploston_core.telemetry.metrics import AELMetrics
 
 
 class ToolRegistry:
@@ -44,6 +48,55 @@ class ToolRegistry:
         self._mcp_manager = mcp_manager
         self._config = config
         self._logger = logger
+        self._metrics: AELMetrics | None = None
+
+    def set_metrics(self, metrics: AELMetrics) -> None:
+        """Set the metrics instance for telemetry.
+
+        Args:
+            metrics: AELMetrics instance
+        """
+        self._metrics = metrics
+
+    def _update_metrics(self) -> None:
+        """Update telemetry metrics based on current tool counts."""
+        if not self._metrics:
+            return
+
+        # Count tools by source
+        mcp_count = 0
+        system_count = 0
+        native_count = 0
+        for tool in self._tools.values():
+            if tool.status == ToolStatus.AVAILABLE:
+                if tool.source == ToolSource.MCP:
+                    mcp_count += 1
+                elif tool.source == ToolSource.SYSTEM:
+                    system_count += 1
+                elif tool.source == ToolSource.NATIVE:
+                    native_count += 1
+
+        # Update metrics (these are UpDownCounters, so we need to track deltas)
+        # For simplicity, we'll use the set method which handles the delta calculation
+        self._metrics.update_tools_by_source(
+            mcp_tools=mcp_count,
+            system_tools=system_count,
+            native_tools=native_count,
+        )
+
+    def _get_tool_source_for_server(self, server_name: str) -> ToolSource:
+        """Determine the tool source based on server name.
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            ToolSource.NATIVE for native_tools server, ToolSource.MCP otherwise
+        """
+        # native_tools or native-tools server provides native tools
+        if server_name in ("native_tools", "native-tools"):
+            return ToolSource.NATIVE
+        return ToolSource.MCP
 
     def _log(self, level: LogLevel, message: str, **kwargs: Any) -> None:
         """Log message if logger available."""
@@ -101,6 +154,9 @@ class ToolRegistry:
         # Update tools from each server
         new_tools: set[str] = set()
         for server_name, tools in tools_by_server.items():
+            # Determine source based on server name
+            tool_source = self._get_tool_source_for_server(server_name)
+
             for tool_schema in tools:
                 tool_name = tool_schema.name
 
@@ -118,6 +174,7 @@ class ToolRegistry:
                     existing.description = tool_schema.description
                     existing.input_schema = tool_schema.input_schema
                     existing.output_schema = tool_schema.output_schema
+                    existing.source = tool_source  # Update source in case it changed
                     existing.status = ToolStatus.AVAILABLE
                     existing.last_seen = datetime.now(UTC)
                     existing.error = None
@@ -126,7 +183,7 @@ class ToolRegistry:
                     self._tools[tool_name] = ToolDefinition(
                         name=tool_name,
                         description=tool_schema.description,
-                        source=ToolSource.MCP,
+                        source=tool_source,
                         server_name=server_name,
                         input_schema=tool_schema.input_schema,
                         output_schema=tool_schema.output_schema,
@@ -137,10 +194,10 @@ class ToolRegistry:
 
                 new_tools.add(tool_name)
 
-        # Mark removed MCP tools as unavailable (don't delete)
+        # Mark removed MCP/NATIVE tools as unavailable (don't delete)
         for tool_name in old_tools:
             tool = self._tools[tool_name]
-            if tool.source == ToolSource.MCP and tool_name not in new_tools:
+            if tool.source in (ToolSource.MCP, ToolSource.NATIVE) and tool_name not in new_tools:
                 tool.status = ToolStatus.UNAVAILABLE
                 removed.append(tool_name)
 
@@ -156,6 +213,9 @@ class ToolRegistry:
             LogLevel.INFO,
             f"Refresh complete: {len(added)} added, {len(removed)} removed, {len(updated)} updated",
         )
+
+        # Update telemetry metrics
+        self._update_metrics()
 
         return result
 
@@ -191,6 +251,9 @@ class ToolRegistry:
             # Refresh tools from this server
             tools = await conn.refresh_tools()
 
+            # Determine source based on server name
+            tool_source = self._get_tool_source_for_server(server_name)
+
             # Track which tools we saw from this server
             seen_tools: set[str] = set()
 
@@ -210,6 +273,7 @@ class ToolRegistry:
                     existing.description = tool_schema.description
                     existing.input_schema = tool_schema.input_schema
                     existing.output_schema = tool_schema.output_schema
+                    existing.source = tool_source  # Update source in case it changed
                     existing.status = ToolStatus.AVAILABLE
                     existing.last_seen = datetime.now(UTC)
                     existing.error = None
@@ -218,7 +282,7 @@ class ToolRegistry:
                     self._tools[tool_name] = ToolDefinition(
                         name=tool_name,
                         description=tool_schema.description,
-                        source=ToolSource.MCP,
+                        source=tool_source,
                         server_name=server_name,
                         input_schema=tool_schema.input_schema,
                         output_schema=tool_schema.output_schema,
@@ -230,7 +294,7 @@ class ToolRegistry:
             # Mark tools from this server that are no longer present
             for tool_name, tool in self._tools.items():
                 if (
-                    tool.source == ToolSource.MCP
+                    tool.source in (ToolSource.MCP, ToolSource.NATIVE)
                     and tool.server_name == server_name
                     and tool_name not in seen_tools
                 ):
@@ -240,6 +304,9 @@ class ToolRegistry:
         except Exception as e:
             errors[server_name] = str(e)
             self._log(LogLevel.ERROR, f"Failed to refresh server '{server_name}': {e}")
+
+        # Update telemetry metrics
+        self._update_metrics()
 
         return RefreshResult(
             total_tools=len(self._tools),
@@ -338,15 +405,25 @@ class ToolRegistry:
 
         return results
 
-    def get_for_mcp_exposure(self) -> list[dict[str, Any]]:
+    def get_for_mcp_exposure(
+        self, sources: list[InternalToolSource] | None = None
+    ) -> list[dict[str, Any]]:
         """Get tools formatted for MCP tools/list response.
 
         Returns only available tools in MCP format.
 
+        Args:
+            sources: Optional list of sources to filter by. If None, returns all.
+
         Returns:
             List of MCP tool dicts
         """
-        return [tool.to_mcp_tool() for tool in self.list_available()]
+        tools = self.list_available()
+        if sources is not None:
+            # Compare by value since ToolSource and InternalToolSource are different enums
+            source_values = {s.value for s in sources}
+            tools = [t for t in tools if t.source.value in source_values]
+        return [tool.to_mcp_tool() for tool in tools]
 
     def get_router(self, tool_name: str) -> ToolRouter | None:
         """Get routing info for a tool.
@@ -423,3 +500,6 @@ class ToolRegistry:
                 status=ToolStatus.AVAILABLE,
                 last_seen=datetime.now(UTC),
             )
+
+        # Update telemetry metrics
+        self._update_metrics()

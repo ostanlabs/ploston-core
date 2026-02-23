@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
+from ploston_core.api.routers import is_runner_connected, send_tool_call_to_runner
 from ploston_core.config import MCPHTTPConfig, Mode, ModeManager
 from ploston_core.engine import WorkflowEngine
 from ploston_core.errors import AELError, create_error
@@ -11,8 +13,11 @@ from ploston_core.errors.errors import ErrorCategory
 from ploston_core.invoker import ToolInvoker
 from ploston_core.logging import AELLogger
 from ploston_core.registry import ToolRegistry
+from ploston_core.runner_management.registry import RunnerRegistry
+from ploston_core.runner_management.router import parse_tool_prefix
 from ploston_core.telemetry import ChainDetector
 from ploston_core.types import ExecutionStatus, MCPTransport
+from ploston_core.types.internal import InternalToolSource
 
 if TYPE_CHECKING:
     from ploston.workflow import WorkflowRegistry
@@ -20,6 +25,8 @@ if TYPE_CHECKING:
 from .http_transport import HTTPTransport
 from .stdio import read_message, write_message
 from .types import MCPServerConfig
+
+logger = logging.getLogger(__name__)
 
 
 class MCPFrontend:
@@ -48,6 +55,7 @@ class MCPFrontend:
         rest_app: Any | None = None,
         rest_prefix: str = "/api/v1",
         chain_detector: ChainDetector | None = None,
+        runner_registry: RunnerRegistry | None = None,
     ):
         """Initialize MCP frontend.
 
@@ -65,6 +73,7 @@ class MCPFrontend:
             rest_app: Optional FastAPI app to mount for REST API (dual-mode)
             rest_prefix: URL prefix for REST API (default: /api/v1)
             chain_detector: Optional chain detector for detecting tool sequences
+            runner_registry: Optional runner registry for routing tools to runners (DEC-123)
         """
         self._workflow_engine = workflow_engine
         self._tool_registry = tool_registry
@@ -85,6 +94,9 @@ class MCPFrontend:
 
         # Chain detection (T-446)
         self._chain_detector = chain_detector
+
+        # Runner routing (DEC-123)
+        self._runner_registry = runner_registry
 
         # Register for mode change notifications
         self._mode_manager.on_mode_change(self._on_mode_change)
@@ -246,6 +258,13 @@ class MCPFrontend:
     async def _handle_tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle tools/list request with mode awareness.
 
+        Includes runner tools with prefix per DEC-123 (e.g., "runner-name:tool").
+
+        Supports optional source filtering via params:
+        - sources: list of sources to include (e.g., ["native", "runner"])
+          Valid values: "mcp", "native", "system", "runner"
+          If not provided, returns all tools.
+
         Args:
             params: List parameters
 
@@ -254,30 +273,91 @@ class MCPFrontend:
         """
         tools = []
 
+        # Parse source filter from params
+        source_filter = params.get("sources") if params else None
+        include_runner = True
+        include_mcp = True
+        include_native = True
+        include_system = True
+
+        if source_filter:
+            # Convert string sources to internal sources
+            include_runner = "runner" in source_filter
+            include_mcp = "mcp" in source_filter
+            include_native = "native" in source_filter
+            include_system = "system" in source_filter
+
         if self._mode_manager.mode == Mode.CONFIGURATION:
             # Configuration mode: only config tools
             if self._config_tool_registry:
                 tools = self._config_tool_registry.get_for_mcp_exposure()
         else:
-            # Running mode: all tools + workflows + configure
+            # Running mode: all tools + workflows + configure + runner tools
             if self._config.expose_tools:
-                for tool in self._tool_registry.get_for_mcp_exposure():
+                # Build list of sources to include
+                sources_to_include = []
+                if include_mcp:
+                    sources_to_include.append(InternalToolSource.MCP)
+                if include_native:
+                    sources_to_include.append(InternalToolSource.NATIVE)
+                if include_system:
+                    sources_to_include.append(InternalToolSource.SYSTEM)
+
+                # Get tools filtered by source (or all if no filter)
+                filter_sources = sources_to_include if source_filter else None
+                for tool in self._tool_registry.get_for_mcp_exposure(filter_sources):
                     tools.append(tool)
 
-            if self._config.expose_workflows:
+            # Only include workflows if no source filter (workflows don't have a source)
+            if self._config.expose_workflows and not source_filter:
                 for workflow in self._workflow_registry.get_for_mcp_exposure():
                     tools.append(workflow)
 
-            # Add configure for switching back to config mode
-            if self._config_tool_registry:
+            # Add configure for switching back to config mode (only if no source filter)
+            if self._config_tool_registry and not source_filter:
                 configure_tool = self._config_tool_registry.get_configure_tool_for_mcp_exposure()
                 if configure_tool:
                     tools.append(configure_tool)
 
+            # Add runner tools with prefix (DEC-123)
+            # Format: runner__mcp__toolname (e.g., mac__fs__read_file)
+            # Runner reports tools as mcp__toolname, we add runner__ prefix
+            if self._runner_registry and include_runner:
+                for runner in self._runner_registry.list():
+                    if runner.status.value == "connected" and runner.available_tools:
+                        for tool_info in runner.available_tools:
+                            # Tool info can be a string or a dict with name/description
+                            # Tool name from runner is already prefixed: mcp__toolname
+                            if isinstance(tool_info, str):
+                                tool_name = tool_info
+                                tool_desc = f"Tool from runner '{runner.name}'"
+                                tool_schema = {}
+                            else:
+                                tool_name = tool_info.get("name", str(tool_info))
+                                tool_desc = tool_info.get(
+                                    "description", f"Tool from runner '{runner.name}'"
+                                )
+                                tool_schema = tool_info.get("inputSchema", {})
+
+                            # Prefix with runner name using __ delimiter
+                            # Result: runner__mcp__toolname
+                            prefixed_name = f"{runner.name}__{tool_name}"
+                            tools.append(
+                                {
+                                    "name": prefixed_name,
+                                    "description": tool_desc,
+                                    "inputSchema": tool_schema,
+                                }
+                            )
+
         return {"tools": tools}
 
     async def _handle_tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tools/call request with mode awareness.
+        """Handle tools/call request with mode awareness and runner routing.
+
+        Implements prefix-based routing per DEC-123:
+        - "runner__mcp__tool" -> Route to runner via WebSocket
+        - "tool" -> Route to CP (local MCP servers)
 
         Args:
             params: Call parameters
@@ -294,6 +374,13 @@ class MCPFrontend:
         # Config tools (ael:* namespace)
         if name.startswith("ael:") or name == "configure":
             return await self._handle_config_tool_call(name, arguments)
+
+        # Check for runner prefix (DEC-123: runner__mcp__tool)
+        runner_name, mcp_name, actual_tool = parse_tool_prefix(name)
+        if runner_name:
+            # Pass mcp__tool to runner (it knows how to route internally)
+            tool_for_runner = f"{mcp_name}__{actual_tool}" if mcp_name else actual_tool
+            return await self._execute_runner_tool(runner_name, tool_for_runner, arguments)
 
         # Workflow calls
         if name.startswith("workflow_"):
@@ -458,6 +545,104 @@ class MCPFrontend:
                 ],
                 "isError": True,
             }
+
+    async def _execute_runner_tool(
+        self,
+        runner_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute tool on a runner via WebSocket (DEC-123).
+
+        Routes tool calls to runners based on prefix:
+        - "runner-name:tool" -> Route to runner via WebSocket
+
+        Args:
+            runner_name: Name of the runner to route to
+            tool_name: Tool name (without prefix)
+            arguments: Tool arguments
+
+        Returns:
+            MCP response
+        """
+        if not self._runner_registry:
+            raise AELError(
+                code="TOOL_UNAVAILABLE",
+                category=ErrorCategory.TOOL,
+                message="Runner routing not configured (no runner registry)",
+                tool_name=f"{runner_name}:{tool_name}",
+                http_status=503,
+            )
+
+        # Find runner by name
+        runner = self._runner_registry.get_by_name(runner_name)
+        if not runner:
+            raise AELError(
+                code="TOOL_UNAVAILABLE",
+                category=ErrorCategory.TOOL,
+                message=f"Runner '{runner_name}' not found",
+                tool_name=f"{runner_name}:{tool_name}",
+                http_status=404,
+            )
+
+        # Check if runner is connected
+        if not is_runner_connected(runner.id):
+            raise AELError(
+                code="TOOL_UNAVAILABLE",
+                category=ErrorCategory.TOOL,
+                message=f"Runner '{runner_name}' is not connected",
+                tool_name=f"{runner_name}:{tool_name}",
+                http_status=503,
+            )
+
+        try:
+            logger.info(f"Routing tool '{tool_name}' to runner '{runner_name}'")
+            result = await send_tool_call_to_runner(
+                runner_id=runner.id,
+                tool_name=tool_name,
+                arguments=arguments,
+                timeout=60.0,
+            )
+
+            # Result from runner is in format: {"output": ..., "error": ...}
+            # or {"content": [...], "isError": ...} if runner returns MCP format
+            if "content" in result:
+                # Runner returned MCP format directly
+                return result
+            elif "error" in result and result.get("error"):
+                return {
+                    "content": [{"type": "text", "text": str(result["error"])}],
+                    "isError": True,
+                }
+            else:
+                output = result.get("output", result)
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (json.dumps(output) if not isinstance(output, str) else output),
+                        }
+                    ],
+                    "isError": False,
+                }
+
+        except TimeoutError:
+            raise AELError(
+                code="TOOL_TIMEOUT",
+                category=ErrorCategory.TOOL,
+                message=f"Tool call to runner '{runner_name}' timed out",
+                tool_name=f"{runner_name}:{tool_name}",
+                http_status=504,
+            )
+        except Exception as e:
+            logger.exception(f"Error routing tool to runner: {e}")
+            raise AELError(
+                code="TOOL_EXECUTION_FAILED",
+                category=ErrorCategory.TOOL,
+                message=f"Tool call to runner '{runner_name}' failed: {e}",
+                tool_name=f"{runner_name}:{tool_name}",
+                http_status=500,
+            )
 
     def _success_response(self, msg_id: Any, result: Any) -> dict[str, Any]:
         """Build success response.
