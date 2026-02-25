@@ -138,15 +138,25 @@ class MCPClientManager:
             except Exception as e:
                 self._log(LogLevel.WARN, f"Error in manager tools changed callback: {e}")
 
-    async def disconnect_all(self) -> None:
-        """Disconnect from all servers."""
+    async def disconnect_all(self, timeout: float = 10.0) -> None:
+        """Disconnect from all servers.
+
+        Args:
+            timeout: Maximum time to wait for all disconnects in seconds
+        """
         self._log(LogLevel.INFO, "Disconnecting from all MCP servers")
 
         tasks = []
         for conn in self._connections.values():
             tasks.append(conn.disconnect())
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            self._log(LogLevel.WARN, f"Timeout ({timeout}s) waiting for all servers to disconnect")
 
         self._connections.clear()
         self._log(LogLevel.INFO, "Disconnected from all servers")

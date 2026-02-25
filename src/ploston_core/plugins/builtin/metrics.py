@@ -1,4 +1,4 @@
-"""Metrics plugin for AEL.
+"""Metrics plugin for Ploston.
 
 This plugin emits OpenTelemetry metrics for workflow execution.
 """
@@ -21,7 +21,7 @@ class MetricsPlugin(AELPlugin):
     Uses OpenTelemetry metrics when available, falls back to counters.
 
     Configuration options:
-        prefix: Metric name prefix. Default: ael_plugin
+        prefix: Metric name prefix. Default: ploston
         emit_histogram: Whether to emit duration histograms. Default: True
     """
 
@@ -30,7 +30,7 @@ class MetricsPlugin(AELPlugin):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
-        self._prefix = self.config.get("prefix", "ael_plugin")
+        self._prefix = self.config.get("prefix", "ploston")
         self._emit_histogram = self.config.get("emit_histogram", True)
         self._request_times: dict[str, float] = {}
 

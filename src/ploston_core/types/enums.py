@@ -81,6 +81,7 @@ class ToolSource(str, Enum):
     MCP = "mcp"
     HTTP = "http"
     SYSTEM = "system"
+    NATIVE = "native"  # Native tools (filesystem, kafka, etc.)
 
 
 class ToolStatus(str, Enum):

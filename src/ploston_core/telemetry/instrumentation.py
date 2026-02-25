@@ -141,7 +141,12 @@ async def instrument_step(workflow_id: str, step_id: str):
 
 
 @asynccontextmanager
-async def instrument_tool_call(tool_name: str, source: str | None = None):
+async def instrument_tool_call(
+    tool_name: str,
+    source: str | None = None,
+    principal_id: str | None = None,
+    principal_type: str | None = None,
+):
     """Context manager for instrumenting tool invocations.
 
     Records:
@@ -152,13 +157,21 @@ async def instrument_tool_call(tool_name: str, source: str | None = None):
     Args:
         tool_name: Tool name (server:tool format)
         source: Tool source category (native, local, system, configured)
+        principal_id: Principal ID (Pro Auth Foundation)
+        principal_type: Principal type (user, service)
 
     Yields:
         Dictionary to store execution status and source
     """
     telemetry = get_telemetry()
     start_time = time.time()
-    result = {"status": MetricLabels.STATUS_SUCCESS, "error_code": None, "source": source}
+    result = {
+        "status": MetricLabels.STATUS_SUCCESS,
+        "error_code": None,
+        "source": source,
+        "principal_id": principal_id,
+        "principal_type": principal_type,
+    }
 
     # Get tracer
     tracer = telemetry["tracer"] if telemetry else None
@@ -171,6 +184,10 @@ async def instrument_tool_call(tool_name: str, source: str | None = None):
         span.set_attribute("tool.name", tool_name)
         if source:
             span.set_attribute("tool.source", source)
+        if principal_id:
+            span.set_attribute("principal.id", principal_id)
+        if principal_type:
+            span.set_attribute("principal.type", principal_type)
 
     try:
         yield result
@@ -192,6 +209,8 @@ async def instrument_tool_call(tool_name: str, source: str | None = None):
                 status=result["status"],
                 error_code=result.get("error_code"),
                 source=result.get("source"),
+                principal_id=result.get("principal_id"),
+                principal_type=result.get("principal_type"),
             )
 
         # End span
