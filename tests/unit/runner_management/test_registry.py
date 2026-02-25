@@ -275,13 +275,15 @@ class TestRunnerToolsTracking:
         assert registry.has_tool("test-runner", "docker_run") is False
 
     def test_has_tool_with_prefix(self):
-        """Test checking tool with runner prefix."""
+        """Test checking tool with runner__mcp__ prefix."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("test-runner")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        # Runner stores tools as mcp__tool format
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
-        assert registry.has_tool("test-runner", "test-runner:fs_read") is True
+        # Tool name with runner__mcp__tool format
+        assert registry.has_tool("mac", "mac__fs__read_file") is True
 
     def test_has_tool_disconnected_runner(self):
         """Test that disconnected runners don't have tools."""
@@ -304,15 +306,17 @@ class TestRunnerToolsTracking:
         assert found.name == "test-runner"
 
     def test_get_runner_for_tool_with_prefix(self):
-        """Test finding a runner with prefixed tool name."""
+        """Test finding a runner with runner__mcp__tool prefixed name."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("test-runner")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        # Runner stores tools as mcp__tool format
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
-        found = registry.get_runner_for_tool("test-runner:fs_read")
+        # Tool name with runner__mcp__tool format
+        found = registry.get_runner_for_tool("mac__fs__read_file")
         assert found is not None
-        assert found.name == "test-runner"
+        assert found.name == "mac"
 
     def test_get_runner_for_tool_not_found(self):
         """Test that None is returned when no runner has the tool."""

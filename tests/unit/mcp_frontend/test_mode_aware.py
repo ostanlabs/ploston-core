@@ -270,3 +270,236 @@ class TestModeManagerRegistration:
 
         assert frontend._mode_manager is not None
         assert frontend._mode_manager.mode == Mode.CONFIGURATION  # Default
+
+
+class TestRunnerToolRouting:
+    """Tests for runner tool routing (DEC-123).
+
+    Tests prefix-based routing where tools are namespaced as runner-name:tool.
+    """
+
+    @pytest.fixture
+    def mock_runner_registry(self):
+        """Create mock runner registry with connected runner."""
+        from datetime import UTC, datetime
+
+        from ploston_core.runner_management.registry import Runner, RunnerStatus
+
+        registry = MagicMock()
+        runner = Runner(
+            id="runner-123",
+            name="mac",
+            token_hash="hash",
+            status=RunnerStatus.CONNECTED,
+            created_at=datetime.now(UTC),
+        )
+        # Runner stores tools as mcp__tool format
+        runner.available_tools = [
+            {"name": "fs__read_file", "description": "Read file", "inputSchema": {}},
+            {"name": "fs__write_file", "description": "Write file", "inputSchema": {}},
+        ]
+        registry.get_by_name.return_value = runner
+        registry.get.return_value = runner
+        registry.list.return_value = [runner]  # For tools/list
+        return registry
+
+    @pytest.fixture
+    def mock_runner_registry_disconnected(self):
+        """Create mock runner registry with disconnected runner."""
+        from datetime import UTC, datetime
+
+        from ploston_core.runner_management.registry import Runner, RunnerStatus
+
+        registry = MagicMock()
+        runner = Runner(
+            id="runner-123",
+            name="mac",
+            token_hash="hash",
+            status=RunnerStatus.DISCONNECTED,
+            created_at=datetime.now(UTC),
+        )
+        registry.get_by_name.return_value = runner
+        registry.list.return_value = [runner]  # For tools/list
+        return registry
+
+    @pytest.fixture
+    def frontend_with_runner(
+        self,
+        mock_runner_registry,
+    ):
+        """Create frontend with runner registry in running mode."""
+        mode_manager = ModeManager(initial_mode=Mode.RUNNING)
+        return MCPFrontend(
+            workflow_engine=MagicMock(),
+            tool_registry=MagicMock(),
+            workflow_registry=MagicMock(),
+            tool_invoker=MagicMock(),
+            mode_manager=mode_manager,
+            runner_registry=mock_runner_registry,
+        )
+
+    @pytest.fixture
+    def frontend_with_disconnected_runner(
+        self,
+        mock_runner_registry_disconnected,
+    ):
+        """Create frontend with disconnected runner."""
+        mode_manager = ModeManager(initial_mode=Mode.RUNNING)
+        return MCPFrontend(
+            workflow_engine=MagicMock(),
+            tool_registry=MagicMock(),
+            workflow_registry=MagicMock(),
+            tool_invoker=MagicMock(),
+            mode_manager=mode_manager,
+            runner_registry=mock_runner_registry_disconnected,
+        )
+
+    async def test_tools_list_includes_runner_tools(self, frontend_with_runner):
+        """Test that tools/list includes runner tools with prefix."""
+        result = await frontend_with_runner._handle_tools_list({})
+
+        tools = result["tools"]
+        tool_names = [t["name"] for t in tools]
+
+        # Runner tools should be prefixed with runner__mcp__tool format
+        assert "mac__fs__read_file" in tool_names
+        assert "mac__fs__write_file" in tool_names
+
+    async def test_runner_tool_has_correct_schema(self, frontend_with_runner):
+        """Test that runner tools have correct schema in tools/list."""
+        result = await frontend_with_runner._handle_tools_list({})
+
+        tools = result["tools"]
+        runner_tool = next((t for t in tools if t["name"] == "mac__fs__read_file"), None)
+
+        assert runner_tool is not None
+        assert runner_tool["description"] == "Read file"
+        assert "inputSchema" in runner_tool
+
+    async def test_tool_call_parses_runner_prefix(self, frontend_with_runner):
+        """Test that tool call correctly parses runner prefix."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            mock_send.return_value = {"content": [{"type": "text", "text": "ok"}]}
+
+            await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {"path": "/tmp/test"}}
+            )
+
+            # Verify the tool was routed to the runner
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args.kwargs["runner_id"] == "runner-123"
+            # Tool name passed to runner is mcp__tool format
+            assert call_args.kwargs["tool_name"] == "fs__read_file"
+            assert call_args.kwargs["arguments"] == {"path": "/tmp/test"}
+
+    async def test_tool_call_to_disconnected_runner_fails(self, frontend_with_disconnected_runner):
+        """Test that tool call to disconnected runner fails."""
+        with pytest.raises(AELError) as exc_info:
+            await frontend_with_disconnected_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {}}
+            )
+
+        assert "not connected" in exc_info.value.message
+
+    async def test_tool_call_to_unknown_runner_fails(self, frontend_with_runner):
+        """Test that tool call to unknown runner fails."""
+        frontend_with_runner._runner_registry.get_by_name.return_value = None
+
+        with pytest.raises(AELError) as exc_info:
+            await frontend_with_runner._handle_tools_call(
+                {"name": "unknown__fs__read_file", "arguments": {}}
+            )
+
+        assert "not found" in exc_info.value.message
+
+    async def test_tool_call_without_runner_registry_fails(self):
+        """Test that runner tool call without registry fails."""
+        mode_manager = ModeManager(initial_mode=Mode.RUNNING)
+        frontend = MCPFrontend(
+            workflow_engine=MagicMock(),
+            tool_registry=MagicMock(),
+            workflow_registry=MagicMock(),
+            tool_invoker=MagicMock(),
+            mode_manager=mode_manager,
+            runner_registry=None,  # No runner registry
+        )
+
+        with pytest.raises(AELError) as exc_info:
+            await frontend._handle_tools_call({"name": "mac__fs__read_file", "arguments": {}})
+
+        assert "not configured" in exc_info.value.message
+
+    async def test_unprefixed_tool_not_routed_to_runner(self, frontend_with_runner):
+        """Test that unprefixed tools are not routed to runner."""
+        # Mock the tool invoker for CP tools
+        frontend_with_runner._tool_invoker.invoke = AsyncMock(
+            return_value=MagicMock(success=True, output="result")
+        )
+
+        with patch(
+            "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            await frontend_with_runner._handle_tools_call(
+                {"name": "slack_post", "arguments": {"message": "hello"}}
+            )
+
+            # Runner routing should NOT be called
+            mock_send.assert_not_called()
+
+    async def test_runner_tool_result_formatting(self, frontend_with_runner):
+        """Test that runner tool results are formatted correctly."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            # Test MCP format result
+            mock_send.return_value = {
+                "content": [{"type": "text", "text": "file contents"}],
+                "isError": False,
+            }
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {"path": "/tmp/test"}}
+            )
+
+            assert result["content"][0]["text"] == "file contents"
+            assert result["isError"] is False
+
+    async def test_runner_tool_error_formatting(self, frontend_with_runner):
+        """Test that runner tool errors are formatted correctly."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            # Test error result
+            mock_send.return_value = {"error": "File not found"}
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {"path": "/nonexistent"}}
+            )
+
+            assert result["isError"] is True
+            assert "File not found" in result["content"][0]["text"]
