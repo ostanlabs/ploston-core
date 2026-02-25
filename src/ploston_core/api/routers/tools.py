@@ -23,6 +23,7 @@ def _convert_source(source: InternalToolSource) -> ToolSource:
     mapping = {
         InternalToolSource.MCP: ToolSource.MCP,
         InternalToolSource.SYSTEM: ToolSource.SYSTEM,
+        InternalToolSource.NATIVE: ToolSource.NATIVE,
     }
     return mapping.get(source, ToolSource.MCP)
 

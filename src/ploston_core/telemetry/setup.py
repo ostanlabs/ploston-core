@@ -218,6 +218,11 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
     # Create AEL metrics
     ael_metrics = AELMetrics(meter)
 
+    # Initialize metrics with zero values so they appear in Prometheus
+    # OTEL metrics only appear after first recording
+    if config.metrics_enabled:
+        _initialize_metrics(ael_metrics, meter)
+
     _telemetry = {
         "meter": meter,
         "tracer": tracer,
@@ -229,6 +234,48 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
     }
 
     return _telemetry
+
+
+def _initialize_metrics(ael_metrics: AELMetrics, meter: metrics.Meter) -> None:
+    """Initialize metrics with zero values so they appear in Prometheus.
+
+    OTEL metrics only appear in Prometheus after they've been recorded
+    at least once. This function records initial zero values for key
+    metrics so dashboards can display them immediately.
+    """
+    # Initialize counters with 0 (using a dummy label to create the metric)
+    # Note: We use add(0) which creates the metric but doesn't change the value
+    ael_metrics.workflow_executions_total.add(0, {"workflow_id": "_init", "status": "init"})
+    ael_metrics.step_executions_total.add(
+        0, {"workflow_id": "_init", "step_id": "_init", "status": "init"}
+    )
+    ael_metrics.tool_invocations_total.add(0, {"tool_name": "_init", "status": "init"})
+    ael_metrics.chain_links_total.add(0, {"from_tool": "_init", "to_tool": "_init"})
+
+    # Initialize gauges
+    ael_metrics.active_workflows.add(0, {"workflow_id": "_init"})
+    ael_metrics.registered_tools.add(0)
+    ael_metrics.registered_workflows.add(0)
+
+    # Initialize tools by source metrics
+    ael_metrics.tools_by_source.add(0, {"source": "mcp"})
+    ael_metrics.tools_by_source.add(0, {"source": "system"})
+    ael_metrics.tools_by_source.add(0, {"source": "runner"})
+
+    # Initialize connected runners
+    ael_metrics.connected_runners.add(0)
+
+    # Initialize token estimator metrics
+    # These are created by TokenEstimator but we need to initialize them here
+    # so they appear in Prometheus before any workflows are executed
+    from .token_estimator import TokenEstimator
+
+    token_estimator = TokenEstimator(meter=meter)
+    # Record initial zero values to make metrics appear
+    token_estimator._tokens_saved_total.add(0, {"workflow_name": "_init"})
+    token_estimator._cost_saved_cents_total.add(0, {"workflow_name": "_init", "model": "_init"})
+    token_estimator._raw_mcp_estimate_total.add(0, {"workflow_name": "_init"})
+    token_estimator._tokens_saved_per_execution.record(0, {"workflow_name": "_init"})
 
 
 def get_telemetry() -> dict[str, Any] | None:

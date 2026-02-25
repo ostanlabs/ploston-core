@@ -43,6 +43,10 @@ class MetricLabels:
     FROM_TOOL = "from_tool"
     TO_TOOL = "to_tool"
 
+    # Principal labels (Pro Auth Foundation)
+    PRINCIPAL_ID = "principal_id"
+    PRINCIPAL_TYPE = "principal_type"  # user, service
+
     # Status labels
     STATUS = "status"
     ERROR_CODE = "error_code"
@@ -58,6 +62,10 @@ class MetricLabels:
     SOURCE_LOCAL = "local"  # Tools from local runners
     SOURCE_SYSTEM = "system"  # System tools (python_exec)
     SOURCE_CONFIGURED = "configured"  # MCP servers configured in CP
+
+    # Principal type values
+    PRINCIPAL_USER = "user"
+    PRINCIPAL_SERVICE = "service"
 
 
 class PlostMetrics:
@@ -252,6 +260,8 @@ class PlostMetrics:
         status: str,
         error_code: str | None = None,
         source: str | None = None,
+        principal_id: str | None = None,
+        principal_type: str | None = None,
     ) -> None:
         """Record tool invocation.
 
@@ -261,6 +271,8 @@ class PlostMetrics:
             status: Execution status
             error_code: Error code if status is error
             source: Tool source category (native, local, system, configured)
+            principal_id: Principal ID (Pro Auth Foundation)
+            principal_type: Principal type (user, service)
         """
         labels: dict[str, Any] = {
             MetricLabels.TOOL_NAME: tool_name,
@@ -270,6 +282,10 @@ class PlostMetrics:
             labels[MetricLabels.ERROR_CODE] = error_code
         if source:
             labels[MetricLabels.TOOL_SOURCE] = source
+        if principal_id:
+            labels[MetricLabels.PRINCIPAL_ID] = principal_id
+        if principal_type:
+            labels[MetricLabels.PRINCIPAL_TYPE] = principal_type
 
         self.tool_invocations_total.add(1, labels)
         self.tool_invocation_duration_seconds.record(duration_seconds, labels)

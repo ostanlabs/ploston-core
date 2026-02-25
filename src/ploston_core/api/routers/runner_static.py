@@ -165,6 +165,72 @@ async def _send_notification(websocket: WebSocket, method: str, params: dict) ->
     await websocket.send_json(notification)
 
 
+async def send_tool_call_to_runner(
+    runner_id: str,
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """Send tool/call to a runner and wait for result.
+
+    This is used by MCPFrontend to route tool calls to runners
+    based on prefix routing (per DEC-123).
+
+    Args:
+        runner_id: Target runner ID
+        tool_name: Tool to call (without runner prefix)
+        arguments: Tool arguments
+        timeout: Timeout in seconds
+
+    Returns:
+        Tool call result dict with 'output' or 'error'
+
+    Raises:
+        ValueError: If runner not connected
+        asyncio.TimeoutError: If call times out
+    """
+    conn = _runner_connections.get(runner_id)
+    if not conn:
+        raise ValueError(f"Runner {runner_id} not connected")
+
+    request_id = conn.next_request_id
+    conn.next_request_id += 1
+
+    future: asyncio.Future = asyncio.Future()
+    conn.pending_requests[request_id] = future
+
+    request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tool/call",
+        "params": {
+            "tool": tool_name,
+            "arguments": arguments or {},
+        },
+    }
+
+    await conn.websocket.send_json(request)
+
+    try:
+        return await asyncio.wait_for(future, timeout=timeout)
+    except TimeoutError:
+        conn.pending_requests.pop(request_id, None)
+        raise
+
+
+def get_runner_connection(runner_id: str) -> RunnerConnection | None:
+    """Get a runner connection by ID.
+
+    Used to check if a runner is connected before routing.
+    """
+    return _runner_connections.get(runner_id)
+
+
+def is_runner_connected(runner_id: str) -> bool:
+    """Check if a runner is connected."""
+    return runner_id in _runner_connections
+
+
 @runner_static_router.websocket("/ws")
 async def runner_websocket(websocket: WebSocket) -> None:
     """WebSocket endpoint for runner connections.
@@ -267,7 +333,8 @@ async def runner_websocket(websocket: WebSocket) -> None:
 
             # Handle availability
             if method == "runner/availability":
-                tools = params.get("tools", [])
+                # Runner sends {"available": [...], "unavailable": [...]}
+                tools = params.get("available", params.get("tools", []))
                 runner_registry.update_available_tools(runner_id, tools)
                 runner = runner_registry.get(runner_id)
                 if runner:
@@ -321,10 +388,10 @@ async def runner_websocket(websocket: WebSocket) -> None:
                 conn = _runner_connections[runner_id]
                 if msg_id in conn.pending_requests:
                     future = conn.pending_requests.pop(msg_id)
-                    if "error" in data:
-                        future.set_exception(
-                            Exception(data["error"].get("message", "Unknown error"))
-                        )
+                    # Check for error (must be truthy, not just present)
+                    error = data.get("error")
+                    if error:
+                        future.set_exception(Exception(error.get("message", "Unknown error")))
                     else:
                         future.set_result(data.get("result"))
                     continue

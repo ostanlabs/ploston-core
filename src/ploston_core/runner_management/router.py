@@ -61,23 +61,55 @@ class RunnerUnavailableError(Exception):
         super().__init__(message or f"Runner '{runner_name}' is not connected")
 
 
-def parse_tool_prefix(tool_name: str) -> tuple[str | None, str]:
-    """Parse runner prefix from tool name.
+# Delimiter for runner tool prefixes (MCP-spec compliant)
+# Format: runner__mcp__toolname (e.g., mac__fs__read_file)
+TOOL_PREFIX_DELIMITER = "__"
+
+
+def parse_tool_prefix(tool_name: str) -> tuple[str | None, str | None, str]:
+    """Parse runner and MCP prefix from tool name.
+
+    Tool names from runners use the format: runner__mcp__toolname
+    This format is MCP-spec compliant (only alphanumeric, underscore, hyphen).
 
     Args:
-        tool_name: Tool name, optionally prefixed with "runner:"
+        tool_name: Tool name, optionally prefixed with "runner__mcp__"
 
     Returns:
-        Tuple of (runner_name, tool_name) where runner_name is None for CP tools
+        Tuple of (runner_name, mcp_name, tool_name) where runner_name and mcp_name
+        are None for CP tools (no prefix)
 
     Examples:
-        "marc-laptop:fs_read" -> ("marc-laptop", "fs_read")
-        "slack_post" -> (None, "slack_post")
+        "mac__fs__read_file" -> ("mac", "fs", "read_file")
+        "mac__obs__create_accomplishment" -> ("mac", "obs", "create_accomplishment")
+        "slack_post" -> (None, None, "slack_post")
     """
-    if ":" in tool_name:
-        parts = tool_name.split(":", 1)
-        return parts[0], parts[1]
-    return None, tool_name
+    parts = tool_name.split(TOOL_PREFIX_DELIMITER)
+    if len(parts) >= 3:
+        # runner__mcp__tool (tool may contain __ itself)
+        runner_name = parts[0]
+        mcp_name = parts[1]
+        actual_tool = TOOL_PREFIX_DELIMITER.join(parts[2:])
+        return runner_name, mcp_name, actual_tool
+    # No prefix or incomplete prefix = CP tool
+    return None, None, tool_name
+
+
+def format_tool_name(runner_name: str, mcp_name: str, tool_name: str) -> str:
+    """Format a tool name with runner and MCP prefix.
+
+    Args:
+        runner_name: Name of the runner
+        mcp_name: Name of the MCP server
+        tool_name: Original tool name
+
+    Returns:
+        Prefixed tool name in format: runner__mcp__toolname
+
+    Examples:
+        format_tool_name("mac", "fs", "read_file") -> "mac__fs__read_file"
+    """
+    return f"{runner_name}{TOOL_PREFIX_DELIMITER}{mcp_name}{TOOL_PREFIX_DELIMITER}{tool_name}"
 
 
 def extract_tools_from_workflow(workflow: WorkflowDefinition) -> list[str]:
@@ -138,11 +170,14 @@ class WorkflowRouter:
         cp_tools: list[str] = []
 
         for tool in tools:
-            runner_name, actual_tool = parse_tool_prefix(tool)
+            runner_name, mcp_name, actual_tool = parse_tool_prefix(tool)
             if runner_name:
                 if runner_name not in runner_tools:
                     runner_tools[runner_name] = []
-                runner_tools[runner_name].append(actual_tool)
+                # Store the mcp__tool part for runner execution
+                runner_tools[runner_name].append(
+                    f"{mcp_name}{TOOL_PREFIX_DELIMITER}{actual_tool}" if mcp_name else actual_tool
+                )
             else:
                 cp_tools.append(tool)
 
@@ -240,12 +275,12 @@ class WorkflowRouter:
         """Get the runner for a specific tool.
 
         Args:
-            tool_name: Tool name (may include runner: prefix)
+            tool_name: Tool name (may include runner__mcp__ prefix)
 
         Returns:
             Runner that has the tool, or None for CP tools
         """
-        runner_name, actual_tool = parse_tool_prefix(tool_name)
+        runner_name, _mcp_name, _actual_tool = parse_tool_prefix(tool_name)
 
         if not runner_name:
             # No prefix = CP tool

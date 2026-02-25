@@ -21,7 +21,12 @@ from ploston_core.mcp import MCPClientManager
 from ploston_core.mcp_frontend import MCPFrontend, MCPServerConfig
 from ploston_core.registry import ToolRegistry
 from ploston_core.sandbox import SandboxConfig
-from ploston_core.telemetry import OTLPExporterConfig, TelemetryConfig, setup_telemetry
+from ploston_core.telemetry import (
+    OTLPExporterConfig,
+    TelemetryConfig,
+    get_telemetry,
+    setup_telemetry,
+)
 from ploston_core.template import TemplateEngine
 from ploston_core.types import MCPTransport
 from ploston_core.workflow import WorkflowRegistry
@@ -255,6 +260,15 @@ class PlostApplication:
             self.config.tools,
             logger=self.logger,
         )
+
+        # Wire up telemetry metrics to registries
+        telemetry = get_telemetry()
+        if telemetry and telemetry.get("metrics"):
+            ael_metrics = telemetry["metrics"]
+            self.tool_registry.set_metrics(ael_metrics)
+            if self.runner_registry:
+                self.runner_registry.set_metrics(ael_metrics)
+
         await self.tool_registry.initialize()
 
         # 7. Workflow Registry
@@ -289,6 +303,14 @@ class PlostApplication:
         )
 
         # 11. Workflow Engine
+        # Create token estimator for savings metrics if telemetry is enabled
+        token_estimator = None
+        telemetry = get_telemetry()
+        if telemetry and telemetry.get("meter"):
+            from ploston_core.telemetry import TokenEstimator
+
+            token_estimator = TokenEstimator(meter=telemetry["meter"])
+
         self.workflow_engine = WorkflowEngine(
             self.workflow_registry,
             self.tool_invoker,
@@ -296,6 +318,7 @@ class PlostApplication:
             self.config.execution,
             logger=self.logger,
             error_factory=self.error_factory,
+            token_estimator=token_estimator,
         )
 
         # 12. MCP Frontend
@@ -363,6 +386,7 @@ class PlostApplication:
             http_config=http_config,
             rest_app=rest_app,
             rest_prefix=self._rest_api_prefix,
+            runner_registry=self.runner_registry,  # DEC-123: Enable runner tool routing
         )
 
         self._initialized = True

@@ -12,6 +12,7 @@ class ToolSource(str, Enum):
     MCP = "mcp"
     HTTP = "http"
     SYSTEM = "system"
+    NATIVE = "native"
 
 
 class ToolSummary(BaseModel):

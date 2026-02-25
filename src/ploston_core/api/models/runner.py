@@ -6,6 +6,7 @@ Implements S-184: Runner REST API
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,18 @@ class RunnerStatusEnum(str, Enum):
 
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
+
+
+class ToolInfo(BaseModel):
+    """Tool information with schema."""
+
+    name: str = Field(description="Tool name")
+    description: str = Field(default="", description="Tool description")
+    input_schema: dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON Schema for tool input",
+        alias="inputSchema",
+    )
 
 
 class RunnerSummary(BaseModel):
@@ -35,7 +48,9 @@ class RunnerDetail(BaseModel):
     status: RunnerStatusEnum = Field(description="Connection status")
     created_at: datetime = Field(description="Creation timestamp")
     last_seen: datetime | None = Field(default=None, description="Last heartbeat timestamp")
-    available_tools: list[str] = Field(default_factory=list, description="Available tool names")
+    available_tools: list[str | ToolInfo] = Field(
+        default_factory=list, description="Available tools (names or full info)"
+    )
     mcps: dict[str, dict] = Field(default_factory=dict, description="Assigned MCP configurations")
 
 

@@ -37,6 +37,7 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.45b0",
     "redis>=5.0.0", # Redis config store
     "fastmcp>=2.14.4",
+    "bcrypt>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -105,4 +106,5 @@ strict = true
 [dependency-groups]
 dev = [
     "ruff>=0.14.14",
+    "syrupy>=5.1.0",
 ]

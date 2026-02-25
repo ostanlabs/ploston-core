@@ -5,6 +5,7 @@ including automatic handling of notifications like tools/list_changed.
 """
 
 import asyncio
+import shlex
 import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack
@@ -14,6 +15,14 @@ from typing import Any
 import mcp.types
 from fastmcp.client import Client
 from fastmcp.client.messages import MessageHandler
+from fastmcp.client.transports import (
+    ClientTransport,
+    NpxStdioTransport,
+    SSETransport,
+    StdioTransport,
+    StreamableHttpTransport,
+    UvxStdioTransport,
+)
 
 from ploston_core.config.models import MCPServerDefinition
 from ploston_core.errors import create_error
@@ -224,11 +233,12 @@ class MCPConnection:
             self._client = None
             raise
 
-    def _get_transport_source(self) -> str:
-        """Get the transport source for FastMCP Client.
+    def _get_transport_source(self) -> ClientTransport | str:
+        """Get the transport for FastMCP Client.
 
         Returns:
-            URL for HTTP transport, or command path for stdio transport
+            ClientTransport object for stdio commands, or URL string for HTTP transport.
+            FastMCP's infer_transport can handle URL strings but not arbitrary commands.
 
         Raises:
             AELError if transport configuration is invalid
@@ -239,16 +249,28 @@ class MCPConnection:
                     "TOOL_UNAVAILABLE",
                     detail=f"No command specified for stdio server '{self.name}'",
                 )
-            # FastMCP Client accepts file paths for stdio
-            # Extract the script path from the command
-            cmd_parts = self.config.command.split()
+
+            # Parse the command string into command and args
+            # Use shlex to handle quoted arguments properly
+            try:
+                cmd_parts = shlex.split(self.config.command)
+            except ValueError as e:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"Invalid command for stdio server '{self.name}': {e}",
+                ) from e
+
             if not cmd_parts:
                 raise create_error(
                     "TOOL_UNAVAILABLE",
                     detail=f"Empty command for stdio server '{self.name}'",
                 )
-            # Return the command - FastMCP will handle it
-            return self.config.command
+
+            command = cmd_parts[0]
+            args = cmd_parts[1:] if len(cmd_parts) > 1 else []
+
+            # Create appropriate transport based on command type
+            return self._create_stdio_transport(command, args)
 
         elif self.config.transport == MCPTransport.HTTP or self.config.transport == "http":
             if not self.config.url:
@@ -260,15 +282,115 @@ class MCPConnection:
             url = self.config.url.rstrip("/")
             # FastMCP expects the /mcp endpoint for streamable-http
             if url.endswith("/sse"):
-                url = url[:-4] + "/mcp"
+                # Use SSE transport for /sse endpoints
+                return SSETransport(url=url)
             elif not url.endswith("/mcp"):
                 url = url + "/mcp"
-            return url
+            return StreamableHttpTransport(url=url)
 
         else:
             raise create_error(
                 "TOOL_UNAVAILABLE",
                 detail=f"Transport {self.config.transport} not supported",
+            )
+
+    def _create_stdio_transport(self, command: str, args: list[str]) -> ClientTransport:
+        """Create the appropriate stdio transport based on command type.
+
+        Args:
+            command: The command to run (e.g., 'npx', 'python', 'uvx', 'node')
+            args: Command arguments
+
+        Returns:
+            Appropriate ClientTransport for the command type
+        """
+        env = self.config.env if self.config.env else None
+
+        # Handle npx commands - use NpxStdioTransport
+        if command == "npx":
+            # npx args typically: [-y] <package> [package-args...]
+            # NpxStdioTransport expects: package, args (package args only)
+            package = None
+            package_args = []
+            skip_next = False
+
+            for i, arg in enumerate(args):
+                if skip_next:
+                    skip_next = False
+                    continue
+                # Skip npx flags
+                if arg in ("-y", "--yes", "-p", "--package"):
+                    if arg in ("-p", "--package"):
+                        skip_next = True  # Skip the next arg (package name for -p)
+                    continue
+                # First non-flag arg is the package
+                if package is None:
+                    package = arg
+                else:
+                    package_args.append(arg)
+
+            if not package:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"No package specified in npx command for '{self.name}'",
+                )
+
+            return NpxStdioTransport(
+                package=package,
+                args=package_args if package_args else None,
+                env_vars=env,
+            )
+
+        # Handle uvx commands - use UvxStdioTransport
+        elif command == "uvx":
+            # uvx args: <tool> [tool-args...]
+            if not args:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    detail=f"No tool specified in uvx command for '{self.name}'",
+                )
+            tool_name = args[0]
+            tool_args = args[1:] if len(args) > 1 else None
+
+            return UvxStdioTransport(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                env_vars=env,
+            )
+
+        # Handle python commands - use StdioTransport for flexibility
+        # PythonStdioTransport validates script existence which may fail at config time
+        elif command in ("python", "python3"):
+            return StdioTransport(
+                command=command,
+                args=args,
+                env=env,
+            )
+
+        # Handle node commands
+        elif command == "node":
+            # Generic node command - use StdioTransport
+            return StdioTransport(
+                command=command,
+                args=args,
+                env=env,
+            )
+
+        # Handle uv commands
+        elif command == "uv":
+            # uv run or other uv commands
+            return StdioTransport(
+                command=command,
+                args=args,
+                env=env,
+            )
+
+        # Default: use generic StdioTransport for any other command
+        else:
+            return StdioTransport(
+                command=command,
+                args=args,
+                env=env,
             )
 
     async def _handle_tools_changed(self) -> None:
@@ -293,17 +415,23 @@ class MCPConnection:
         except Exception as e:
             self._log(LogLevel.ERROR, f"Failed to refresh tools after notification: {e}")
 
-    async def disconnect(self) -> None:
-        """Gracefully disconnect from MCP server."""
+    async def disconnect(self, timeout: float = 5.0) -> None:
+        """Gracefully disconnect from MCP server.
+
+        Args:
+            timeout: Maximum time to wait for disconnect in seconds
+        """
         if self._status == ConnectionStatus.DISCONNECTED:
             return
 
         self._log(LogLevel.INFO, "Disconnecting from MCP server")
 
-        # Close the FastMCP client context
+        # Close the FastMCP client context with timeout
         if self._exit_stack:
             try:
-                await self._exit_stack.aclose()
+                await asyncio.wait_for(self._exit_stack.aclose(), timeout=timeout)
+            except TimeoutError:
+                self._log(LogLevel.WARN, f"Timeout ({timeout}s) during disconnect, forcing close")
             except Exception as e:
                 self._log(LogLevel.WARN, f"Error during disconnect: {e}")
             self._exit_stack = None
