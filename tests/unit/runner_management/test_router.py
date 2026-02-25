@@ -70,25 +70,35 @@ class TestRouterInit:
 
 
 class TestToolPrefixParse:
-    """UT-070: Parse runner:tool format."""
+    """UT-070: Parse runner__mcp__tool format."""
 
     def test_parse_prefixed_tool(self):
-        """Test parsing tool with runner prefix."""
-        runner, tool = parse_tool_prefix("marc-laptop:fs_read")
-        assert runner == "marc-laptop"
-        assert tool == "fs_read"
+        """Test parsing tool with runner and MCP prefix."""
+        runner, mcp, tool = parse_tool_prefix("mac__fs__read_file")
+        assert runner == "mac"
+        assert mcp == "fs"
+        assert tool == "read_file"
 
     def test_parse_unprefixed_tool(self):
         """Test parsing tool without prefix."""
-        runner, tool = parse_tool_prefix("slack_post")
+        runner, mcp, tool = parse_tool_prefix("slack_post")
         assert runner is None
+        assert mcp is None
         assert tool == "slack_post"
 
-    def test_parse_tool_with_colon_in_name(self):
-        """Test parsing tool with colon in tool name."""
-        runner, tool = parse_tool_prefix("runner:tool:with:colons")
-        assert runner == "runner"
-        assert tool == "tool:with:colons"
+    def test_parse_tool_with_double_underscore_in_name(self):
+        """Test parsing tool with __ in tool name."""
+        runner, mcp, tool = parse_tool_prefix("mac__fs__read__special__file")
+        assert runner == "mac"
+        assert mcp == "fs"
+        assert tool == "read__special__file"
+
+    def test_parse_incomplete_prefix(self):
+        """Test parsing tool with only one prefix part."""
+        runner, mcp, tool = parse_tool_prefix("mac__read_file")
+        assert runner is None
+        assert mcp is None
+        assert tool == "mac__read_file"
 
 
 class TestNoPrefixIsCP:
@@ -155,32 +165,34 @@ class TestRoutingAnyRunner:
     def test_runner_tool_routes_to_runner(self):
         """Test workflow with runner tool routes to runner."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read", "fs_write"])
+        # Runner stores tools as mcp__tool format
+        registry.update_available_tools(runner.id, ["fs__read_file", "fs__write_file"])
 
         router = WorkflowRouter(registry)
 
+        # Workflow uses runner__mcp__tool format
         workflow = MockWorkflowDefinition(
             name="test",
-            steps=[MockStep(name="step1", tool="marc-laptop:fs_read")],
+            steps=[MockStep(name="step1", tool="mac__fs__read_file")],
         )
 
         decision = router.analyze(workflow)
         assert decision.target == RoutingTarget.RUNNER
-        assert decision.runner_name == "marc-laptop"
-        assert decision.runner_tools == ["fs_read"]
+        assert decision.runner_name == "mac"
+        assert decision.runner_tools == ["fs__read_file"]
 
     def test_runner_not_connected_fails(self):
         """Test that disconnected runner fails routing."""
         registry = RunnerRegistry()
-        registry.create("marc-laptop")  # Not connected
+        runner, _ = registry.create("mac")  # Created but not connected
 
         router = WorkflowRouter(registry)
 
         workflow = MockWorkflowDefinition(
             name="test",
-            steps=[MockStep(name="step1", tool="marc-laptop:fs_read")],
+            steps=[MockStep(name="step1", tool="mac__fs__read_file")],
         )
 
         with pytest.raises(RunnerUnavailableError, match="not connected"):
@@ -189,15 +201,15 @@ class TestRoutingAnyRunner:
     def test_runner_missing_tool_fails(self):
         """Test that missing tool fails routing."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])  # No fs_write
+        registry.update_available_tools(runner.id, ["fs__read_file"])  # No fs__write_file
 
         router = WorkflowRouter(registry)
 
         workflow = MockWorkflowDefinition(
             name="test",
-            steps=[MockStep(name="step1", tool="marc-laptop:fs_write")],
+            steps=[MockStep(name="step1", tool="mac__fs__write_file")],
         )
 
         with pytest.raises(ToolUnavailableError, match="does not have tools"):
@@ -210,43 +222,43 @@ class TestRoutingMixedTools:
     def test_mixed_tools_routes_to_runner(self):
         """Test workflow with mixed tools routes to runner."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
         router = WorkflowRouter(registry)
 
         workflow = MockWorkflowDefinition(
             name="test",
             steps=[
-                MockStep(name="step1", tool="marc-laptop:fs_read"),
+                MockStep(name="step1", tool="mac__fs__read_file"),
                 MockStep(name="step2", tool="slack_post"),  # CP tool
             ],
         )
 
         decision = router.analyze(workflow)
         assert decision.target == RoutingTarget.RUNNER
-        assert decision.runner_name == "marc-laptop"
-        assert decision.runner_tools == ["fs_read"]
+        assert decision.runner_name == "mac"
+        assert decision.runner_tools == ["fs__read_file"]
         assert decision.cp_tools == ["slack_post"]
 
     def test_multiple_runners_fails(self):
         """Test that multiple runners in one workflow fails."""
         registry = RunnerRegistry()
-        runner1, _ = registry.create("laptop-1")
-        runner2, _ = registry.create("laptop-2")
+        runner1, _ = registry.create("laptop1")
+        runner2, _ = registry.create("laptop2")
         registry.set_connected(runner1.id)
         registry.set_connected(runner2.id)
-        registry.update_available_tools(runner1.id, ["fs_read"])
-        registry.update_available_tools(runner2.id, ["docker_run"])
+        registry.update_available_tools(runner1.id, ["fs__read_file"])
+        registry.update_available_tools(runner2.id, ["docker__run"])
 
         router = WorkflowRouter(registry)
 
         workflow = MockWorkflowDefinition(
             name="test",
             steps=[
-                MockStep(name="step1", tool="laptop-1:fs_read"),
-                MockStep(name="step2", tool="laptop-2:docker_run"),
+                MockStep(name="step1", tool="laptop1__fs__read_file"),
+                MockStep(name="step2", tool="laptop2__docker__run"),
             ],
         )
 
@@ -260,20 +272,20 @@ class TestDispatchToRunner:
     def test_get_runner_for_workflow(self):
         """Test getting runner for a workflow."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
         router = WorkflowRouter(registry)
 
         workflow = MockWorkflowDefinition(
             name="test",
-            steps=[MockStep(name="step1", tool="marc-laptop:fs_read")],
+            steps=[MockStep(name="step1", tool="mac__fs__read_file")],
         )
 
         found = router.get_runner_for_workflow(workflow)
         assert found is not None
-        assert found.name == "marc-laptop"
+        assert found.name == "mac"
 
     def test_get_runner_for_cp_workflow(self):
         """Test getting runner for CP workflow returns None."""
@@ -291,15 +303,15 @@ class TestDispatchToRunner:
     def test_should_run_on_runner(self):
         """Test checking if workflow should run on runner."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
         router = WorkflowRouter(registry)
 
         runner_workflow = MockWorkflowDefinition(
             name="test",
-            steps=[MockStep(name="step1", tool="marc-laptop:fs_read")],
+            steps=[MockStep(name="step1", tool="mac__fs__read_file")],
         )
         cp_workflow = MockWorkflowDefinition(
             name="test",
@@ -316,15 +328,15 @@ class TestToolCallToRunner:
     def test_get_tool_runner(self):
         """Test getting runner for a specific tool."""
         registry = RunnerRegistry()
-        runner, _ = registry.create("marc-laptop")
+        runner, _ = registry.create("mac")
         registry.set_connected(runner.id)
-        registry.update_available_tools(runner.id, ["fs_read"])
+        registry.update_available_tools(runner.id, ["fs__read_file"])
 
         router = WorkflowRouter(registry)
 
-        found = router.get_tool_runner("marc-laptop:fs_read")
+        found = router.get_tool_runner("mac__fs__read_file")
         assert found is not None
-        assert found.name == "marc-laptop"
+        assert found.name == "mac"
 
     def test_get_tool_runner_cp_tool(self):
         """Test getting runner for CP tool returns None."""

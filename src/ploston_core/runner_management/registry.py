@@ -15,6 +15,10 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ploston_core.telemetry.metrics import AELMetrics
 
 
 class RunnerStatus(str, Enum):
@@ -34,7 +38,7 @@ class Runner:
         created_at: Creation timestamp
         last_seen: Last heartbeat timestamp
         status: Connection status
-        available_tools: List of available tool names
+        available_tools: List of available tools (strings or dicts with schema)
         token_hash: SHA-256 hash of auth token
         mcps: Assigned MCP configurations
     """
@@ -44,7 +48,7 @@ class Runner:
     created_at: datetime
     last_seen: datetime | None = None
     status: RunnerStatus = RunnerStatus.DISCONNECTED
-    available_tools: list[str] = field(default_factory=list)
+    available_tools: list[str | dict[str, Any]] = field(default_factory=list)
     token_hash: str = ""
     mcps: dict[str, dict] = field(default_factory=dict)
 
@@ -103,6 +107,32 @@ class RunnerRegistry:
         self._runners: dict[str, Runner] = {}  # id -> Runner
         self._name_to_id: dict[str, str] = {}  # name -> id
         self._token_to_id: dict[str, str] = {}  # token_hash -> id
+        self._metrics: AELMetrics | None = None
+
+    def set_metrics(self, metrics: AELMetrics) -> None:
+        """Set the metrics instance for telemetry.
+
+        Args:
+            metrics: AELMetrics instance
+        """
+        self._metrics = metrics
+
+    def _update_metrics(self) -> None:
+        """Update telemetry metrics based on current runner state."""
+        if not self._metrics:
+            return
+
+        # Count connected runners and their tools
+        connected_count = 0
+        total_runner_tools = 0
+        for runner in self._runners.values():
+            if runner.status == RunnerStatus.CONNECTED:
+                connected_count += 1
+                total_runner_tools += len(runner.available_tools)
+
+        # Update metrics
+        self._metrics.update_connected_runners(connected_count)
+        self._metrics.update_runner_tools(total_runner_tools)
 
     def create(self, name: str, mcps: dict[str, dict] | None = None) -> tuple[Runner, str]:
         """Create a new runner.
@@ -213,30 +243,62 @@ class RunnerRegistry:
 
     def set_connected(self, runner_id: str) -> Runner | None:
         """Mark a runner as connected."""
-        return self.update(
+        result = self.update(
             runner_id,
             status=RunnerStatus.CONNECTED,
             last_seen=datetime.now(UTC),
         )
+        if result:
+            self._update_metrics()
+        return result
 
     def set_disconnected(self, runner_id: str) -> Runner | None:
         """Mark a runner as disconnected."""
-        return self.update(runner_id, status=RunnerStatus.DISCONNECTED)
+        result = self.update(runner_id, status=RunnerStatus.DISCONNECTED)
+        if result:
+            self._update_metrics()
+        return result
 
     def update_heartbeat(self, runner_id: str) -> Runner | None:
         """Update last_seen timestamp from heartbeat."""
         return self.update(runner_id, last_seen=datetime.now(UTC))
 
-    def update_available_tools(self, runner_id: str, tools: list[str]) -> Runner | None:
-        """Update the list of available tools for a runner."""
-        return self.update(runner_id, available_tools=tools)
+    def update_available_tools(
+        self, runner_id: str, tools: list[str | dict[str, Any]]
+    ) -> Runner | None:
+        """Update the list of available tools for a runner.
+
+        Args:
+            runner_id: Runner ID
+            tools: List of tools (strings or dicts with name/description/inputSchema)
+
+        Returns:
+            Updated runner or None if not found
+        """
+        result = self.update(runner_id, available_tools=tools)
+        if result:
+            self._update_metrics()
+        return result
+
+    def _get_tool_name(self, tool: str | dict[str, Any]) -> str:
+        """Extract tool name from string or dict format.
+
+        Args:
+            tool: Tool as string or dict with 'name' key
+
+        Returns:
+            Tool name
+        """
+        if isinstance(tool, str):
+            return tool
+        return tool.get("name", "")
 
     def has_tool(self, runner_name: str, tool_name: str) -> bool:
         """Check if a runner has a specific tool available.
 
         Args:
             runner_name: Runner name
-            tool_name: Tool name (may include runner: prefix)
+            tool_name: Tool name (may include runner__mcp__ prefix)
 
         Returns:
             True if tool is available on the runner
@@ -245,33 +307,48 @@ class RunnerRegistry:
         if not runner or runner.status != RunnerStatus.CONNECTED:
             return False
 
-        # Strip runner prefix if present
-        if ":" in tool_name:
-            tool_name = tool_name.split(":", 1)[1]
+        # Strip runner__mcp__ prefix if present (format: runner__mcp__tool)
+        # We need to extract the mcp__tool part to match against available_tools
+        if "__" in tool_name:
+            parts = tool_name.split("__")
+            if len(parts) >= 3:
+                # runner__mcp__tool -> mcp__tool (what runner stores)
+                tool_name = "__".join(parts[1:])
 
-        return tool_name in runner.available_tools
+        # Check against tool names (handle both string and dict formats)
+        for tool in runner.available_tools:
+            if self._get_tool_name(tool) == tool_name:
+                return True
+        return False
 
     def get_runner_for_tool(self, tool_name: str) -> Runner | None:
         """Find a connected runner that has a specific tool.
 
         Args:
-            tool_name: Tool name (may include runner: prefix)
+            tool_name: Tool name (may include runner__mcp__ prefix)
 
         Returns:
             Runner with the tool, or None
         """
-        # If tool has runner prefix, look for that specific runner
-        if ":" in tool_name:
-            runner_name, actual_tool = tool_name.split(":", 1)
-            runner = self.get_by_name(runner_name)
-            if runner and runner.status == RunnerStatus.CONNECTED:
-                if actual_tool in runner.available_tools:
-                    return runner
-            return None
+        # If tool has runner__mcp__ prefix, look for that specific runner
+        # Format: runner__mcp__tool (e.g., mac__fs__read_file)
+        if "__" in tool_name:
+            parts = tool_name.split("__")
+            if len(parts) >= 3:
+                runner_name = parts[0]
+                # mcp__tool is what runner stores in available_tools
+                actual_tool = "__".join(parts[1:])
+                runner = self.get_by_name(runner_name)
+                if runner and runner.status == RunnerStatus.CONNECTED:
+                    for tool in runner.available_tools:
+                        if self._get_tool_name(tool) == actual_tool:
+                            return runner
+                return None
 
         # Otherwise, find any connected runner with the tool
         for runner in self.list_connected():
-            if tool_name in runner.available_tools:
-                return runner
+            for tool in runner.available_tools:
+                if self._get_tool_name(tool) == tool_name:
+                    return runner
 
         return None
