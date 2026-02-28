@@ -52,8 +52,10 @@ class TestWorkflowNameValidation:
     @settings(max_examples=100)
     def test_valid_names_always_accepted(self, name):
         """Any name matching the valid pattern should be accepted."""
+        # Quote the name to prevent YAML from interpreting special values
+        # like ON, YES, NO as booleans (YAML 1.1 spec quirk)
         workflow_yaml = f"""
-name: {name}
+name: "{name}"
 version: "1.0"
 steps:
   - id: step1
