@@ -226,3 +226,37 @@ async def regenerate_runner_token(
         token=token,
         install_command=install_command,
     )
+
+
+@runner_router.get("/{name}/token", response_model=RunnerTokenResponse)
+async def get_runner_token(
+    request: Request,
+    name: str = Path(..., description="Runner name"),
+) -> RunnerTokenResponse:
+    """Get the authentication token for a runner.
+
+    Note: For security, tokens are only shown once at creation time.
+    Use POST /{name}/regenerate-token to get a new token.
+
+    Implements T-635: GET /api/v1/runners/{name}/token
+    """
+    # Auth hook: Enterprise overrides to check RBAC
+    await auth_hook.check_permission(request, RunnerPermissions.READ)
+
+    registry = _get_registry(request)
+
+    # Check runner exists
+    runner = registry.get_by_name(name)
+    if not runner:
+        raise HTTPException(status_code=404, detail=f"Runner '{name}' not found")
+
+    # Tokens are not stored in retrievable form for security
+    # Use regenerate-token to get a new token
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Token for runner '{name}' is not retrievable. "
+            "For security, tokens are only shown once at creation. "
+            f"Use POST /api/v1/runners/{name}/regenerate-token to get a new token."
+        ),
+    )
