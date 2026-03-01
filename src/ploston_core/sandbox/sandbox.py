@@ -96,6 +96,31 @@ DANGEROUS_BUILTINS = {
     "type",
 }
 
+# Dangerous dunder attributes that enable sandbox escapes
+DANGEROUS_DUNDERS = {
+    # Class hierarchy traversal
+    "__class__",
+    "__bases__",
+    "__base__",
+    "__mro__",
+    "__subclasses__",
+    # Code object manipulation
+    "__code__",
+    "__globals__",
+    "__closure__",
+    "__func__",
+    # Frame inspection
+    "__builtins__",
+    "__dict__",
+    "__self__",
+    # Module manipulation
+    "__loader__",
+    "__spec__",
+    "__cached__",
+    "__file__",
+    "__path__",
+}
+
 
 class PythonExecSandbox:
     """Sandboxed Python code execution for AEL workflows.
@@ -138,6 +163,7 @@ class PythonExecSandbox:
         - Syntax validity
         - Import restrictions
         - Disallowed builtins (eval, exec, compile, __import__)
+        - Dangerous dunder attribute access
 
         Args:
             code: Python code to validate
@@ -168,10 +194,21 @@ class PythonExecSandbox:
 
         # Check for disallowed builtins (eval, exec, compile)
         # Note: __import__ is handled separately in sandbox globals
-        disallowed_names = {"eval", "exec", "compile"}
+        disallowed_names = {"eval", "exec", "compile", "__builtins__"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in disallowed_names:
                 errors.append(f"Use of '{node.id}' is not allowed")
+
+        # Check for dangerous dunder attribute access
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in DANGEROUS_DUNDERS:
+                errors.append(f"Access to '{node.attr}' is not allowed")
+
+            # Check string literals for format string attacks
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for dunder in DANGEROUS_DUNDERS:
+                    if dunder in node.value:
+                        errors.append(f"String containing '{dunder}' is not allowed")
 
         return errors
 
@@ -205,6 +242,63 @@ class PythonExecSandbox:
                         f"Import from '{module}' not allowed. "
                         f"Allowed imports: {sorted(self.allowed_imports)}"
                     )
+
+    def _validate_dangerous_attrs(self, code: str) -> None:
+        """Validate that code doesn't access dangerous dunder attributes.
+
+        Blocks sandbox escape vectors like:
+        - Class hierarchy traversal: __class__, __bases__, __mro__, __subclasses__
+        - Code object manipulation: __code__, __globals__, __closure__
+        - Builtins recovery: __builtins__, __dict__
+
+        Args:
+            code: Python code to validate
+
+        Raises:
+            SecurityError: If code accesses dangerous attributes
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            # Syntax errors are handled in _validate_imports
+            return
+
+        for node in ast.walk(tree):
+            # Check direct name access to __builtins__
+            if isinstance(node, ast.Name) and node.id == "__builtins__":
+                raise SecurityError(
+                    "Access to '__builtins__' is not allowed (security restriction)"
+                )
+
+            # Check direct attribute access: obj.__class__
+            if isinstance(node, ast.Attribute):
+                if node.attr in DANGEROUS_DUNDERS:
+                    raise SecurityError(
+                        f"Access to '{node.attr}' is not allowed (security restriction)"
+                    )
+
+            # Check string literals that might be used in format strings
+            # e.g., '{0.__class__}'.format(x) or f'{x.__class__}'
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for dunder in DANGEROUS_DUNDERS:
+                    if dunder in node.value:
+                        raise SecurityError(
+                            f"String containing '{dunder}' is not allowed "
+                            "(potential format string attack)"
+                        )
+
+            # Check JoinedStr (f-strings) for dangerous attribute access
+            if isinstance(node, ast.JoinedStr):
+                for value in node.values:
+                    if isinstance(value, ast.FormattedValue):
+                        # Check if the formatted value accesses dangerous attrs
+                        for subnode in ast.walk(value):
+                            if isinstance(subnode, ast.Attribute):
+                                if subnode.attr in DANGEROUS_DUNDERS:
+                                    raise SecurityError(
+                                        f"Access to '{subnode.attr}' in f-string "
+                                        "is not allowed (security restriction)"
+                                    )
 
     def _create_safe_import(self) -> Any:
         """Create a safe __import__ function that only allows whitelisted modules."""
@@ -269,6 +363,9 @@ class PythonExecSandbox:
             # Validate imports
             self._validate_imports(code)
 
+            # Validate dangerous attribute access
+            self._validate_dangerous_attrs(code)
+
             # Create safe globals
             safe_globals = self._create_safe_globals(context)
 
@@ -289,6 +386,11 @@ class PythonExecSandbox:
                 success = False
                 result = None
                 error = f"Execution timeout after {self.timeout}s"
+            except (SystemExit, KeyboardInterrupt, GeneratorExit) as e:
+                # Catch system exceptions that would normally escape
+                success = False
+                result = None
+                error = f"{type(e).__name__}: {str(e) if str(e) else 'raised'}"
             except Exception as e:
                 success = False
                 result = None
