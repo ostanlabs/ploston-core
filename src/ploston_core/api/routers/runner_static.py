@@ -254,6 +254,7 @@ async def runner_websocket(websocket: WebSocket) -> None:
         while True:
             # Receive message
             data = await websocket.receive_json()
+            logger.info(f"Received message: {data}")
 
             method = data.get("method")
             params = data.get("params", {})

@@ -34,13 +34,21 @@ async def list_tools(
     source: ToolSource | None = None,
     server: str | None = None,
     search: str | None = None,
+    include_runner: bool = True,
 ) -> ToolListResponse:
-    """List available tools."""
+    """List available tools.
+
+    Args:
+        source: Filter by tool source (mcp, system, native, runner)
+        server: Filter by server name
+        search: Search in tool name/description
+        include_runner: Include tools from connected runners (default: True)
+    """
     registry = request.app.state.tool_registry
     tools = registry.list_tools()
 
-    # Filter by source
-    if source:
+    # Filter by source (for non-runner tools)
+    if source and source != ToolSource.RUNNER:
         internal_source = InternalToolSource(source.value)
         tools = [t for t in tools if t.source == internal_source]
 
@@ -68,6 +76,43 @@ async def list_tools(
         )
         for t in tools
     ]
+
+    # Add runner tools if requested and not filtering by non-runner source
+    if include_runner and (source is None or source == ToolSource.RUNNER):
+        runner_registry = getattr(request.app.state, "runner_registry", None)
+        if runner_registry:
+            for runner in runner_registry.list():
+                # Only include tools from connected runners
+                if runner.status.value == "connected" and runner.available_tools:
+                    for tool_info in runner.available_tools:
+                        # Tool info can be a string or a dict with name/description
+                        if isinstance(tool_info, str):
+                            tool_name = tool_info
+                            tool_desc = f"Tool from runner '{runner.name}'"
+                        else:
+                            tool_name = tool_info.get("name", str(tool_info))
+                            tool_desc = tool_info.get(
+                                "description", f"Tool from runner '{runner.name}'"
+                            )
+
+                        # Apply search filter to runner tools too
+                        if search:
+                            search_lower = search.lower()
+                            if (
+                                search_lower not in tool_name.lower()
+                                and search_lower not in tool_desc.lower()
+                            ):
+                                continue
+
+                        summaries.append(
+                            ToolSummary(
+                                name=tool_name,
+                                source=ToolSource.RUNNER,
+                                server=runner.name,
+                                description=tool_desc,
+                                category=None,
+                            )
+                        )
 
     return ToolListResponse(tools=summaries, total=len(summaries))
 

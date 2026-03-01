@@ -225,8 +225,14 @@ class RunnerWebSocketServer:
         params: dict,
         runner_id: str,
     ) -> None:
-        """Handle runner/availability message."""
-        tools = params.get("tools", [])
+        """Handle runner/availability message.
+
+        Accepts either:
+        - {"tools": [...]} - simple list of tool names
+        - {"available": [...], "unavailable": [...]} - full availability report
+        """
+        # Support both formats: "tools" (simple) and "available" (full)
+        tools = params.get("tools") or params.get("available", [])
         self._registry.update_available_tools(runner_id, tools)
 
         runner = self._registry.get(runner_id)
