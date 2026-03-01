@@ -572,17 +572,23 @@ class MCPConnection:
             self._log(LogLevel.ERROR, f"Tool call failed: {e}")
             raise
 
-    def _extract_fastmcp_content(self, result: Any) -> str:
-        """Extract text content from FastMCP call_tool result.
+    def _extract_fastmcp_content(self, result: Any) -> Any:
+        """Extract content from FastMCP call_tool result.
+
+        Tries to parse JSON content when possible, otherwise returns text.
 
         Args:
             result: FastMCP call_tool result (CallToolResult object)
 
         Returns:
-            Concatenated text content
+            Parsed JSON (dict/list) if content is valid JSON, otherwise text string
         """
+        import json
+
         if not result:
             return ""
+
+        text_content = ""
 
         # FastMCP returns a CallToolResult object with a content attribute
         # that is a list of content items (TextContent, ImageContent, etc.)
@@ -597,10 +603,9 @@ class MCPConnection:
                         text_parts.append(getattr(item, "text", ""))
                     elif isinstance(item, str):
                         text_parts.append(item)
-                return "\n".join(text_parts)
-
+                text_content = "\n".join(text_parts)
         # Handle list directly (legacy support)
-        if isinstance(result, list):
+        elif isinstance(result, list):
             text_parts = []
             for item in result:
                 if hasattr(item, "text"):
@@ -609,10 +614,18 @@ class MCPConnection:
                     text_parts.append(getattr(item, "text", ""))
                 elif isinstance(item, str):
                     text_parts.append(item)
-            return "\n".join(text_parts)
-
+            text_content = "\n".join(text_parts)
         # Single item
-        if hasattr(result, "text"):
-            return result.text
+        elif hasattr(result, "text"):
+            text_content = result.text
+        else:
+            text_content = str(result)
 
-        return str(result)
+        # Try to parse as JSON for structured access in templates
+        if text_content:
+            try:
+                return json.loads(text_content)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return text_content

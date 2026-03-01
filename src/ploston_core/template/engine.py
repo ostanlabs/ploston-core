@@ -272,7 +272,7 @@ class TemplateEngine:
                     raise KeyError(f"Invalid array index: {index_str}") from e
 
                 if key:
-                    current = current[key] if isinstance(current, dict) else getattr(current, key)
+                    current = self._access_attribute(current, key)
                 # Index into list/tuple
                 if isinstance(current, list | tuple):
                     current = current[index]
@@ -280,9 +280,65 @@ class TemplateEngine:
                     raise TypeError(f"Cannot index {type(current)} with integer")
             else:
                 # Regular attribute/key access
-                current = current[part] if isinstance(current, dict) else getattr(current, part)
+                current = self._access_attribute(current, part)
 
         return current
+
+    def _access_attribute(self, obj: Any, attr: str) -> Any:
+        """Access an attribute on an object safely.
+
+        Handles dict, dataclass, and regular objects.
+        Prevents returning builtin methods on primitive types.
+
+        Args:
+            obj: Object to access attribute on
+            attr: Attribute name
+
+        Returns:
+            Attribute value
+
+        Raises:
+            KeyError: If attribute doesn't exist or is a builtin method
+        """
+        from dataclasses import is_dataclass
+
+        # Dict: use key access
+        if isinstance(obj, dict):
+            if attr not in obj:
+                raise KeyError(f"Key '{attr}' not found in dict")
+            return obj[attr]
+
+        # Dataclass: use getattr for defined fields
+        if is_dataclass(obj):
+            if hasattr(obj, attr):
+                return getattr(obj, attr)
+            raise KeyError(f"Attribute '{attr}' not found on {type(obj).__name__}")
+
+        # Regular object with __dict__ (custom classes)
+        if hasattr(obj, "__dict__") and attr in obj.__dict__:
+            return getattr(obj, attr)
+
+        # Check if it's a property or defined attribute (not a builtin method)
+        if hasattr(obj, attr):
+            value = getattr(obj, attr)
+            # Reject builtin methods (like str.count, list.append, etc.)
+            if callable(value) and not hasattr(value, "__self__"):
+                # It's a function, not a bound method - allow it
+                return value
+            if callable(value) and isinstance(
+                getattr(type(obj), attr, None), (property, type(None))
+            ):
+                # It's a property or doesn't exist on the type - allow it
+                return value
+            if callable(value):
+                # It's a method on a builtin type - reject it
+                raise KeyError(
+                    f"Cannot access method '{attr}' on {type(obj).__name__}. "
+                    f"Template variables must be data attributes, not methods."
+                )
+            return value
+
+        raise KeyError(f"Attribute '{attr}' not found on {type(obj).__name__}")
 
     def _apply_filter(self, filter_expr: str, value: Any) -> Any:
         """Apply a filter to a value.
