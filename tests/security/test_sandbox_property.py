@@ -346,15 +346,14 @@ except:
         except Exception as e:
             pytest.fail(f"Sandbox crashed raising {exception}: {type(e).__name__}: {e}")
 
-    @pytest.mark.xfail(reason="Sandbox gap: SystemExit/KeyboardInterrupt escape the sandbox")
     @given(st.sampled_from(["SystemExit", "KeyboardInterrupt", "GeneratorExit"]))
     @settings(max_examples=10)
     @pytest.mark.asyncio
     async def test_system_exceptions_contained(self, exception):
         """System exceptions should not escape the sandbox.
 
-        NOTE: This test documents a security gap - SystemExit and KeyboardInterrupt
-        currently escape the sandbox. This should be fixed in sandbox hardening.
+        The sandbox now properly catches SystemExit, KeyboardInterrupt, and
+        GeneratorExit, returning them as error results instead of propagating.
         """
         sandbox = PythonExecSandbox(timeout=5)
 
