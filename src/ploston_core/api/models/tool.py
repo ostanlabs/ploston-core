@@ -13,6 +13,7 @@ class ToolSource(str, Enum):
     HTTP = "http"
     SYSTEM = "system"
     NATIVE = "native"
+    RUNNER = "runner"
 
 
 class ToolSummary(BaseModel):
