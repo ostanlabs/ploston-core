@@ -16,6 +16,13 @@ class ToolSource(str, Enum):
     RUNNER = "runner"
 
 
+class ToolStatus(str, Enum):
+    """Tool availability status."""
+
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+
+
 class ToolSummary(BaseModel):
     """Tool summary for list response."""
 
@@ -24,6 +31,7 @@ class ToolSummary(BaseModel):
     server: str | None = None
     description: str | None = None
     category: str | None = None
+    status: ToolStatus = ToolStatus.AVAILABLE
 
 
 class ToolDetail(BaseModel):

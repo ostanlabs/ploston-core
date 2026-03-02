@@ -10,10 +10,12 @@ from ploston_core.api.models import (
     ToolListResponse,
     ToolRefreshResponse,
     ToolSource,
+    ToolStatus,
     ToolSummary,
 )
 from ploston_core.errors import AELError
 from ploston_core.types import ToolSource as InternalToolSource
+from ploston_core.types import ToolStatus as InternalToolStatus
 
 tool_router = APIRouter(prefix="/tools", tags=["Tools"])
 
@@ -26,6 +28,13 @@ def _convert_source(source: InternalToolSource) -> ToolSource:
         InternalToolSource.NATIVE: ToolSource.NATIVE,
     }
     return mapping.get(source, ToolSource.MCP)
+
+
+def _convert_status(status: InternalToolStatus) -> ToolStatus:
+    """Convert internal ToolStatus to API ToolStatus."""
+    if status == InternalToolStatus.AVAILABLE:
+        return ToolStatus.AVAILABLE
+    return ToolStatus.UNAVAILABLE
 
 
 @tool_router.get("", response_model=ToolListResponse)
@@ -73,6 +82,7 @@ async def list_tools(
             server=t.server_name,
             description=t.description,
             category=t.category,
+            status=_convert_status(t.status),
         )
         for t in tools
     ]
@@ -104,6 +114,7 @@ async def list_tools(
                             ):
                                 continue
 
+                        # Runner tools from connected runners are always available
                         summaries.append(
                             ToolSummary(
                                 name=tool_name,
@@ -111,6 +122,7 @@ async def list_tools(
                                 server=runner.name,
                                 description=tool_desc,
                                 category=None,
+                                status=ToolStatus.AVAILABLE,
                             )
                         )
 

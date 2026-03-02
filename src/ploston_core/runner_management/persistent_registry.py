@@ -146,13 +146,17 @@ class PersistentRunnerRegistry(RunnerRegistry):
         return await self._config_store.delete_config(service_key)
 
     async def create_async(
-        self, name: str, mcps: dict[str, dict] | None = None
+        self,
+        name: str,
+        mcps: dict[str, dict] | None = None,
+        token: str | None = None,
     ) -> tuple[Runner, str]:
         """Create a new runner with Redis persistence.
 
         Args:
             name: Human-readable runner name
             mcps: Optional MCP configurations
+            token: Optional pre-generated token (if None, generates a new one)
 
         Returns:
             Tuple of (Runner, token) - token is only returned once
@@ -161,7 +165,7 @@ class PersistentRunnerRegistry(RunnerRegistry):
             ValueError: If name already exists
         """
         # Use parent's create for in-memory
-        runner, token = self.create(name, mcps)
+        runner, token = self.create(name, mcps, token)
 
         # Persist to Redis
         await self._persist_runner(runner)
@@ -248,7 +252,7 @@ class PersistentRunnerRegistry(RunnerRegistry):
 
         Args:
             runners_config: Dict of runner name -> runner definition from config
-                           Each definition has 'mcp_servers' key
+                           Each definition has 'mcp_servers' key and optional 'token' key
 
         Returns:
             Dict of runner name -> {created: bool, token: str | None}
@@ -263,6 +267,9 @@ class PersistentRunnerRegistry(RunnerRegistry):
                 results[name] = {"created": False, "token": None}
                 logger.debug(f"Runner '{name}' already exists, skipping")
                 continue
+
+            # Get token from config if provided (from CLI's init --import)
+            config_token = definition.get("token")
 
             # Convert mcp_servers to mcps format expected by registry
             # Config uses RunnerMCPServerDefinition, registry uses dict
@@ -280,9 +287,11 @@ class PersistentRunnerRegistry(RunnerRegistry):
                 else:
                     mcps[mcp_name] = mcp_def
 
-            # Create the runner
+            # Create the runner with the token from config (if provided)
             try:
-                runner, token = await self.create_async(name, mcps=mcps if mcps else None)
+                runner, token = await self.create_async(
+                    name, mcps=mcps if mcps else None, token=config_token
+                )
                 results[name] = {"created": True, "token": token}
                 logger.info(f"Created runner '{name}' from config")
             except ValueError as e:
