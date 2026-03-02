@@ -329,6 +329,29 @@ class PlostApplication:
                 port=self._http_port,
             )
 
+        # Create mode manager based on whether config file exists
+        # - RUNNING mode: config file was found and loaded
+        # - CONFIGURATION mode: no config file, using defaults (initial setup)
+        # NOTE: Must be created BEFORE REST app so config endpoints have access
+        from ploston_core.config import Mode, ModeManager, StagedConfig
+        from ploston_core.config.tools import ConfigToolRegistry
+
+        initial_mode = Mode.CONFIGURATION if self.config_loader.used_defaults else Mode.RUNNING
+        mode_manager = ModeManager(initial_mode=initial_mode)
+
+        # Create staged config for config/set and config/done endpoints
+        staged_config = StagedConfig(self.config_loader)
+
+        # Create config tool registry
+        config_tool_registry = ConfigToolRegistry(
+            staged_config=staged_config,
+            config_loader=self.config_loader,
+            mode_manager=mode_manager,
+            mcp_manager=self.mcp_manager,
+            redis_store=self.redis_config_store,
+            runner_registry=self.runner_registry,
+        )
+
         # Create REST API app if dual-mode is enabled
         rest_app = None
         if self._with_rest_api and self._transport == MCPTransport.HTTP:
@@ -351,27 +374,12 @@ class PlostApplication:
                 logger=self.logger,
                 runner_registry=self.runner_registry,
                 ael_config=self.config,
+                mode_manager=mode_manager,
+                staged_config=staged_config,
+                config_loader=self.config_loader,
+                mcp_manager=self.mcp_manager,
+                redis_store=self.redis_config_store,
             )
-
-        # Create mode manager based on whether config file exists
-        # - RUNNING mode: config file was found and loaded
-        # - CONFIGURATION mode: no config file, using defaults (initial setup)
-        from ploston_core.config import Mode, ModeManager, StagedConfig
-        from ploston_core.config.tools import ConfigToolRegistry
-
-        initial_mode = Mode.CONFIGURATION if self.config_loader.used_defaults else Mode.RUNNING
-        mode_manager = ModeManager(initial_mode=initial_mode)
-
-        # Create config tool registry
-        staged_config = StagedConfig(self.config_loader)
-        config_tool_registry = ConfigToolRegistry(
-            staged_config=staged_config,
-            config_loader=self.config_loader,
-            mode_manager=mode_manager,
-            mcp_manager=self.mcp_manager,
-            redis_store=self.redis_config_store,
-            runner_registry=self.runner_registry,
-        )
 
         self.mcp_frontend = MCPFrontend(
             self.workflow_engine,

@@ -25,10 +25,14 @@ from ploston_core.api.routers import (
 from ploston_core.api.store import ExecutionStore, InMemoryExecutionStore, SQLiteExecutionStore
 
 if TYPE_CHECKING:
+    from ploston_core.config.config_loader import ConfigLoader
     from ploston_core.config.mode_manager import ModeManager
     from ploston_core.config.models import AELConfig
+    from ploston_core.config.staged_config import StagedConfig
     from ploston_core.invoker import ToolInvoker
     from ploston_core.logging import AELLogger
+    from ploston_core.mcp_client import MCPClientManager
+    from ploston_core.redis_config import RedisConfigStore
     from ploston_core.registry import ToolRegistry
     from ploston_core.runner_management import RunnerRegistry
     from ploston_core.workflow import WorkflowEngine, WorkflowRegistry
@@ -44,6 +48,10 @@ def create_rest_app(
     runner_registry: "RunnerRegistry | None" = None,
     ael_config: "AELConfig | None" = None,
     mode_manager: "ModeManager | None" = None,
+    staged_config: "StagedConfig | None" = None,
+    config_loader: "ConfigLoader | None" = None,
+    mcp_manager: "MCPClientManager | None" = None,
+    redis_store: "RedisConfigStore | None" = None,
 ) -> FastAPI:
     """Create FastAPI application with all routes.
 
@@ -57,6 +65,10 @@ def create_rest_app(
         runner_registry: Optional runner registry for runner management
         ael_config: Optional AEL configuration for pre-configured runners
         mode_manager: Optional mode manager for config/running mode tracking
+        staged_config: Optional staged config for config/set endpoint
+        config_loader: Optional config loader for config/done endpoint
+        mcp_manager: Optional MCP client manager for reconnecting after config changes
+        redis_store: Optional Redis config store for persisting config
 
     Returns:
         Configured FastAPI application
@@ -80,6 +92,10 @@ def create_rest_app(
     app.state.runner_registry = runner_registry
     app.state.ael_config = ael_config
     app.state.mode_manager = mode_manager
+    app.state.staged_config = staged_config
+    app.state.config_loader = config_loader
+    app.state.mcp_manager = mcp_manager
+    app.state.redis_store = redis_store
 
     # Create execution store
     if config.execution_store_sqlite_path:
