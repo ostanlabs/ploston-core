@@ -134,12 +134,18 @@ class RunnerRegistry:
         self._metrics.update_connected_runners(connected_count)
         self._metrics.update_runner_tools(total_runner_tools)
 
-    def create(self, name: str, mcps: dict[str, dict] | None = None) -> tuple[Runner, str]:
+    def create(
+        self,
+        name: str,
+        mcps: dict[str, dict] | None = None,
+        token: str | None = None,
+    ) -> tuple[Runner, str]:
         """Create a new runner.
 
         Args:
             name: Human-readable runner name
             mcps: Optional MCP configurations
+            token: Optional pre-generated token (if None, generates a new one)
 
         Returns:
             Tuple of (Runner, token) - token is only returned once
@@ -151,7 +157,9 @@ class RunnerRegistry:
             raise ValueError(f"Runner with name '{name}' already exists")
 
         runner_id = generate_runner_id()
-        token = generate_runner_token()
+        # Use provided token or generate a new one
+        if token is None:
+            token = generate_runner_token()
         token_hash = hash_token(token)
 
         runner = Runner(
