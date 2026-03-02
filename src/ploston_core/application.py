@@ -337,7 +337,25 @@ class PlostApplication:
         from ploston_core.config.tools import ConfigToolRegistry
 
         initial_mode = Mode.CONFIGURATION if self.config_loader.used_defaults else Mode.RUNNING
-        mode_manager = ModeManager(initial_mode=initial_mode)
+        mode_manager = ModeManager(
+            initial_mode=initial_mode,
+            redis_store=self.redis_config_store,
+        )
+
+        # Try to restore mode from Redis (overrides file-based detection)
+        # This ensures that if config was pushed via API and mode set to RUNNING,
+        # it persists across container restarts
+        if self.redis_config_store and self.redis_config_store.connected:
+            restored = await mode_manager.restore_mode_from_redis()
+            if restored and self.logger:
+                from ploston_core.types.enums import LogLevel
+
+                self.logger._log(
+                    LogLevel.INFO,
+                    "mode",
+                    f"Restored mode from Redis: {mode_manager.mode.value}",
+                    {},
+                )
 
         # Create staged config for config/set and config/done endpoints
         staged_config = StagedConfig(self.config_loader)
