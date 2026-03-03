@@ -103,14 +103,14 @@ class TestConfigImporter:
         """Import server with HTTP transport."""
         config = {
             "api-server": {
-                "url": "http://localhost:8080",
+                "url": "http://localhost:8022",
             }
         }
 
         result = importer.import_config("claude_desktop", config)
 
         assert result.servers["api-server"]["transport"] == "http"
-        assert result.servers["api-server"]["url"] == "http://localhost:8080"
+        assert result.servers["api-server"]["url"] == "http://localhost:8022"
 
     def test_import_cursor_format(self, importer):
         """Import from Cursor format (same as Claude Desktop)."""

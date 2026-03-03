@@ -24,7 +24,7 @@ class TestStagedConfigInit:
         config_file = tmp_path / "ael-config.yaml"
         config_file.write_text("""
 server:
-  port: 8080
+  port: 8022
   host: localhost
 """)
 
@@ -32,7 +32,7 @@ server:
         loader.load(config_file)
         staged = StagedConfig(loader)
 
-        assert staged._base.get("server", {}).get("port") == 8080
+        assert staged._base.get("server", {}).get("port") == 8022
         assert staged._base.get("server", {}).get("host") == "localhost"
 
 
@@ -119,7 +119,7 @@ class TestStagedConfigGet:
         config_file = tmp_path / "ael-config.yaml"
         config_file.write_text("""
 server:
-  port: 8080
+  port: 8022
   host: localhost
 """)
 
@@ -408,7 +408,7 @@ runners:
         config_file = tmp_path / "ael-config.yaml"
         config_file.write_text("""
 server:
-  port: 8080
+  port: 8022
 """)
 
         loader = ConfigLoader()

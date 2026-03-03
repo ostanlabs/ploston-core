@@ -18,7 +18,7 @@ class RESTConfig:
 
     # Server
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 8022
 
     # API
     prefix: str = "/api/v1"

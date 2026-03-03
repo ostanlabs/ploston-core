@@ -3,7 +3,7 @@
 
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 8022
   workers: 0
 mcp:
   enabled: true
@@ -14,7 +14,7 @@ mcp:
     tools: true
   http:
     host: 0.0.0.0
-    port: 8080
+    port: 8022
     cors_origins:
     - '*'
     tls:

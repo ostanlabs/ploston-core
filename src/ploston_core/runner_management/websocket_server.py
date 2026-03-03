@@ -60,7 +60,7 @@ class RunnerWebSocketServer:
         self,
         registry: RunnerRegistry,
         host: str = "0.0.0.0",
-        port: int = 8443,
+        port: int = 8022,
     ) -> None:
         """Initialize the server.
 
