@@ -2,17 +2,35 @@
 
 Implements:
 - GET /config - Get current configuration
+- GET /config/mode - Get current operating mode
+- POST /config/mode - Set operating mode (enter configuration mode)
 - GET /config/diff - Get diff between current and staged config
 - POST /config/set - Stage a configuration change (T-633)
 - POST /config/done - Apply staged configuration (T-634)
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 config_router = APIRouter(prefix="/config", tags=["config"])
+
+
+class ConfigModeResponse(BaseModel):
+    """Response for config mode endpoint."""
+
+    mode: str
+    running_workflows: int = 0
+    message: str | None = None
+
+
+class ConfigModeRequest(BaseModel):
+    """Request body for setting config mode."""
+
+    mode: Literal["configuration", "running"] = Field(
+        ..., description="Target mode ('configuration' or 'running')"
+    )
 
 
 class ConfigDiffResponse(BaseModel):
@@ -76,6 +94,67 @@ async def get_config(
         return {section: config_dict.get(section, {})}
 
     return config_dict
+
+
+@config_router.get("/mode", response_model=ConfigModeResponse)
+async def get_config_mode(request: Request) -> ConfigModeResponse:
+    """Get current operating mode.
+
+    Returns the current mode (configuration or running) and running workflow count.
+    """
+    mode_manager = getattr(request.app.state, "mode_manager", None)
+    if not mode_manager:
+        raise HTTPException(status_code=503, detail="Mode manager not available")
+
+    return ConfigModeResponse(
+        mode=mode_manager.mode.value,
+        running_workflows=mode_manager.running_workflow_count,
+    )
+
+
+@config_router.post("/mode", response_model=ConfigModeResponse)
+async def set_config_mode(request: Request, body: ConfigModeRequest) -> ConfigModeResponse:
+    """Set operating mode.
+
+    Use this to enter configuration mode before making config changes.
+    Note: Switching to 'running' mode should be done via /config/done after staging changes.
+
+    Args:
+        body: Request with target mode
+
+    Returns:
+        Response with new mode and running workflow info
+    """
+    from ploston_core.config import Mode
+
+    mode_manager = getattr(request.app.state, "mode_manager", None)
+    if not mode_manager:
+        raise HTTPException(status_code=503, detail="Mode manager not available")
+
+    target_mode = Mode.CONFIGURATION if body.mode == "configuration" else Mode.RUNNING
+
+    # Only allow switching to configuration mode via this endpoint
+    # Switching to running mode should be done via config_done
+    if target_mode == Mode.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot switch to running mode directly. Use /config/done to apply changes and switch to running mode.",
+        )
+
+    # Switch to configuration mode
+    mode_manager.set_mode(target_mode)
+
+    running_workflows = mode_manager.running_workflow_count
+    if running_workflows > 0:
+        message = f"Switched to configuration mode. {running_workflows} workflow(s) still running."
+    else:
+        message = "Switched to configuration mode."
+
+    return ConfigModeResponse(
+        mode=mode_manager.mode.value,
+        running_workflows=running_workflows,
+        message=message,
+    )
 
 
 @config_router.get("/diff", response_model=ConfigDiffResponse)
