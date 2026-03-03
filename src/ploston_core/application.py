@@ -63,7 +63,7 @@ class PlostApplication:
         log_output: TextIO | None = None,
         transport: MCPTransport = MCPTransport.HTTP,
         http_host: str = "0.0.0.0",
-        http_port: int = 8080,
+        http_port: int = 8022,
         with_rest_api: bool = True,
         rest_api_prefix: str = "/api/v1",
         rest_api_docs: bool = True,
@@ -75,7 +75,7 @@ class PlostApplication:
             log_output: Output stream for logs (default: sys.stdout)
             transport: MCP transport type (default: HTTP for server mode)
             http_host: HTTP host (default: 0.0.0.0)
-            http_port: HTTP port (default: 8080)
+            http_port: HTTP port (default: 8022)
             with_rest_api: Enable REST API alongside MCP server (default: True)
             rest_api_prefix: URL prefix for REST API (default: /api/v1)
             rest_api_docs: Enable OpenAPI docs at /docs (default: True)

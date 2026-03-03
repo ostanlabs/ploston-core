@@ -114,7 +114,7 @@ class TestRESTConfig:
         """Test default values."""
         config = RESTConfig()
         assert config.host == "0.0.0.0"
-        assert config.port == 8080
+        assert config.port == 8022
         assert config.prefix == "/api/v1"
         assert config.title == "AEL REST API"
         assert config.version == "1.0.0"

@@ -17,7 +17,7 @@ class ServerConfig:
     """Server configuration."""
 
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 8022
     workers: int = 0  # 0 = auto-detect
 
 
@@ -43,7 +43,7 @@ class MCPHTTPConfig:
     """MCP HTTP transport configuration."""
 
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 8022
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     tls: MCPTLSConfig = field(default_factory=MCPTLSConfig)
 

@@ -158,7 +158,7 @@ class TestCreateAsync:
     @pytest.mark.asyncio
     async def test_create_with_mcps(self, registry, mock_config_store):
         """Test creating runner with MCPs."""
-        mcps = {"mcp1": {"url": "http://localhost:8080"}}
+        mcps = {"mcp1": {"url": "http://localhost:8022"}}
         runner, token = await registry.create_async("test-runner", mcps=mcps)
 
         # Verify MCPs persisted

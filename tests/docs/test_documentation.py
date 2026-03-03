@@ -113,15 +113,15 @@ class TestConfigExamples:
 
     def test_doc_010_basic_config_example(self):
         """DOC-010: Basic configuration example is valid."""
-        config = {"server": {"host": "localhost", "port": 8080}}
+        config = {"server": {"host": "localhost", "port": 8022}}
 
         assert "server" in config
-        assert config["server"]["port"] == 8080
+        assert config["server"]["port"] == 8022
 
     def test_doc_011_full_config_example(self):
         """DOC-011: Full configuration example is valid."""
         config = {
-            "server": {"host": "0.0.0.0", "port": 8080, "workers": 4},
+            "server": {"host": "0.0.0.0", "port": 8022, "workers": 4},
             "execution": {"max_steps": 100, "step_timeout": 30, "max_retries": 3},
             "security": {"sandbox_enabled": True, "allowed_modules": ["math", "json", "datetime"]},
             "logging": {"level": "INFO", "format": "json"},
@@ -137,7 +137,7 @@ class TestConfigExamples:
         config_template = """
 server:
   host: ${PLOSTON_HOST:-localhost}
-  port: ${PLOSTON_PORT:-8080}
+  port: ${PLOSTON_PORT:-8022}
 """
 
         # Validate YAML is parseable
@@ -247,8 +247,8 @@ class TestCLIExamples:
 
     def test_doc_033_cli_workflows_example(self):
         """DOC-033: CLI workflows command example."""
-        # Example command: ploston workflows list --server http://localhost:8080
-        command = "ploston workflows list --server http://localhost:8080"
+        # Example command: ploston workflows list --server http://localhost:8022
+        command = "ploston workflows list --server http://localhost:8022"
         parts = command.split()
 
         assert parts[0] == "ploston"

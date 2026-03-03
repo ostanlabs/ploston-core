@@ -64,7 +64,7 @@ class TestAddMcpServer:
             {
                 "name": "api-server",
                 "transport": "http",
-                "url": "http://localhost:8080",
+                "url": "http://localhost:8022",
             },
         )
 

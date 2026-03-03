@@ -18,9 +18,9 @@ class TestMockRunnerInit:
 
     def test_init_stores_params(self):
         """Test that init stores connection parameters."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
 
-        assert runner.cp_url == "ws://localhost:8443"
+        assert runner.cp_url == "ws://localhost:8022"
         assert runner.token == "token123"
         assert runner.name == "test-runner"
         assert runner.ws is None
@@ -29,12 +29,12 @@ class TestMockRunnerInit:
 
     def test_init_message_id_starts_at_zero(self):
         """Test that message ID counter starts at zero."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         assert runner._message_id == 0
 
     def test_next_id_increments(self):
         """Test that _next_id increments the counter."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
 
         assert runner._next_id() == 1
         assert runner._next_id() == 2
@@ -47,7 +47,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_send_requires_connection(self):
         """Test that send raises if not connected."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
 
         with pytest.raises(RuntimeError, match="Not connected"):
             await runner.send({"test": "message"})
@@ -55,7 +55,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_receive_requires_connection(self):
         """Test that receive raises if not connected."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
 
         with pytest.raises(RuntimeError, match="Not connected"):
             await runner.receive()
@@ -63,7 +63,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_send_serializes_json(self):
         """Test that send serializes message to JSON."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
 
         await runner.send({"test": "message"})
@@ -73,7 +73,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_receive_deserializes_json(self):
         """Test that receive deserializes JSON response."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
         runner.ws.recv.return_value = '{"result": "ok"}'
 
@@ -84,7 +84,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_register_sends_correct_message(self):
         """Test that register sends correct JSON-RPC message."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
         runner.ws.recv.return_value = '{"jsonrpc": "2.0", "id": 1, "result": {"status": "ok"}}'
 
@@ -107,7 +107,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_send_availability(self):
         """Test that send_availability sends correct message."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
 
         await runner.send_availability(["tool1", "tool2"], ["tool3"])
@@ -123,7 +123,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_send_heartbeat(self):
         """Test that send_heartbeat sends correct message."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
 
         await runner.send_heartbeat()
@@ -138,7 +138,7 @@ class TestMockRunnerMessages:
     @pytest.mark.asyncio
     async def test_send_workflow_result(self):
         """Test that send_workflow_result sends correct message."""
-        runner = MockRunner("ws://localhost:8443", "token123", "test-runner")
+        runner = MockRunner("ws://localhost:8022", "token123", "test-runner")
         runner.ws = AsyncMock()
 
         await runner.send_workflow_result(42, {"output": "done"})
@@ -161,7 +161,7 @@ class TestMockRunnerMessages:
             mock_connect.return_value = None
             mock_disconnect.return_value = None
 
-            async with MockRunner("ws://localhost:8443", "token123", "test-runner") as runner:
+            async with MockRunner("ws://localhost:8022", "token123", "test-runner") as runner:
                 mock_connect.assert_called_once()
                 assert isinstance(runner, MockRunner)
 

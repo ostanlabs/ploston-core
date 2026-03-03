@@ -241,7 +241,7 @@ class TestConfigOutputSnapshots:
     def test_snap_030_default_config_output(self, snapshot: SnapshotAssertion):
         """SNAP-030: Default configuration output format."""
         config = {
-            "server": {"host": "localhost", "port": 8080},
+            "server": {"host": "localhost", "port": 8022},
             "execution": {"max_steps": 100, "step_timeout": 30, "max_retries": 3},
             "security": {"sandbox_enabled": True, "allowed_modules": ["math", "json", "datetime"]},
         }

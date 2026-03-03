@@ -42,7 +42,7 @@ class HTTPTransport:
         self,
         message_handler: Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any] | None]],
         host: str = "0.0.0.0",
-        port: int = 8080,
+        port: int = 8022,
         cors_origins: list[str] | None = None,
         tls_enabled: bool = False,
         tls_cert_file: str = "",

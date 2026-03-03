@@ -30,7 +30,7 @@ class MockRunner:
     - Send heartbeats
 
     Example:
-        async with MockRunner("ws://localhost:8443", "token123", "test-runner") as runner:
+        async with MockRunner("ws://localhost:8022", "token123", "test-runner") as runner:
             response = await runner.register()
             assert response["result"]["status"] == "ok"
 
@@ -44,7 +44,7 @@ class MockRunner:
         """Initialize MockRunner.
 
         Args:
-            cp_url: WebSocket URL of the Control Plane (e.g., ws://localhost:8443/runner/ws)
+            cp_url: WebSocket URL of the Control Plane (e.g., ws://localhost:8022/runner/ws)
             token: Authentication token
             name: Runner name
         """

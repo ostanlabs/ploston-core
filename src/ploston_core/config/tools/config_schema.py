@@ -14,7 +14,7 @@ CONFIG_SCHEMA = {
             },
             "port": {
                 "type": "integer",
-                "default": 8080,
+                "default": 8022,
                 "description": "Port to listen on",
             },
         },

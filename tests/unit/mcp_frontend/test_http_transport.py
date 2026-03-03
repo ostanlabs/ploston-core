@@ -29,7 +29,7 @@ class TestHTTPTransport:
         return HTTPTransport(
             message_handler=message_handler,
             host="127.0.0.1",
-            port=8080,
+            port=8022,
             cors_origins=["*"],
         )
 
@@ -212,7 +212,7 @@ class TestHTTPTransportConfiguration:
         transport = HTTPTransport(message_handler=AsyncMock())
 
         assert transport._host == "0.0.0.0"
-        assert transport._port == 8080
+        assert transport._port == 8022
         assert transport._cors_origins == ["*"]
         assert transport._tls_enabled is False
 

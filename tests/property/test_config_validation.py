@@ -239,7 +239,7 @@ class TestConfigDefaults:
 
         # Check defaults are applied
         assert config.server.host == "0.0.0.0"
-        assert config.server.port == 8080
+        assert config.server.port == 8022
         assert config.execution.default_timeout == 300
         assert config.execution.step_timeout == 30
         assert config.execution.max_steps == 100
