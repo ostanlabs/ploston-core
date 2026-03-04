@@ -37,14 +37,21 @@ ToolChangeCallback = Callable[[str, list[ToolSchema]], None]
 
 
 class _ToolChangeMessageHandler(MessageHandler):
-    """Message handler that triggers callback on tool list changes."""
+    """Message handler that triggers callback on tool list changes.
+
+    The on_change callback is dispatched as a background task to avoid
+    deadlocking the client's receive loop. The receive loop processes
+    messages sequentially, so if the callback sends a request (e.g.
+    list_tools) and awaits the response, the receive loop would be
+    blocked and unable to process the response.
+    """
 
     def __init__(self, on_change: Callable[[], Any]):
         self._on_change = on_change
 
     async def on_tool_list_changed(self, message: mcp.types.ToolListChangedNotification) -> None:
         """Handle tool list changed notification from server."""
-        await self._on_change()
+        asyncio.create_task(self._on_change())
 
 
 class MCPConnection:
