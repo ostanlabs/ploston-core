@@ -25,7 +25,7 @@ from typing import Any
 import anyio
 import pytest
 from fastmcp import FastMCP
-from fastmcp.client.transports.memory import FastMCPTransport
+from fastmcp.client.transports import FastMCPTransport
 from fastmcp.server.low_level import LowLevelServer, MiddlewareServerSession
 from mcp.client.session import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
