@@ -21,6 +21,7 @@ from .registry import (
     ConfigToolRegistry,
 )
 from .remove_mcp_server import REMOVE_MCP_SERVER_SCHEMA
+from .workflow_schema import WORKFLOW_SCHEMA_TOOL_SCHEMA
 
 __all__ = [
     "ConfigToolRegistry",
@@ -36,6 +37,7 @@ __all__ = [
     "DISABLE_NATIVE_TOOL_SCHEMA",
     "CONFIG_DIFF_SCHEMA",
     "CONFIG_RESET_SCHEMA",
+    "WORKFLOW_SCHEMA_TOOL_SCHEMA",
     # Renamed tool schemas
     "PLOSTON_CONFIG_GET_SCHEMA",
     "PLOSTON_CONFIG_SET_SCHEMA",
