@@ -2,6 +2,7 @@
 
 from .parser import parse_workflow_yaml
 from .registry import WorkflowRegistry
+from .schema_generator import generate_workflow_schema
 from .types import (
     InputDefinition,
     OutputDefinition,
@@ -22,6 +23,7 @@ __all__ = [
     "StepDefinition",
     "PackagesConfig",
     "parse_workflow_yaml",
+    "generate_workflow_schema",
     "WorkflowRegistry",
     "WorkflowValidator",
 ]

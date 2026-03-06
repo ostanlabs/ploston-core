@@ -16,6 +16,7 @@ from .enable_native_tool import ENABLE_NATIVE_TOOL_SCHEMA
 from .get_setup_context import GET_SETUP_CONTEXT_SCHEMA
 from .import_config import IMPORT_CONFIG_SCHEMA
 from .remove_mcp_server import REMOVE_MCP_SERVER_SCHEMA
+from .workflow_schema import WORKFLOW_SCHEMA_TOOL_SCHEMA
 
 # Renamed ploston: versions of existing tools (T-587 to T-590)
 PLOSTON_CONFIG_GET_SCHEMA = {
@@ -79,6 +80,7 @@ PLOSTON_TOOL_SCHEMAS = [
     DISABLE_NATIVE_TOOL_SCHEMA,
     CONFIG_DIFF_SCHEMA,
     CONFIG_RESET_SCHEMA,
+    WORKFLOW_SCHEMA_TOOL_SCHEMA,
     # Renamed existing tools
     PLOSTON_CONFIG_GET_SCHEMA,
     PLOSTON_CONFIG_SET_SCHEMA,
@@ -239,6 +241,7 @@ class ConfigToolRegistry:
             "ploston:disable_native_tool": self._handle_disable_native_tool,
             "ploston:config_diff": self._handle_config_diff,
             "ploston:config_reset": self._handle_config_reset,
+            "ploston:workflow_schema": self._handle_workflow_schema,
             # Renamed ploston: versions of existing tools (T-587 to T-590)
             "ploston:config_get": self._handle_config_get,
             "ploston:config_set": self._handle_config_set,
@@ -268,6 +271,10 @@ class ConfigToolRegistry:
         if use_ploston_prefix:
             return PLOSTON_CONFIGURE_SCHEMA
         return CONFIGURE_TOOL_SCHEMA
+
+    def get_running_mode_tools(self) -> list[dict[str, Any]]:
+        """Return tool schemas available in running mode (read-only informational tools)."""
+        return [WORKFLOW_SCHEMA_TOOL_SCHEMA]
 
     def get_all_tool_schemas(self) -> list[dict[str, Any]]:
         """Return all tool schemas (both legacy and new)."""
@@ -393,3 +400,9 @@ class ConfigToolRegistry:
         from .config_reset import handle_config_reset
 
         return await handle_config_reset(arguments, self._staged_config)
+
+    async def _handle_workflow_schema(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle ploston:workflow_schema tool call."""
+        from .workflow_schema import handle_workflow_schema
+
+        return await handle_workflow_schema(arguments)
