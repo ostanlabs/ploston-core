@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 
 from ploston_core.errors import create_error
-from ploston_core.types import BackoffType, OnError, RetryConfig
+from ploston_core.types import BackoffType, OnError, OnMissingTool, RetryConfig
 
 from .types import (
     InputDefinition,
@@ -95,6 +95,9 @@ def parse_workflow_yaml(
                 delay_seconds=retry_data.get("delay_seconds", 1.0),
             )
 
+        on_missing_tool_raw = step_data.get("on_missing_tool")
+        on_missing_tool = OnMissingTool(on_missing_tool_raw) if on_missing_tool_raw else None
+
         step = StepDefinition(
             id=step_data["id"],
             tool=step_data.get("tool"),
@@ -104,6 +107,7 @@ def parse_workflow_yaml(
             on_error=OnError(step_data["on_error"]) if "on_error" in step_data else None,
             timeout=step_data.get("timeout"),
             retry=retry,
+            on_missing_tool=on_missing_tool,
         )
         steps.append(step)
 

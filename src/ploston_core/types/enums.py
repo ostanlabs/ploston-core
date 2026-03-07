@@ -34,6 +34,13 @@ class OnError(str, Enum):
     RETRY = "retry"
 
 
+class OnMissingTool(str, Enum):
+    """Behaviour when a step's tool is not registered."""
+
+    FAIL = "fail"  # Default: raise TOOL_UNAVAILABLE
+    SKIP = "skip"  # Skip the step silently
+
+
 class PackageProfile(str, Enum):
     """Python sandbox package profile."""
 

@@ -49,8 +49,15 @@ class SandboxResult:
     tool_call_count: int = 0
 
 
-# Security constants
+# ─── Allowed import surface ────────────────────────────────────────────────
+# Standard library: json, math, datetime, time, random, itertools, functools,
+#   collections, typing, re, decimal, statistics, operator, copy, uuid, hashlib, io
+# Third-party:
+#   anthropic  — LLM synthesis steps (requires ANTHROPIC_API_KEY env var)
+#   pypdf      — PDF parsing steps
+# ───────────────────────────────────────────────────────────────────────────
 SAFE_IMPORTS = {
+    # Standard library
     "json",
     "math",
     "datetime",
@@ -66,7 +73,11 @@ SAFE_IMPORTS = {
     "operator",
     "copy",
     "uuid",
-    "hashlib",  # For hashing
+    "hashlib",
+    "io",  # T-688 audit: needed for io.BytesIO in PDF parsing
+    # Third-party — added in S-225
+    "anthropic",  # T-687: LLM synthesis steps
+    "pypdf",  # T-686: PDF parsing steps
 }
 
 DANGEROUS_BUILTINS = {
