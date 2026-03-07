@@ -8,6 +8,7 @@ Both ploston (OSS) and ploston-enterprise use this class for
 proper component initialization.
 """
 
+import logging
 import os
 import sys
 from typing import TYPE_CHECKING, Any, TextIO
@@ -26,6 +27,11 @@ from ploston_core.telemetry import (
     TelemetryConfig,
     get_telemetry,
     setup_telemetry,
+)
+from ploston_core.telemetry.store import (
+    TelemetryStore,
+    TelemetryStoreConfig,
+    create_telemetry_store,
 )
 from ploston_core.template import TemplateEngine
 from ploston_core.types import MCPTransport
@@ -106,6 +112,7 @@ class PlostApplication:
         self.mcp_frontend: MCPFrontend | None = None
         self.redis_config_store: RedisConfigStore | None = None
         self.runner_registry: RunnerRegistry | None = None
+        self.telemetry_store: TelemetryStore | None = None
 
     async def initialize(self) -> None:
         """Initialize all components.
@@ -186,6 +193,32 @@ class PlostApplication:
             ),
         )
         setup_telemetry(telemetry_config)
+
+        # 3a-bis. Python logging → OTEL bridge (DEC-149)
+        # When logs are enabled, attach an OTEL handler to the root Python
+        # logger so that stdlib logging output is forwarded to the OTEL
+        # LoggerProvider and ultimately to Loki via the collector.
+        if telemetry_config.logs_enabled:
+            try:
+                from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
+                LoggingInstrumentor().instrument(set_logging_format=False)
+            except ImportError:
+                logging.getLogger(__name__).debug(
+                    "opentelemetry-instrumentation-logging not installed; skipping OTEL log bridge"
+                )
+
+        # 3b. Telemetry Store (DEC-148: canonical execution store)
+        telemetry_store_path = os.environ.get(
+            "TELEMETRY_STORE_SQLITE_PATH",
+            "./data/telemetry.db",
+        )
+        store_config = TelemetryStoreConfig(
+            enabled=True,
+            storage_type="sqlite",
+            sqlite_path=telemetry_store_path,
+        )
+        self.telemetry_store = create_telemetry_store(store_config)
 
         # 4. Error Registry & Factory
         self.error_registry = ErrorRegistry()
@@ -398,6 +431,7 @@ class PlostApplication:
                 config_loader=self.config_loader,
                 mcp_manager=self.mcp_manager,
                 redis_store=self.redis_config_store,
+                telemetry_store=self.telemetry_store,
             )
 
         self.mcp_frontend = MCPFrontend(

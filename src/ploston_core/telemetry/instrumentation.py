@@ -146,6 +146,8 @@ async def instrument_tool_call(
     source: str | None = None,
     principal_id: str | None = None,
     principal_type: str | None = None,
+    runner_id: str | None = None,
+    bridge_id: str | None = None,
 ):
     """Context manager for instrumenting tool invocations.
 
@@ -159,6 +161,8 @@ async def instrument_tool_call(
         source: Tool source category (native, local, system, configured)
         principal_id: Principal ID (Pro Auth Foundation)
         principal_type: Principal type (user, service)
+        runner_id: Runner ID for distributed topology (DEC-142)
+        bridge_id: Bridge ID for distributed topology (DEC-142)
 
     Yields:
         Dictionary to store execution status and source
@@ -171,6 +175,8 @@ async def instrument_tool_call(
         "source": source,
         "principal_id": principal_id,
         "principal_type": principal_type,
+        "runner_id": runner_id,
+        "bridge_id": bridge_id,
     }
 
     # Get tracer
@@ -188,6 +194,10 @@ async def instrument_tool_call(
             span.set_attribute("principal.id", principal_id)
         if principal_type:
             span.set_attribute("principal.type", principal_type)
+        if runner_id:
+            span.set_attribute("runner.id", runner_id)
+        if bridge_id:
+            span.set_attribute("bridge.id", bridge_id)
 
     try:
         yield result
@@ -211,6 +221,8 @@ async def instrument_tool_call(
                 source=result.get("source"),
                 principal_id=result.get("principal_id"),
                 principal_type=result.get("principal_type"),
+                runner_id=result.get("runner_id"),
+                bridge_id=result.get("bridge_id"),
             )
 
         # End span

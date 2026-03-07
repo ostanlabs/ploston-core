@@ -12,10 +12,11 @@ from ploston_core.errors import AELError, create_error
 from ploston_core.errors.errors import ErrorCategory
 from ploston_core.invoker import ToolInvoker
 from ploston_core.logging import AELLogger
+from ploston_core.mcp_frontend.http_transport import bridge_context
 from ploston_core.registry import ToolRegistry
 from ploston_core.runner_management.registry import RunnerRegistry
 from ploston_core.runner_management.router import parse_tool_prefix
-from ploston_core.telemetry import ChainDetector
+from ploston_core.telemetry import ChainDetector, instrument_tool_call, record_tool_result
 from ploston_core.types import ExecutionStatus, MCPTransport
 from ploston_core.types.internal import InternalToolSource
 
@@ -599,54 +600,72 @@ class MCPFrontend:
                 http_status=503,
             )
 
-        try:
-            logger.info(f"Routing tool '{tool_name}' to runner '{runner_name}'")
-            result = await send_tool_call_to_runner(
-                runner_id=runner.id,
-                tool_name=tool_name,
-                arguments=arguments,
-                timeout=60.0,
-            )
+        # Instrument runner tool calls for telemetry (source="runner")
+        prefixed_name = f"{runner_name}__{tool_name}"
+        # Extract bridge context for distributed topology labels (DEC-142)
+        _bctx = bridge_context.get()
+        _bridge_id = _bctx.bridge_id if _bctx else None
+        async with instrument_tool_call(
+            prefixed_name,
+            source="runner",
+            runner_id=runner.id,
+            bridge_id=_bridge_id,
+        ) as telemetry_result:
+            try:
+                logger.info(f"Routing tool '{tool_name}' to runner '{runner_name}'")
+                result = await send_tool_call_to_runner(
+                    runner_id=runner.id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    timeout=60.0,
+                )
 
-            # Result from runner is in format: {"output": ..., "error": ...}
-            # or {"content": [...], "isError": ...} if runner returns MCP format
-            if "content" in result:
-                # Runner returned MCP format directly
-                return result
-            elif "error" in result and result.get("error"):
-                return {
-                    "content": [{"type": "text", "text": str(result["error"])}],
-                    "isError": True,
-                }
-            else:
-                output = result.get("output", result)
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (json.dumps(output) if not isinstance(output, str) else output),
-                        }
-                    ],
-                    "isError": False,
-                }
+                # Result from runner is in format: {"output": ..., "error": ...}
+                # or {"content": [...], "isError": ...} if runner returns MCP format
+                is_error = False
+                if "content" in result:
+                    # Runner returned MCP format directly
+                    is_error = result.get("isError", False)
+                    record_tool_result(telemetry_result, success=not is_error)
+                    return result
+                elif "error" in result and result.get("error"):
+                    record_tool_result(telemetry_result, success=False, error_code="TOOL_FAILED")
+                    return {
+                        "content": [{"type": "text", "text": str(result["error"])}],
+                        "isError": True,
+                    }
+                else:
+                    output = result.get("output", result)
+                    record_tool_result(telemetry_result, success=True)
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    json.dumps(output) if not isinstance(output, str) else output
+                                ),
+                            }
+                        ],
+                        "isError": False,
+                    }
 
-        except TimeoutError:
-            raise AELError(
-                code="TOOL_TIMEOUT",
-                category=ErrorCategory.TOOL,
-                message=f"Tool call to runner '{runner_name}' timed out",
-                tool_name=f"{runner_name}:{tool_name}",
-                http_status=504,
-            )
-        except Exception as e:
-            logger.exception(f"Error routing tool to runner: {e}")
-            raise AELError(
-                code="TOOL_EXECUTION_FAILED",
-                category=ErrorCategory.TOOL,
-                message=f"Tool call to runner '{runner_name}' failed: {e}",
-                tool_name=f"{runner_name}:{tool_name}",
-                http_status=500,
-            )
+            except TimeoutError:
+                raise AELError(
+                    code="TOOL_TIMEOUT",
+                    category=ErrorCategory.TOOL,
+                    message=f"Tool call to runner '{runner_name}' timed out",
+                    tool_name=f"{runner_name}:{tool_name}",
+                    http_status=504,
+                )
+            except Exception as e:
+                logger.exception(f"Error routing tool to runner: {e}")
+                raise AELError(
+                    code="TOOL_EXECUTION_FAILED",
+                    category=ErrorCategory.TOOL,
+                    message=f"Tool call to runner '{runner_name}' failed: {e}",
+                    tool_name=f"{runner_name}:{tool_name}",
+                    http_status=500,
+                )
 
     def _success_response(self, msg_id: Any, result: Any) -> dict[str, Any]:
         """Build success response.

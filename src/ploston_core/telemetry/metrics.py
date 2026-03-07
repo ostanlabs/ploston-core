@@ -43,6 +43,10 @@ class MetricLabels:
     FROM_TOOL = "from_tool"
     TO_TOOL = "to_tool"
 
+    # Distributed topology labels (DEC-142)
+    RUNNER_ID = "runner_id"
+    BRIDGE_ID = "bridge_id"
+
     # Principal labels (Pro Auth Foundation)
     PRINCIPAL_ID = "principal_id"
     PRINCIPAL_TYPE = "principal_type"  # user, service
@@ -126,6 +130,13 @@ class PlostMetrics:
         self.chain_links_total: Counter = self._meter.create_counter(
             name=f"{METRIC_PREFIX}_chain_links_total",
             description="Total chain links detected between tool calls",
+            unit="1",
+        )
+
+        # Bridge queue drops (DEC-142)
+        self.bridge_queue_drops_total: Counter = self._meter.create_counter(
+            name=f"{METRIC_PREFIX}_bridge_queue_drops_total",
+            description="Total requests dropped by bridge queue overflow",
             unit="1",
         )
 
@@ -262,6 +273,8 @@ class PlostMetrics:
         source: str | None = None,
         principal_id: str | None = None,
         principal_type: str | None = None,
+        runner_id: str | None = None,
+        bridge_id: str | None = None,
     ) -> None:
         """Record tool invocation.
 
@@ -273,6 +286,8 @@ class PlostMetrics:
             source: Tool source category (native, local, system, configured)
             principal_id: Principal ID (Pro Auth Foundation)
             principal_type: Principal type (user, service)
+            runner_id: Runner ID for distributed topology (DEC-142)
+            bridge_id: Bridge ID for distributed topology (DEC-142)
         """
         labels: dict[str, Any] = {
             MetricLabels.TOOL_NAME: tool_name,
@@ -286,6 +301,10 @@ class PlostMetrics:
             labels[MetricLabels.PRINCIPAL_ID] = principal_id
         if principal_type:
             labels[MetricLabels.PRINCIPAL_TYPE] = principal_type
+        if runner_id:
+            labels[MetricLabels.RUNNER_ID] = runner_id
+        if bridge_id:
+            labels[MetricLabels.BRIDGE_ID] = bridge_id
 
         self.tool_invocations_total.add(1, labels)
         self.tool_invocation_duration_seconds.record(duration_seconds, labels)

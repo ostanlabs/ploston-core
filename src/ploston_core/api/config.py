@@ -42,7 +42,3 @@ class RESTConfig:
     # CORS
     cors_enabled: bool = True
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
-
-    # Execution store
-    execution_store_max_records: int = 1000
-    execution_store_sqlite_path: str | None = None

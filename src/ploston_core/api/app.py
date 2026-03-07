@@ -22,7 +22,6 @@ from ploston_core.api.routers import (
     tool_router,
     workflow_router,
 )
-from ploston_core.api.store import ExecutionStore, InMemoryExecutionStore, SQLiteExecutionStore
 
 if TYPE_CHECKING:
     from ploston_core.config.config_loader import ConfigLoader
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from ploston_core.redis_config import RedisConfigStore
     from ploston_core.registry import ToolRegistry
     from ploston_core.runner_management import RunnerRegistry
+    from ploston_core.telemetry.store import TelemetryStore
     from ploston_core.workflow import WorkflowEngine, WorkflowRegistry
 
 
@@ -52,6 +52,7 @@ def create_rest_app(
     config_loader: "ConfigLoader | None" = None,
     mcp_manager: "MCPClientManager | None" = None,
     redis_store: "RedisConfigStore | None" = None,
+    telemetry_store: "TelemetryStore | None" = None,
 ) -> FastAPI:
     """Create FastAPI application with all routes.
 
@@ -69,6 +70,7 @@ def create_rest_app(
         config_loader: Optional config loader for config/done endpoint
         mcp_manager: Optional MCP client manager for reconnecting after config changes
         redis_store: Optional Redis config store for persisting config
+        telemetry_store: Optional TelemetryStore for execution history (DEC-148)
 
     Returns:
         Configured FastAPI application
@@ -96,16 +98,7 @@ def create_rest_app(
     app.state.config_loader = config_loader
     app.state.mcp_manager = mcp_manager
     app.state.redis_store = redis_store
-
-    # Create execution store
-    if config.execution_store_sqlite_path:
-        app.state.execution_store: ExecutionStore = SQLiteExecutionStore(
-            config.execution_store_sqlite_path
-        )
-    else:
-        app.state.execution_store = InMemoryExecutionStore(
-            max_records=config.execution_store_max_records
-        )
+    app.state.telemetry_store = telemetry_store
 
     # Add middleware (order matters - first added is outermost)
     # Request ID middleware (always enabled)
