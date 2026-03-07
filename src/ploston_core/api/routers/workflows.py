@@ -239,7 +239,6 @@ async def execute_workflow(
 ) -> ExecutionDetail:
     """Execute a workflow synchronously."""
     engine = request.app.state.workflow_engine
-    store = request.app.state.execution_store
 
     try:
         result = await engine.execute(workflow_id, execute_request.inputs)
@@ -277,10 +276,7 @@ async def execute_workflow(
             ],
         )
 
-        # Store execution
-        if store:
-            await store.save(execution)
-
+        # Execution is automatically captured by TelemetryStore (DEC-148)
         return execution
 
     except AELError as e:

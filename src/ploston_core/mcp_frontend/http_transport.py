@@ -11,6 +11,8 @@ import asyncio
 import json
 import uuid
 from collections.abc import Callable, Coroutine
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sse_starlette.sse import EventSourceResponse
@@ -25,6 +27,24 @@ from ploston_core.telemetry import get_telemetry
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+
+@dataclass
+class BridgeContext:
+    """Bridge context extracted from incoming request headers (DEC-142).
+
+    Populated by HTTPTransport from X-Bridge-* headers and made available
+    via the ``bridge_context`` ContextVar for downstream instrumentation.
+    """
+
+    bridge_id: str | None = None
+    bridge_expose: str | None = None
+    queue_drops: int = 0
+    session_start: str | None = None
+
+
+#: Per-request bridge context.  Set in ``_handle_mcp_request``.
+bridge_context: ContextVar[BridgeContext | None] = ContextVar("bridge_context", default=None)
 
 
 class HTTPTransport:
@@ -123,6 +143,22 @@ class HTTPTransport:
         session_id = request.headers.get("X-MCP-Session-ID")
         if session_id and session_id not in self._sessions:
             self._sessions[session_id] = asyncio.Queue()
+
+        # Extract bridge context headers (DEC-142)
+        _bridge_id = request.headers.get("X-Bridge-ID")
+        if _bridge_id:
+            _drops_str = request.headers.get("X-Bridge-Queue-Drops", "0")
+            try:
+                _drops = int(_drops_str)
+            except (ValueError, TypeError):
+                _drops = 0
+            ctx = BridgeContext(
+                bridge_id=_bridge_id,
+                bridge_expose=request.headers.get("X-Bridge-Expose"),
+                queue_drops=_drops,
+                session_start=request.headers.get("X-Bridge-Session-Start"),
+            )
+            bridge_context.set(ctx)
 
         response = await self._message_handler(body)
 

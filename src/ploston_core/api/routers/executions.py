@@ -1,4 +1,9 @@
-"""Execution router."""
+"""Execution router.
+
+Routes /api/v1/executions to the canonical TelemetryStore (DEC-148).
+The old ExecutionStore has been retired — all execution data now comes
+from TelemetryStore which captures every execution path (MCP, REST, CLI).
+"""
 
 from datetime import datetime
 
@@ -7,10 +12,14 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from ploston_core.api.models import (
     ExecutionDetail,
     ExecutionListResponse,
-    ExecutionLogsResponse,
     ExecutionStatus,
-    ExecutionSummary,
-    LogEntry,
+)
+from ploston_core.api.routers.execution_adapter import (
+    to_execution_detail,
+    to_execution_summary,
+)
+from ploston_core.telemetry.store.types import (
+    ExecutionStatus as TelemetryExecutionStatus,
 )
 
 execution_router = APIRouter(prefix="/executions", tags=["Executions"])
@@ -28,7 +37,7 @@ async def list_executions(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> ExecutionListResponse:
     """List executions with optional filtering."""
-    store = request.app.state.execution_store
+    store = request.app.state.telemetry_store
 
     if not store:
         return ExecutionListResponse(
@@ -40,26 +49,19 @@ async def list_executions(
             has_prev=False,
         )
 
-    executions, total = await store.list(
+    # Map API ExecutionStatus to TelemetryStore ExecutionStatus
+    telemetry_status = TelemetryExecutionStatus(status.value) if status else None
+
+    records, total = await store.list_executions(
         workflow_id=workflow_id,
-        status=status,
+        status=telemetry_status,
         since=since,
         until=until,
         page=page,
         page_size=page_size,
     )
 
-    summaries = [
-        ExecutionSummary(
-            execution_id=e.execution_id,
-            workflow_id=e.workflow_id,
-            status=e.status,
-            started_at=e.started_at,
-            completed_at=e.completed_at,
-            duration_ms=e.duration_ms,
-        )
-        for e in executions
-    ]
+    summaries = [to_execution_summary(r) for r in records]
 
     return ExecutionListResponse(
         executions=summaries,
@@ -77,49 +79,13 @@ async def get_execution(
     execution_id: str = Path(...),
 ) -> ExecutionDetail:
     """Get execution details."""
-    store = request.app.state.execution_store
+    store = request.app.state.telemetry_store
 
     if not store:
-        raise HTTPException(status_code=404, detail="Execution store not configured")
+        raise HTTPException(status_code=404, detail="Telemetry store not configured")
 
-    execution = await store.get(execution_id)
-    if not execution:
+    record = await store.get_execution(execution_id)
+    if not record:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
-    return execution
-
-
-@execution_router.get("/{execution_id}/logs", response_model=ExecutionLogsResponse)
-async def get_execution_logs(
-    request: Request,
-    execution_id: str = Path(...),
-    level: str | None = Query(default="INFO"),
-    step_id: str | None = None,
-) -> ExecutionLogsResponse:
-    """Get execution logs."""
-    store = request.app.state.execution_store
-
-    if not store:
-        raise HTTPException(status_code=404, detail="Execution store not configured")
-
-    execution = await store.get(execution_id)
-    if not execution:
-        raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
-
-    # Get logs from store
-    logs = await store.get_logs(execution_id, level=level, step_id=step_id)
-
-    return ExecutionLogsResponse(
-        execution_id=execution_id,
-        logs=[
-            LogEntry(
-                timestamp=log.get("timestamp", datetime.now()),
-                level=log.get("level", "INFO"),
-                component=log.get("component", "unknown"),
-                step_id=log.get("step_id"),
-                tool_name=log.get("tool_name"),
-                message=log.get("message", ""),
-            )
-            for log in logs
-        ],
-    )
+    return to_execution_detail(record)

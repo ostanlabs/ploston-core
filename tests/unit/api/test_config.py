@@ -152,11 +152,8 @@ class TestRESTConfig:
         assert config.api_keys[0].name == "admin"
         assert config.api_keys[1].name == "reader"
 
-    def test_execution_store_config(self) -> None:
-        """Test execution store configuration."""
-        config = RESTConfig(
-            execution_store_max_records=500,
-            execution_store_sqlite_path="/tmp/executions.db",
-        )
-        assert config.execution_store_max_records == 500
-        assert config.execution_store_sqlite_path == "/tmp/executions.db"
+    def test_execution_store_config_removed(self) -> None:
+        """Verify execution_store fields were removed (DEC-148)."""
+        config = RESTConfig()
+        assert not hasattr(config, "execution_store_max_records")
+        assert not hasattr(config, "execution_store_sqlite_path")

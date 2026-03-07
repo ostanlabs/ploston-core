@@ -17,6 +17,7 @@ from typing import Any
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -173,9 +174,19 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
     # Set up metrics with Prometheus exporter
     if config.metrics_enabled:
         reader = PrometheusMetricReader()
+
+        # DEC-144: Explicit bucket boundaries for tool invocation latency
+        tool_latency_view = View(
+            instrument_name="ploston_tool_invocation_duration_seconds",
+            aggregation=ExplicitBucketHistogramAggregation(
+                boundaries=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+            ),
+        )
+
         meter_provider = MeterProvider(
             metric_readers=[reader],
             resource=resource,
+            views=[tool_latency_view],
         )
         metrics.set_meter_provider(meter_provider)
 

@@ -22,10 +22,12 @@ from typing import Any
 
 try:
     import websockets
-    from websockets.server import WebSocketServerProtocol
+    from websockets.asyncio.server import ServerConnection
+    from websockets.asyncio.server import serve as ws_serve
+    from websockets.exceptions import ConnectionClosed
 except ImportError:
     websockets = None  # type: ignore
-    WebSocketServerProtocol = Any  # type: ignore
+    ServerConnection = Any  # type: ignore
 
 from ploston_core.runner_management.registry import (
     RunnerRegistry,
@@ -40,7 +42,7 @@ class RunnerConnection:
 
     runner_id: str
     runner_name: str
-    websocket: WebSocketServerProtocol
+    websocket: ServerConnection
     connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending_requests: dict[int, asyncio.Future] = field(default_factory=dict)
     next_request_id: int = 1
@@ -90,7 +92,7 @@ class RunnerWebSocketServer:
     async def start(self) -> None:
         """Start the WebSocket server."""
         self._running = True
-        self._server = await websockets.serve(
+        self._server = await ws_serve(
             self._handle_connection,
             self._host,
             self._port,
@@ -110,7 +112,7 @@ class RunnerWebSocketServer:
 
         logger.info("Runner WebSocket server stopped")
 
-    async def _handle_connection(self, websocket: WebSocketServerProtocol) -> None:
+    async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle a new WebSocket connection."""
         runner_id: str | None = None
 
@@ -124,7 +126,7 @@ class RunnerWebSocketServer:
                 except Exception as e:
                     logger.exception(f"Error processing message: {e}")
                     await self._send_error(websocket, None, -32603, str(e))
-        except websockets.ConnectionClosed:
+        except ConnectionClosed:
             pass
         finally:
             if runner_id:
@@ -132,7 +134,7 @@ class RunnerWebSocketServer:
 
     async def _process_message(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         data: dict,
         current_runner_id: str | None,
     ) -> str | None:
@@ -167,7 +169,7 @@ class RunnerWebSocketServer:
 
     async def _handle_register(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         params: dict,
     ) -> str | None:
@@ -209,7 +211,7 @@ class RunnerWebSocketServer:
 
     async def _handle_heartbeat(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         params: dict,
         runner_id: str,
@@ -220,7 +222,7 @@ class RunnerWebSocketServer:
 
     async def _handle_availability(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         params: dict,
         runner_id: str,
@@ -243,7 +245,7 @@ class RunnerWebSocketServer:
 
     async def _handle_workflow_result(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         params: dict,
         runner_id: str,
@@ -292,7 +294,7 @@ class RunnerWebSocketServer:
 
     async def _send_response(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         result: Any,
     ) -> None:
@@ -306,7 +308,7 @@ class RunnerWebSocketServer:
 
     async def _send_error(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         msg_id: int | None,
         code: int,
         message: str,
@@ -321,7 +323,7 @@ class RunnerWebSocketServer:
 
     async def _send_notification(
         self,
-        websocket: WebSocketServerProtocol,
+        websocket: ServerConnection,
         method: str,
         params: dict,
     ) -> None:
