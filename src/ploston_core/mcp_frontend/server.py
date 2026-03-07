@@ -313,11 +313,14 @@ class MCPFrontend:
                 for workflow in self._workflow_registry.get_for_mcp_exposure():
                     tools.append(workflow)
 
-            # Add configure for switching back to config mode (only if no source filter)
+            # Add configure and read-only ploston: tools (only if no source filter)
             if self._config_tool_registry and not source_filter:
                 configure_tool = self._config_tool_registry.get_configure_tool_for_mcp_exposure()
                 if configure_tool:
                     tools.append(configure_tool)
+                # Add workflow_schema (available in running mode for authoring)
+                for schema in self._config_tool_registry.get_running_mode_tools():
+                    tools.append(schema)
 
             # Add runner tools with prefix (DEC-123)
             # Format: runner__mcp__toolname (e.g., mac__fs__read_file)
@@ -371,8 +374,8 @@ class MCPFrontend:
         if not name:
             raise create_error("PARAM_INVALID", message="Tool name is required")
 
-        # Config tools (ael:* namespace)
-        if name.startswith("ael:") or name == "configure":
+        # Config tools (ael:* and ploston:* namespace)
+        if name.startswith("ael:") or name.startswith("ploston:") or name == "configure":
             return await self._handle_config_tool_call(name, arguments)
 
         # Check for runner prefix (DEC-123: runner__mcp__tool)
@@ -439,8 +442,9 @@ class MCPFrontend:
                 )
             return await self._config_tool_registry.call(name, arguments)
         else:
-            # In running mode, only configure is available
-            if name == "configure":
+            # In running mode, configure and read-only ploston: tools are available
+            _running_mode_tools = {"configure", "ploston:configure", "ploston:workflow_schema"}
+            if name in _running_mode_tools:
                 return await self._config_tool_registry.call(name, arguments)
             else:
                 raise AELError(
