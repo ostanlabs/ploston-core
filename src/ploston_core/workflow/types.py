@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ploston_core.types import OnError, RetryConfig, StepType
+from ploston_core.types import OnError, OnMissingTool, RetryConfig, StepType
 
 
 @dataclass
@@ -62,6 +62,9 @@ class StepDefinition:
     on_error: OnError | None = None
     timeout: int | None = None
     retry: RetryConfig | None = None
+
+    # Missing tool handling (tool steps only)
+    on_missing_tool: OnMissingTool | None = None
 
     @property
     def step_type(self) -> StepType:

@@ -23,6 +23,7 @@ class SandboxConfig:
         if self.allowed_imports is None:
             # Keep in sync with SAFE_IMPORTS in sandbox.py
             self.allowed_imports = [
+                # standard library
                 "json",
                 "math",
                 "datetime",
@@ -38,7 +39,11 @@ class SandboxConfig:
                 "operator",
                 "copy",
                 "uuid",
-                "hashlib",  # Additional for hashing
+                "hashlib",
+                "io",  # T-688 audit: needed for io.BytesIO in PDF parsing
+                # third-party additions (S-225)
+                "anthropic",
+                "pypdf",
             ]
 
 
@@ -201,26 +206,5 @@ DISALLOWED_BUILTINS = [
     "breakpoint",
 ]
 
-STANDARD_IMPORTS = [
-    "json",
-    "re",
-    "datetime",
-    "math",
-    "random",
-    "typing",
-    "collections",
-    "itertools",
-    "functools",
-    "hashlib",
-    "uuid",
-    "base64",
-    "urllib.parse",
-]
-
-COMMON_IMPORTS = STANDARD_IMPORTS + [
-    "requests",
-    "pydantic",
-    "jmespath",
-    "dateutil",
-    "yaml",
-]
+# COMMON_IMPORTS and STANDARD_IMPORTS were removed in S-225 —
+# superseded by SandboxConfig.allowed_imports defaults and SAFE_IMPORTS in sandbox.py.

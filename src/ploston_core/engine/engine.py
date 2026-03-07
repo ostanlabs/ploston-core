@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ploston_core.errors import create_error
+from ploston_core.errors.errors import AELError
 from ploston_core.logging import AELLogger
 from ploston_core.sandbox import SandboxContext
 from ploston_core.telemetry import (
@@ -15,7 +16,14 @@ from ploston_core.telemetry import (
     record_tool_result,
 )
 from ploston_core.template import TemplateEngine
-from ploston_core.types import ExecutionStatus, LogLevel, OnError, StepStatus, StepType
+from ploston_core.types import (
+    ExecutionStatus,
+    LogLevel,
+    OnError,
+    OnMissingTool,
+    StepStatus,
+    StepType,
+)
 from ploston_core.workflow import WorkflowDefinition
 
 from .types import (
@@ -473,6 +481,26 @@ class WorkflowEngine:
                 # Failure
                 completed_at = datetime.now()
                 duration_ms = int((time.time() - start_time) * 1000)
+
+                # Check if this is a tool-unavailable error and on_missing_tool: skip is set
+                is_tool_unavailable = isinstance(e, AELError) and e.code == "TOOL_UNAVAILABLE"
+                if (
+                    is_tool_unavailable
+                    and step.step_type == StepType.TOOL
+                    and getattr(step, "on_missing_tool", None) == OnMissingTool.SKIP
+                ):
+                    record_tool_result(
+                        telemetry_result, success=False, error_code="TOOL_UNAVAILABLE"
+                    )
+                    return StepResult(
+                        step_id=step.id,
+                        status=StepStatus.SKIPPED,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        duration_ms=duration_ms,
+                        skip_reason=f"Tool '{step.tool}' not registered (on_missing_tool: skip)",
+                    )
+
                 record_tool_result(telemetry_result, success=False, error_code=type(e).__name__)
 
                 # Execute STEP_AFTER plugin hook for failure

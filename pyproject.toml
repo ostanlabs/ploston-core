@@ -38,6 +38,8 @@ dependencies = [
     "redis>=5.0.0", # Redis config store
     "fastmcp>=2.14.4",
     "bcrypt>=5.0.0",
+    "anthropic>=0.40.0",  # T-687: sandbox LLM synthesis support
+    "pypdf>=4.0.0",  # T-686: sandbox PDF parsing support
 ]
 
 [project.optional-dependencies]
