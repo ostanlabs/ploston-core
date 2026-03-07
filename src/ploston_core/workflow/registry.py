@@ -14,6 +14,7 @@ from .validator import WorkflowValidator
 
 if TYPE_CHECKING:
     from ploston_core.config import WorkflowsConfig
+    from ploston_core.config.redis_store import RedisConfigStore
     from ploston_core.logging import AELLogger
     from ploston_core.registry import ToolRegistry
 
@@ -30,6 +31,7 @@ class WorkflowRegistry:
         tool_registry: "ToolRegistry",
         config: "WorkflowsConfig",
         logger: "AELLogger | None" = None,
+        redis_store: "RedisConfigStore | None" = None,
     ):
         """Initialize workflow registry.
 
@@ -37,14 +39,40 @@ class WorkflowRegistry:
             tool_registry: Tool registry for validation
             config: Workflows configuration
             logger: Optional logger
+            redis_store: Optional Redis config store for Premium persistence
         """
         self._workflows: dict[str, WorkflowEntry] = {}
         self._tool_registry = tool_registry
         self._config = config
         self._logger = logger
+        self._redis_store = redis_store
         self._validator = WorkflowValidator(tool_registry)
         self._watching = False
         self._watch_task: asyncio.Task[None] | None = None
+
+    async def _persist(self, name: str, yaml_content: str) -> None:
+        """Persist API-registered workflow YAML. OSS: disk. Premium: Redis."""
+        if self._redis_store and self._redis_store.connected:
+            await self._redis_store.set_value(f"workflows:{name}", yaml_content)
+        else:
+            workflows_dir = Path(self._config.directory)
+            workflows_dir.mkdir(parents=True, exist_ok=True)
+            target = workflows_dir / f"{name}.yaml"
+            target.write_text(yaml_content, encoding="utf-8")
+
+    async def _delete_persisted(self, name: str, source: str) -> None:
+        """Remove persisted storage for an API-registered workflow.
+
+        File-loaded workflows (source=file) are never touched.
+        """
+        if source != "api":
+            return
+        if self._redis_store and self._redis_store.connected:
+            await self._redis_store.delete_value(f"workflows:{name}")
+        else:
+            target = Path(self._config.directory) / f"{name}.yaml"
+            if target.exists():
+                target.unlink()
 
     async def initialize(self) -> int:
         """Initialize registry by loading workflows from directory.
@@ -60,8 +88,24 @@ class WorkflowRegistry:
                 {"directory": str(self._config.directory)},
             )
 
+        # Step 1: load from disk (existing logic)
+        count = 0
         workflows_dir = Path(self._config.directory)
-        if not workflows_dir.exists():
+        if workflows_dir.exists():
+            for yaml_file in workflows_dir.glob("*.yaml"):
+                try:
+                    yaml_content = yaml_file.read_text()
+                    self.register_from_yaml(yaml_content, source_path=yaml_file)
+                    count += 1
+                except Exception as e:
+                    if self._logger:
+                        self._logger._log(
+                            LogLevel.ERROR,
+                            "workflow",
+                            "Failed to load workflow",
+                            {"file": str(yaml_file), "error": str(e)},
+                        )
+        else:
             if self._logger:
                 self._logger._log(
                     LogLevel.WARN,
@@ -69,22 +113,24 @@ class WorkflowRegistry:
                     "Workflows directory does not exist",
                     {"directory": str(workflows_dir)},
                 )
-            return 0
 
-        count = 0
-        for yaml_file in workflows_dir.glob("*.yaml"):
-            try:
-                yaml_content = yaml_file.read_text()
-                self.register_from_yaml(yaml_content, source_path=yaml_file)
-                count += 1
-            except Exception as e:
-                if self._logger:
-                    self._logger._log(
-                        LogLevel.ERROR,
-                        "workflow",
-                        "Failed to load workflow",
-                        {"file": str(yaml_file), "error": str(e)},
-                    )
+        # Step 2: load from Redis — Premium only. Redis wins on name collision.
+        if self._redis_store and self._redis_store.connected:
+            redis_keys = await self._redis_store.scan_keys("workflows:*")
+            for key in redis_keys:
+                yaml_content = await self._redis_store.get_value(key)
+                if yaml_content:
+                    try:
+                        self.register_from_yaml(yaml_content, source_path=None)
+                        count += 1
+                    except Exception as e:
+                        if self._logger:
+                            self._logger._log(
+                                LogLevel.ERROR,
+                                "workflow",
+                                "Failed to load workflow from Redis",
+                                {"key": key, "error": str(e)},
+                            )
 
         if self._logger:
             self._logger._log(
@@ -145,12 +191,15 @@ class WorkflowRegistry:
         self,
         yaml_content: str,
         source_path: Path | None = None,
+        persist: bool = False,
     ) -> ValidationResult:
         """Parse and register workflow from YAML.
 
         Args:
             yaml_content: YAML content
             source_path: Optional source file path
+            persist: If True, persist the workflow (disk or Redis). Set True
+                     only by REST/MCP API callers.
 
         Returns:
             ValidationResult
@@ -165,6 +214,13 @@ class WorkflowRegistry:
         if workflow.name in self._workflows:
             self._workflows[workflow.name].source = "file" if source_path else "api"
 
+        if persist and not source_path:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._persist(workflow.name, yaml_content))
+            except RuntimeError:
+                asyncio.run(self._persist(workflow.name, yaml_content))
+
         return result
 
     def unregister(self, name: str) -> bool:
@@ -177,7 +233,7 @@ class WorkflowRegistry:
             True if workflow was registered, False if not found
         """
         if name in self._workflows:
-            del self._workflows[name]
+            entry = self._workflows.pop(name)
             if self._logger:
                 self._logger._log(
                     LogLevel.INFO,
@@ -185,6 +241,11 @@ class WorkflowRegistry:
                     "Workflow unregistered",
                     {"name": name},
                 )
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._delete_persisted(name, entry.source))
+            except RuntimeError:
+                asyncio.run(self._delete_persisted(name, entry.source))
             return True
         return False
 

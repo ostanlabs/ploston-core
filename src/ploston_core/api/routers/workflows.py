@@ -117,8 +117,9 @@ async def create_workflow(
     registry = request.app.state.workflow_registry
 
     try:
+        registry.register_from_yaml(yaml_content, persist=True)
+        # Get the registered workflow to return its metadata
         workflow = parse_workflow_yaml(yaml_content)
-        registry.register(workflow, validate=True)
 
         return WorkflowCreateResponse(
             id=workflow.name,
@@ -173,8 +174,7 @@ async def get_workflow(
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
 
-    # We don't store original YAML, so reconstruct a basic version
-    yaml_repr = f"name: {workflow.name}\nversion: {workflow.version}"
+    yaml_repr = workflow.yaml_content or f"name: {workflow.name}\nversion: {workflow.version}"
     return _workflow_to_detail(workflow, yaml_repr)
 
 
@@ -202,9 +202,9 @@ async def update_workflow(
                 detail=f"Workflow name '{workflow.name}' does not match ID '{workflow_id}'",
             )
 
-        # Unregister old and register new
+        # Unregister old (triggers _delete_persisted) and register new with persistence
         registry.unregister(workflow_id)
-        registry.register(workflow, validate=True)
+        registry.register_from_yaml(yaml_content, persist=True)
 
         return WorkflowCreateResponse(
             id=workflow.name,

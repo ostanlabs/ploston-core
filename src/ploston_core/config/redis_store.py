@@ -297,6 +297,29 @@ class RedisConfigStore:
             logger.error(f"Failed to list services: {e}")
             return []
 
+    async def scan_keys(self, pattern: str) -> list[str]:
+        """Scan Redis for keys matching a relative pattern (prefix is added internally).
+
+        Args:
+            pattern: Relative pattern, e.g. "workflows:*"
+
+        Returns:
+            List of relative key names (prefix stripped).
+        """
+        if not self._connected or not self._client:
+            return []
+        try:
+            full_pattern = f"{self._options.key_prefix}:{pattern}"
+            keys: list[str] = []
+            prefix_to_strip = f"{self._options.key_prefix}:"
+            async for full_key in self._client.scan_iter(match=full_pattern):
+                relative = full_key.removeprefix(prefix_to_strip)
+                keys.append(relative)
+            return keys
+        except Exception as e:
+            logger.error(f"Failed to scan keys for pattern {pattern}: {e}")
+            return []
+
     # Generic key-value methods for arbitrary data storage
 
     async def set_value(self, key: str, value: str) -> bool:

@@ -276,6 +276,7 @@ class PlostApplication:
             self.tool_registry,
             self.config.workflows,
             logger=self.logger,
+            redis_store=self.redis_config_store,
         )
         await self.workflow_registry.initialize()
 
