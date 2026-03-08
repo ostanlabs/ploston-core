@@ -237,9 +237,17 @@ class RunnerWebSocketServer:
         tools = params.get("tools") or params.get("available", [])
         self._registry.update_available_tools(runner_id, tools)
 
+        # Process structured unavailable list
+        unavailable = params.get("unavailable", [])
+        if unavailable:
+            self._registry.update_unavailable_mcps(runner_id, unavailable)
+
         runner = self._registry.get(runner_id)
         if runner:
-            logger.info(f"Runner '{runner.name}' reported {len(tools)} tools")
+            logger.info(
+                f"Runner '{runner.name}' reported {len(tools)} tools, "
+                f"{len(unavailable)} unavailable MCPs"
+            )
 
         # Availability is a notification, no response needed
 

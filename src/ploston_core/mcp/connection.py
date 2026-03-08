@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import mcp.types
@@ -67,6 +68,7 @@ class MCPConnection:
         config: MCPServerDefinition,
         logger: AELLogger | None = None,
         on_tools_changed: ToolChangeCallback | None = None,
+        log_file: Path | None = None,
     ):
         """Initialize MCP connection.
 
@@ -75,11 +77,13 @@ class MCPConnection:
             config: Server configuration
             logger: Optional logger
             on_tools_changed: Optional callback when tools change via notification
+            log_file: Optional path to capture MCP server stderr to a file
         """
         self.name = name
         self.config = config
         self._logger = logger
         self._on_tools_changed = on_tools_changed
+        self._log_file: Path | None = log_file
         self._status = ConnectionStatus.DISCONNECTED
         self._tools: dict[str, ToolSchema] = {}
         self._last_connected: datetime | None = None
@@ -98,6 +102,10 @@ class MCPConnection:
     def status(self) -> ConnectionStatus:
         """Current connection status."""
         return self._status
+
+    def get_log_path(self) -> Path | None:
+        """Get the log file path for this MCP server, if configured."""
+        return self._log_file
 
     def get_status(self) -> ServerStatus:
         """Get detailed status.
@@ -312,6 +320,7 @@ class MCPConnection:
             Appropriate ClientTransport for the command type
         """
         env = self.config.env if self.config.env else None
+        log_file = self._log_file
 
         # Handle npx commands - use NpxStdioTransport
         if command == "npx":
@@ -342,11 +351,16 @@ class MCPConnection:
                     detail=f"No package specified in npx command for '{self.name}'",
                 )
 
-            return NpxStdioTransport(
+            transport = NpxStdioTransport(
                 package=package,
                 args=package_args if package_args else None,
                 env_vars=env,
             )
+            # NpxStdioTransport doesn't accept log_file in constructor;
+            # set after construction — connect() reads it lazily.
+            if log_file:
+                transport.log_file = log_file
+            return transport
 
         # Handle uvx commands - use UvxStdioTransport
         elif command == "uvx":
@@ -359,11 +373,16 @@ class MCPConnection:
             tool_name = args[0]
             tool_args = args[1:] if len(args) > 1 else None
 
-            return UvxStdioTransport(
+            transport = UvxStdioTransport(
                 tool_name=tool_name,
                 tool_args=tool_args,
                 env_vars=env,
             )
+            # UvxStdioTransport doesn't accept log_file in constructor;
+            # set after construction — connect() reads it lazily.
+            if log_file:
+                transport.log_file = log_file
+            return transport
 
         # Handle python commands - use StdioTransport for flexibility
         # PythonStdioTransport validates script existence which may fail at config time
@@ -372,6 +391,7 @@ class MCPConnection:
                 command=command,
                 args=args,
                 env=env,
+                log_file=log_file,
             )
 
         # Handle node commands
@@ -381,6 +401,7 @@ class MCPConnection:
                 command=command,
                 args=args,
                 env=env,
+                log_file=log_file,
             )
 
         # Handle uv commands
@@ -390,6 +411,7 @@ class MCPConnection:
                 command=command,
                 args=args,
                 env=env,
+                log_file=log_file,
             )
 
         # Default: use generic StdioTransport for any other command
@@ -398,6 +420,7 @@ class MCPConnection:
                 command=command,
                 args=args,
                 env=env,
+                log_file=log_file,
             )
 
     async def _handle_tools_changed(self) -> None:

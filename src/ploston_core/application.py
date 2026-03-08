@@ -192,17 +192,28 @@ class PlostApplication:
                 headers=self.config.telemetry.export.otlp.headers,
             ),
         )
-        setup_telemetry(telemetry_config)
+        telemetry = setup_telemetry(telemetry_config)
 
         # 3a-bis. Python logging → OTEL bridge (DEC-149)
-        # When logs are enabled, attach an OTEL handler to the root Python
-        # logger so that stdlib logging output is forwarded to the OTEL
-        # LoggerProvider and ultimately to Loki via the collector.
-        if telemetry_config.logs_enabled:
+        # When logs are enabled, LoggingInstrumentor.instrument() attaches an
+        # OTEL LoggingHandler to the root Python logger so that stdlib logging
+        # output is forwarded to the OTEL LoggerProvider and ultimately to
+        # Loki via the collector.  It also injects trace-context fields into
+        # log records.
+        #
+        # We must also lower the root logger level to DEBUG so that INFO-level
+        # records from AELLogger's stdlib bridge are not filtered out before
+        # they reach the handler.
+        if telemetry_config.logs_enabled and telemetry.get("logger_provider"):
             try:
                 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
                 LoggingInstrumentor().instrument(set_logging_format=False)
+                # Ensure root logger level doesn't filter out INFO/DEBUG
+                # records before they reach the OTEL handler.
+                root_logger = logging.getLogger()
+                if root_logger.level > logging.DEBUG:
+                    root_logger.setLevel(logging.DEBUG)
             except ImportError:
                 logging.getLogger(__name__).debug(
                     "opentelemetry-instrumentation-logging not installed; skipping OTEL log bridge"

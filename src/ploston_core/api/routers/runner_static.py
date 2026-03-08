@@ -337,9 +337,18 @@ async def runner_websocket(websocket: WebSocket) -> None:
                 # Runner sends {"available": [...], "unavailable": [...]}
                 tools = params.get("available", params.get("tools", []))
                 runner_registry.update_available_tools(runner_id, tools)
+
+                # Process structured unavailable list
+                unavailable = params.get("unavailable", [])
+                if unavailable:
+                    runner_registry.update_unavailable_mcps(runner_id, unavailable)
+
                 runner = runner_registry.get(runner_id)
                 if runner:
-                    logger.info(f"Runner '{runner.name}' reported {len(tools)} tools")
+                    logger.info(
+                        f"Runner '{runner.name}' reported {len(tools)} tools, "
+                        f"{len(unavailable)} unavailable MCPs"
+                    )
                 continue
 
             # Handle tool/proxy - runner proxying a tool call to CP
