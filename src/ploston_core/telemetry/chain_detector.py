@@ -17,6 +17,8 @@ from typing import Any
 
 from opentelemetry import metrics, trace
 
+from ploston_core.runner_management.router import normalize_tool_name_for_metrics
+
 
 @dataclass
 class ChainLink:
@@ -255,14 +257,17 @@ class ChainDetector:
         if tool_name.startswith("workflow_"):
             return []
 
+        # Normalize tool name for consistent chain detection across runners
+        normalized_name, _ = normalize_tool_name_for_metrics(tool_name)
+
         # Compute hashes
         input_hashes = self.compute_input_hashes(params)
         output_hash = self.compute_output_hash(result)
 
         # Check for chain links (input matches previous output)
-        predecessors = await self.check_chain_link(tool_name, input_hashes)
+        predecessors = await self.check_chain_link(normalized_name, input_hashes)
 
         # Record this output for future matching
-        await self.record_tool_output(tool_name, output_hash)
+        await self.record_tool_output(normalized_name, output_hash)
 
         return predecessors

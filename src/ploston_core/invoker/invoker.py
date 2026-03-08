@@ -4,6 +4,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ploston_core.errors import create_error
+from ploston_core.runner_management.router import normalize_tool_name_for_metrics
 from ploston_core.sandbox import ToolCallerProtocol
 from ploston_core.telemetry import instrument_tool_call, record_tool_result
 from ploston_core.telemetry.metrics import MetricLabels
@@ -152,8 +153,16 @@ class ToolInvoker(ToolCallerProtocol):
         # 3. Determine source label for metrics
         source_label = self._get_source_label(tool_name, router.source)
 
+        # Normalize tool name for metrics: strip runner prefix if present
+        # Does NOT change tool_name for routing — only affects metric labels
+        metric_tool_name, inferred_runner_id = normalize_tool_name_for_metrics(tool_name)
+
         # Instrument tool invocation with telemetry (including source)
-        async with instrument_tool_call(tool_name, source=source_label) as telemetry_result:
+        async with instrument_tool_call(
+            metric_tool_name,
+            source=source_label,
+            runner_id=inferred_runner_id,
+        ) as telemetry_result:
             # 4. Check availability
             if tool.status != ToolStatus.AVAILABLE:
                 raise create_error(
