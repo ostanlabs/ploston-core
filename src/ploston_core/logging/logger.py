@@ -17,6 +17,7 @@ from ploston_core.logging.colors import (
     RESET,
     YELLOW,
 )
+from ploston_core.telemetry.context import direct_execution_id as _direct_execution_id
 from ploston_core.types import LogFormat, LogLevel
 
 
@@ -28,7 +29,7 @@ class LogConfig:
     format: LogFormat = LogFormat.COLORED
     show_params: bool = True
     show_results: bool = True
-    truncate_at: int = 200
+    truncate_at: int = 5000
     components: dict[str, bool] = field(default_factory=dict)
     output: TextIO = field(default=sys.stdout)
 
@@ -142,6 +143,10 @@ class AELLogger:
         if context:
             for k, v in context.items():
                 extra[f"ael_{k}"] = v
+        # Inject execution_id from ContextVar if present (Tier 3 — DEC-152)
+        exec_id = _direct_execution_id.get()
+        if exec_id:
+            extra["ael_execution_id"] = exec_id
         self._stdlib_logger.log(stdlib_level, message, extra=extra)
 
     def _log_json(

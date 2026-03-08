@@ -1,6 +1,12 @@
 """AEL Telemetry - OpenTelemetry-based observability."""
 
-from .chain_detector import ChainDetector, ChainLink, InMemoryChainCache
+from .chain_detector import (
+    ChainDetector,
+    ChainLink,
+    InMemoryChainCache,
+    SequenceTracker,
+    TemporalTracker,
+)
 from .instrumentation import (
     instrument_step,
     instrument_tool_call,
@@ -41,6 +47,8 @@ __all__ = [
     "ChainDetector",
     "ChainLink",
     "InMemoryChainCache",
+    "SequenceTracker",
+    "TemporalTracker",
     # Setup
     "TelemetryConfig",
     "OTLPExporterConfig",

@@ -18,6 +18,16 @@ from ploston_core.registry import ToolRegistry
 from ploston_core.runner_management.registry import RunnerRegistry
 from ploston_core.runner_management.router import parse_tool_prefix
 from ploston_core.telemetry import ChainDetector, instrument_tool_call, record_tool_result
+from ploston_core.telemetry.context import direct_execution_id
+from ploston_core.telemetry.store.types import (
+    ErrorRecord as TelemetryErrorRecord,
+)
+from ploston_core.telemetry.store.types import (
+    ExecutionStatus as TelemetryExecutionStatus,
+)
+from ploston_core.telemetry.store.types import (
+    ExecutionType,
+)
 from ploston_core.types import ExecutionStatus, LogLevel, MCPTransport
 from ploston_core.types.internal import InternalToolSource
 
@@ -73,6 +83,7 @@ class MCPFrontend:
         chain_detector: ChainDetector | None = None,
         runner_registry: RunnerRegistry | None = None,
         workflow_tools: Any | None = None,
+        telemetry_collector: Any | None = None,
     ):
         """Initialize MCP frontend.
 
@@ -92,6 +103,7 @@ class MCPFrontend:
             chain_detector: Optional chain detector for detecting tool sequences
             runner_registry: Optional runner registry for routing tools to runners (DEC-123)
             workflow_tools: Optional WorkflowToolsProvider for workflow CRUD tools
+            telemetry_collector: Optional TelemetryCollector for execution lifecycle (DEC-152)
         """
         self._workflow_engine = workflow_engine
         self._tool_registry = tool_registry
@@ -118,6 +130,9 @@ class MCPFrontend:
 
         # Workflow CRUD tools
         self._workflow_tools = workflow_tools
+
+        # Telemetry collector for execution lifecycle (Tier 3 — DEC-152)
+        self._telemetry_collector = telemetry_collector
 
         # Register for mode change notifications
         self._mode_manager.on_mode_change(self._on_mode_change)
@@ -556,98 +571,142 @@ class MCPFrontend:
         Returns:
             MCP response
         """
-        start_ms = int(time.time() * 1000)
-        bridge, short_tool = _split_tool_name(tool_name)
+        execution_id: str | None = None
+        ctx_token = None
 
-        # START event
-        if self._logger:
-            self._logger._log(
-                LogLevel.INFO,
-                "direct",
-                f"Direct tool call: {tool_name}",
-                {
-                    "source": "tool",
-                    "event": "direct_tool_called",
-                    "tool_name": short_tool,
-                    "bridge": bridge,
-                },
-            )
+        # Start telemetry record for direct tool call (DEC-050 / DEC-152)
+        if self._telemetry_collector:
+            try:
+                _bctx = bridge_context.get()
+                execution_id = await self._telemetry_collector.start_execution(
+                    execution_type=ExecutionType.DIRECT,
+                    tool_name=tool_name,
+                    source="mcp",
+                    session_id=_bctx.bridge_id if _bctx else None,
+                )
+                ctx_token = direct_execution_id.set(execution_id)
+            except Exception:
+                pass  # Telemetry is non-critical
 
-        result = await self._tool_invoker.invoke(tool_name, arguments)
-        duration_ms = int(time.time() * 1000) - start_ms
+        try:
+            start_ms = int(time.time() * 1000)
+            bridge, short_tool = _split_tool_name(tool_name)
 
-        # RESULT events
-        if self._logger:
-            if result.success:
+            # START event
+            if self._logger:
                 self._logger._log(
                     LogLevel.INFO,
                     "direct",
-                    f"Direct tool completed ({duration_ms}ms): {tool_name}",
+                    f"Direct tool call: {tool_name}",
                     {
                         "source": "tool",
-                        "event": "direct_tool_completed",
+                        "event": "direct_tool_called",
                         "tool_name": short_tool,
                         "bridge": bridge,
-                        "duration_ms": duration_ms,
                     },
                 )
+
+            result = await self._tool_invoker.invoke(tool_name, arguments)
+            duration_ms = int(time.time() * 1000) - start_ms
+
+            # RESULT events
+            if self._logger:
+                if result.success:
+                    self._logger._log(
+                        LogLevel.INFO,
+                        "direct",
+                        f"Direct tool completed ({duration_ms}ms): {tool_name}",
+                        {
+                            "source": "tool",
+                            "event": "direct_tool_completed",
+                            "tool_name": short_tool,
+                            "bridge": bridge,
+                            "duration_ms": duration_ms,
+                        },
+                    )
+                else:
+                    self._logger._log(
+                        LogLevel.ERROR,
+                        "direct",
+                        f"Direct tool failed ({duration_ms}ms): {tool_name}",
+                        {
+                            "source": "tool",
+                            "event": "direct_tool_failed",
+                            "tool_name": short_tool,
+                            "bridge": bridge,
+                            "duration_ms": duration_ms,
+                            "error": result.error.message if result.error else "unknown",
+                            "error_type": result.error.code if result.error else "UNKNOWN",
+                        },
+                    )
+
+            # Chain detection (T-446 / DEC-057): Process tool call for chain detection
+            # Only for direct tool calls (not workflows)
+            if self._chain_detector and result.success and not tool_name.startswith("workflow_"):
+                try:
+                    await self._chain_detector.process_tool_call(
+                        tool_name=tool_name,
+                        params=arguments,
+                        result=result.output,
+                        bridge_id=bridge or None,
+                    )
+                except Exception:
+                    # Chain detection is non-critical - don't fail the tool call
+                    pass
+
+            # End telemetry record (DEC-152)
+            if self._telemetry_collector and execution_id:
+                try:
+                    if result.success:
+                        await self._telemetry_collector.end_execution(
+                            execution_id=execution_id,
+                            status=TelemetryExecutionStatus.COMPLETED,
+                            outputs={"output": str(result.output)[:500]} if result.output else None,
+                        )
+                    else:
+                        await self._telemetry_collector.end_execution(
+                            execution_id=execution_id,
+                            status=TelemetryExecutionStatus.FAILED,
+                            error=TelemetryErrorRecord(
+                                code=result.error.code if result.error else "UNKNOWN",
+                                category="tool",
+                                message=result.error.message if result.error else "unknown",
+                            ),
+                        )
+                except Exception:
+                    pass
+
+            if result.success:
+                response: dict[str, Any] = {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                json.dumps(result.output)
+                                if not isinstance(result.output, str)
+                                else result.output
+                            ),
+                        }
+                    ],
+                    "isError": False,
+                }
+                # Include structuredContent if available (required by MCP spec when outputSchema is defined)
+                if result.structured_content is not None:
+                    response["structuredContent"] = result.structured_content
+                return response
             else:
-                self._logger._log(
-                    LogLevel.ERROR,
-                    "direct",
-                    f"Direct tool failed ({duration_ms}ms): {tool_name}",
-                    {
-                        "source": "tool",
-                        "event": "direct_tool_failed",
-                        "tool_name": short_tool,
-                        "bridge": bridge,
-                        "duration_ms": duration_ms,
-                        "error": result.error.message if result.error else "unknown",
-                        "error_type": result.error.code if result.error else "UNKNOWN",
-                    },
-                )
-
-        # Chain detection (T-446): Process tool call for chain detection
-        # Only for direct tool calls (not workflows)
-        if self._chain_detector and result.success and not tool_name.startswith("workflow_"):
-            try:
-                await self._chain_detector.process_tool_call(
-                    tool_name=tool_name,
-                    params=arguments,
-                    result=result.output,
-                )
-            except Exception:
-                # Chain detection is non-critical - don't fail the tool call
-                pass
-
-        if result.success:
-            response: dict[str, Any] = {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            json.dumps(result.output)
-                            if not isinstance(result.output, str)
-                            else result.output
-                        ),
-                    }
-                ],
-                "isError": False,
-            }
-            # Include structuredContent if available (required by MCP spec when outputSchema is defined)
-            if result.structured_content is not None:
-                response["structuredContent"] = result.structured_content
-            return response
-        else:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": result.error.message if result.error else "Tool call failed",
-                    }
-                ],
-                "isError": True,
-            }
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": result.error.message if result.error else "Tool call failed",
+                        }
+                    ],
+                    "isError": True,
+                }
+        finally:
+            if ctx_token is not None:
+                direct_execution_id.reset(ctx_token)
 
     async def _execute_runner_tool(
         self,
@@ -704,6 +763,23 @@ class MCPFrontend:
         # Extract bridge context for distributed topology labels (DEC-142)
         _bctx = bridge_context.get()
         _bridge_id = _bctx.bridge_id if _bctx else None
+
+        # Telemetry lifecycle for runner tool calls (DEC-152)
+        execution_id: str | None = None
+        ctx_token = None
+        if self._telemetry_collector:
+            try:
+                execution_id = await self._telemetry_collector.start_execution(
+                    execution_type=ExecutionType.DIRECT,
+                    tool_name=tool_name,
+                    source="runner",
+                    caller_id=runner.name,
+                    session_id=_bridge_id,
+                )
+                ctx_token = direct_execution_id.set(execution_id)
+            except Exception:
+                pass  # Telemetry is non-critical
+
         start_ms = int(time.time() * 1000)
         bridge, short_tool = _split_tool_name(tool_name)
         async with instrument_tool_call(
@@ -775,6 +851,44 @@ class MCPFrontend:
                                     "duration_ms": duration_ms,
                                 },
                             )
+                    # Chain detection for MCP-format runner results (DEC-057)
+                    if self._chain_detector and not is_error:
+                        try:
+                            # Extract text content from MCP content blocks
+                            chain_output = ""
+                            for block in result.get("content", []):
+                                if block.get("type") == "text":
+                                    chain_output += block.get("text", "")
+                            await self._chain_detector.process_tool_call(
+                                tool_name=tool_name,
+                                params=arguments,
+                                result=chain_output,
+                                runner_id=runner.name,
+                                bridge_id=_bridge_id,
+                            )
+                        except Exception:
+                            pass  # Chain detection is non-critical
+                    # End telemetry for MCP-format result (DEC-152)
+                    if self._telemetry_collector and execution_id:
+                        try:
+                            if is_error:
+                                await self._telemetry_collector.end_execution(
+                                    execution_id=execution_id,
+                                    status=TelemetryExecutionStatus.FAILED,
+                                    error=TelemetryErrorRecord(
+                                        code="TOOL_FAILED",
+                                        category="tool",
+                                        message="runner returned error",
+                                    ),
+                                )
+                            else:
+                                await self._telemetry_collector.end_execution(
+                                    execution_id=execution_id,
+                                    status=TelemetryExecutionStatus.COMPLETED,
+                                )
+                            execution_id = None  # Prevent double-end in finally
+                        except Exception:
+                            pass
                     return result
                 elif "error" in result and result.get("error"):
                     record_tool_result(telemetry_result, success=False, error_code="TOOL_FAILED")
@@ -794,6 +908,21 @@ class MCPFrontend:
                                 "error_type": "TOOL_FAILED",
                             },
                         )
+                    # End telemetry for error result (DEC-152)
+                    if self._telemetry_collector and execution_id:
+                        try:
+                            await self._telemetry_collector.end_execution(
+                                execution_id=execution_id,
+                                status=TelemetryExecutionStatus.FAILED,
+                                error=TelemetryErrorRecord(
+                                    code="TOOL_FAILED",
+                                    category="tool",
+                                    message=str(result["error"]),
+                                ),
+                            )
+                            execution_id = None
+                        except Exception:
+                            pass
                     return {
                         "content": [{"type": "text", "text": str(result["error"])}],
                         "isError": True,
@@ -815,6 +944,29 @@ class MCPFrontend:
                                 "duration_ms": duration_ms,
                             },
                         )
+                    # Chain detection for output-format runner results (DEC-057)
+                    if self._chain_detector:
+                        try:
+                            await self._chain_detector.process_tool_call(
+                                tool_name=tool_name,
+                                params=arguments,
+                                result=output,
+                                runner_id=runner.name,
+                                bridge_id=_bridge_id,
+                            )
+                        except Exception:
+                            pass  # Chain detection is non-critical
+                    # End telemetry for successful output result (DEC-152)
+                    if self._telemetry_collector and execution_id:
+                        try:
+                            await self._telemetry_collector.end_execution(
+                                execution_id=execution_id,
+                                status=TelemetryExecutionStatus.COMPLETED,
+                                outputs={"output": str(output)[:500]} if output else None,
+                            )
+                            execution_id = None
+                        except Exception:
+                            pass
                     return {
                         "content": [
                             {
@@ -880,6 +1032,23 @@ class MCPFrontend:
                     tool_name=f"{runner_name}:{tool_name}",
                     http_status=500,
                 )
+            finally:
+                # End any dangling telemetry execution (DEC-152)
+                if self._telemetry_collector and execution_id:
+                    try:
+                        await self._telemetry_collector.end_execution(
+                            execution_id=execution_id,
+                            status=TelemetryExecutionStatus.FAILED,
+                            error=TelemetryErrorRecord(
+                                code="TOOL_EXECUTION_FAILED",
+                                category="tool",
+                                message="Execution ended without explicit completion",
+                            ),
+                        )
+                    except Exception:
+                        pass
+                if ctx_token is not None:
+                    direct_execution_id.reset(ctx_token)
 
     def _success_response(self, msg_id: Any, result: Any) -> dict[str, Any]:
         """Build success response.
