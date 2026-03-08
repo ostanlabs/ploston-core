@@ -601,14 +601,14 @@ class MCPFrontend:
             )
 
         # Instrument runner tool calls for telemetry (source="runner")
-        prefixed_name = f"{runner_name}__{tool_name}"
+        # tool_name is already mcp__actual_tool at this point (runner prefix stripped above)
         # Extract bridge context for distributed topology labels (DEC-142)
         _bctx = bridge_context.get()
         _bridge_id = _bctx.bridge_id if _bctx else None
         async with instrument_tool_call(
-            prefixed_name,
+            tool_name,  # "obsidian-mcp__list_files" — NOT prefixed with runner
             source="runner",
-            runner_id=runner.id,
+            runner_id=runner.name,  # human-readable name, NOT runner.id (UUID)
             bridge_id=_bridge_id,
         ) as telemetry_result:
             try:

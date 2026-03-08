@@ -22,6 +22,7 @@ from ploston_core.runner_management.router import (
     ToolUnavailableError,
     WorkflowRouter,
     extract_tools_from_workflow,
+    normalize_tool_name_for_metrics,
     parse_tool_prefix,
 )
 
@@ -99,6 +100,35 @@ class TestToolPrefixParse:
         assert runner is None
         assert mcp is None
         assert tool == "mac__read_file"
+
+
+class TestNormalizeToolNameForMetrics:
+    """T-704: Normalize tool names for Prometheus metric labels."""
+
+    def test_normalize_runner_tool(self):
+        """Runner-prefixed tool strips runner, returns runner name."""
+        assert normalize_tool_name_for_metrics("macbook-pro-local__obsidian-mcp__list_files") == (
+            "obsidian-mcp__list_files",
+            "macbook-pro-local",
+        )
+
+    def test_normalize_cp_tool(self):
+        """CP tool (no prefix) passes through unchanged."""
+        assert normalize_tool_name_for_metrics("slack_post") == ("slack_post", None)
+
+    def test_normalize_two_part_no_runner(self):
+        """Two parts → not a runner-prefixed name → pass through unchanged."""
+        assert normalize_tool_name_for_metrics("obsidian-mcp__list_files") == (
+            "obsidian-mcp__list_files",
+            None,
+        )
+
+    def test_normalize_tool_with_double_underscore_in_name(self):
+        """Tool name itself contains __ → mcp_name is parts[1], rest is tool."""
+        assert normalize_tool_name_for_metrics("runner__mcp__tool__with__underscores") == (
+            "mcp__tool__with__underscores",
+            "runner",
+        )
 
 
 class TestNoPrefixIsCP:

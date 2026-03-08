@@ -95,6 +95,36 @@ def parse_tool_prefix(tool_name: str) -> tuple[str | None, str | None, str]:
     return None, None, tool_name
 
 
+def normalize_tool_name_for_metrics(tool_name: str) -> tuple[str, str | None]:
+    """Normalize a tool name for Prometheus metric labels.
+
+    Strips the runner prefix so that runner tools record as
+    mcp__actual_tool rather than runner__mcp__actual_tool.
+    Runner identity is returned separately for the runner_id label.
+
+    This only affects what gets written to Prometheus labels.
+    The full prefixed name continues to be used for routing.
+
+    Args:
+        tool_name: Full tool name (may have runner__mcp__ prefix)
+
+    Returns:
+        Tuple of (metric_tool_name, runner_name_or_None)
+
+    Examples:
+        'macbook-pro-local__obsidian-mcp__list_files'
+            -> ('obsidian-mcp__list_files', 'macbook-pro-local')
+        'slack_post'
+            -> ('slack_post', None)
+        'obsidian-mcp__list_files'   # two parts only — no runner prefix
+            -> ('obsidian-mcp__list_files', None)
+    """
+    runner_name, mcp_name, actual_tool = parse_tool_prefix(tool_name)
+    if runner_name and mcp_name:
+        return f"{mcp_name}{TOOL_PREFIX_DELIMITER}{actual_tool}", runner_name
+    return tool_name, None
+
+
 def format_tool_name(runner_name: str, mcp_name: str, tool_name: str) -> str:
     """Format a tool name with runner and MCP prefix.
 
