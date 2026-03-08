@@ -321,6 +321,7 @@ class PlostApplication:
             self.config.workflows,
             logger=self.logger,
             redis_store=self.redis_config_store,
+            runner_registry=self.runner_registry,
         )
         await self.workflow_registry.initialize()
 
@@ -364,6 +365,7 @@ class PlostApplication:
             logger=self.logger,
             error_factory=self.error_factory,
             token_estimator=token_estimator,
+            runner_registry=self.runner_registry,
         )
 
         # 12. MCP Frontend
@@ -445,6 +447,15 @@ class PlostApplication:
                 telemetry_store=self.telemetry_store,
             )
 
+        # Create workflow CRUD tools provider
+        from ploston_core.workflow.tools import WorkflowToolsProvider
+
+        workflow_tools = WorkflowToolsProvider(
+            self.workflow_registry,
+            tool_registry=self.tool_registry,
+            runner_registry=self.runner_registry,
+        )
+
         self.mcp_frontend = MCPFrontend(
             self.workflow_engine,
             self.tool_registry,
@@ -459,7 +470,11 @@ class PlostApplication:
             rest_app=rest_app,
             rest_prefix=self._rest_api_prefix,
             runner_registry=self.runner_registry,  # DEC-123: Enable runner tool routing
+            workflow_tools=workflow_tools,
         )
+
+        # Wire workflow CRUD → tools/list_changed notification
+        workflow_tools._on_tools_changed = self.mcp_frontend._send_tools_changed_notification
 
         self._initialized = True
 

@@ -65,6 +65,7 @@ class WorkflowEngine:
         error_factory: Any = None,  # ErrorFactory
         plugin_registry: "PluginRegistry | None" = None,
         token_estimator: TokenEstimator | None = None,
+        runner_registry: Any = None,  # RunnerRegistry (optional)
     ):
         """Initialize workflow engine.
 
@@ -77,6 +78,7 @@ class WorkflowEngine:
             error_factory: Optional error factory
             plugin_registry: Optional plugin registry for hook execution
             token_estimator: Optional token estimator for savings metrics
+            runner_registry: Optional runner registry for tool name resolution
         """
         self._workflow_registry = workflow_registry
         self._tool_invoker = tool_invoker
@@ -86,6 +88,7 @@ class WorkflowEngine:
         self._error_factory = error_factory
         self._plugin_registry = plugin_registry
         self._token_estimator = token_estimator
+        self._runner_registry = runner_registry
 
     async def execute(
         self,
@@ -557,9 +560,12 @@ class WorkflowEngine:
         # Get step config for timeout
         step_config = self._get_step_config(step, context.workflow)
 
+        # Resolve canonical tool name (DEC-157 / T-726)
+        invoke_name = self._resolve_invoke_name(step, context.workflow)
+
         # Invoke tool
         result = await self._tool_invoker.invoke(
-            tool_name=step.tool,
+            tool_name=invoke_name,
             params=rendered_params,
             timeout_seconds=step_config.timeout_seconds,
         )
@@ -568,6 +574,37 @@ class WorkflowEngine:
             raise result.error if result.error else create_error("TOOL_FAILED", tool_name=step.tool)
 
         return result.output
+
+    def _resolve_invoke_name(self, step: Any, workflow: WorkflowDefinition) -> str:
+        """Resolve the canonical tool name for invocation.
+
+        Priority: workflow defaults.runner → bridge context runner → bare name.
+        If mcp is not set (legacy/system tools), returns step.tool as-is.
+        """
+        if not getattr(step, "mcp", None):
+            # Legacy workflow or system tool — bare name
+            return step.tool
+
+        # Determine runner
+        runner: str | None = None
+        if workflow.defaults and getattr(workflow.defaults, "runner", None):
+            runner = workflow.defaults.runner
+        else:
+            # Try bridge context for implicit runner
+            try:
+                from ploston_core.mcp_frontend.http_transport import bridge_context
+
+                ctx = bridge_context.get()
+                if ctx:
+                    runner = getattr(ctx, "runner_name", None)
+            except Exception:
+                pass
+
+        if runner:
+            return f"{runner}__{step.mcp}__{step.tool}"
+
+        # CP-direct — bare tool name
+        return step.tool
 
     async def _execute_code_step(
         self,

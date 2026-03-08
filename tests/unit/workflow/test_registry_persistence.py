@@ -18,6 +18,7 @@ description: A test workflow
 steps:
   - id: step1
     tool: echo
+    mcp: system
     params:
       message: hello
 """
@@ -29,6 +30,7 @@ description: Updated test workflow
 steps:
   - id: step1
     tool: echo
+    mcp: system
     params:
       message: hello v2
 """
@@ -45,6 +47,11 @@ def _make_tool_registry() -> MagicMock:
     """Create a mock ToolRegistry that passes validation."""
     tr = MagicMock()
     tr.get_tool.return_value = MagicMock()  # tool exists
+    # Support new (mcp, tool) resolution: list_tools returns matching tools
+    echo_tool = MagicMock()
+    echo_tool.name = "echo"
+    echo_tool.server_name = "system"
+    tr.list_tools.return_value = [echo_tool]
     return tr
 
 
@@ -203,6 +210,7 @@ version: "1.0.0"
 steps:
   - id: step1
     tool: echo
+    mcp: system
     params:
       message: from redis
 """

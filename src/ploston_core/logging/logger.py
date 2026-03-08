@@ -135,10 +135,13 @@ class AELLogger:
 
         # Bridge to stdlib logging so LoggingInstrumentor forwards the
         # record (with context attributes) to the OTEL LoggerProvider → Loki.
+        # Context keys are prefixed with "ael_" to avoid collision with
+        # LogRecord reserved attributes (name, message, args, module, etc.).
         stdlib_level = self._LEVEL_TO_STDLIB.get(level, logging.INFO)
-        extra = {"component": component}
+        extra = {"ael_component": component}
         if context:
-            extra.update(context)
+            for k, v in context.items():
+                extra[f"ael_{k}"] = v
         self._stdlib_logger.log(stdlib_level, message, extra=extra)
 
     def _log_json(

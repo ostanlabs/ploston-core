@@ -135,6 +135,14 @@ def generate_workflow_schema() -> dict[str, Any]:
 
     # Enrich steps with item schema
     step_schema = _dataclass_to_schema(StepDefinition)
+    # Add descriptions for mcp field in step schema
+    if "mcp" in step_schema.get("properties", {}):
+        step_schema["properties"]["mcp"]["description"] = (
+            "Name of the MCP server that hosts the tool. Required for tool steps. "
+            "Used together with 'tool' for resolution: the CP looks up "
+            "the tool by (mcp, tool) on the runner specified in defaults.runner "
+            "(or the bridge's implicit runner when defaults.runner is omitted)."
+        )
     base["properties"]["steps"] = {
         "type": "array",
         "items": step_schema,
@@ -187,6 +195,14 @@ def generate_workflow_schema() -> dict[str, Any]:
 
     # Enrich defaults
     defaults_schema = _dataclass_to_schema(WorkflowDefaults)
+    # Add runner description
+    if "runner" in defaults_schema.get("properties", {}):
+        defaults_schema["properties"]["runner"]["description"] = (
+            "Runner name for tool resolution. When set, all tool steps resolve "
+            "against this runner's tool registry ({runner}__{mcp}__{tool}). "
+            "When omitted, the bridge's implicit runner is used (from X-Bridge-Runner header). "
+            "Only needed for multi-runner disambiguation or CP-direct workflows."
+        )
     base["properties"]["defaults"] = {
         **defaults_schema,
         "description": "Default settings applied to all steps unless overridden.",
@@ -211,6 +227,84 @@ def generate_workflow_schema() -> dict[str, Any]:
 
     # Add a concrete example that parses through the real parser
     base["example"] = _get_example_workflow()
+
+    # Document the code step contract for agents authoring workflows
+    base["code_steps"] = {
+        "description": (
+            "Code steps execute Python via exec(). "
+            "Set step output by assigning to the 'result' variable. "
+            "Do NOT use 'return' statements — they raise SyntaxError "
+            "at the top level of exec()."
+        ),
+        "output": (
+            "Assign to the 'result' variable to set step output. "
+            "If 'result' is never assigned, step output is None."
+        ),
+        "context_api": {
+            "context.inputs": (
+                "dict — workflow input values. "
+                "Access: context.inputs['key'] or context.inputs.get('key')"
+            ),
+            "context.steps['step_id'].output": (
+                "The raw output value of a prior completed step. "
+                "For tool steps this is the tool's return value (dict, list, str, etc). "
+                "For code steps this is whatever was assigned to 'result'. "
+                "Access nested keys normally: context.steps['fetch'].output.get('items', [])"
+            ),
+            "context.config": ("dict — workflow-level config values."),
+            "context.tools.call('tool_name', {...})": (
+                "Call a registered tool from within a code step. "
+                "Returns the tool's output directly. "
+                "Max 10 calls per step. "
+                "python_exec cannot call itself (recursion prevention)."
+            ),
+        },
+        "example": (
+            "# Read prior step output and set result\n"
+            "runs = context.steps['fetch_runs'].output.get('workflow_runs', [])\n"
+            "failed = next((r for r in runs if r['conclusion'] == 'failure'), None)\n"
+            "if failed:\n"
+            "    result = {'run_id': failed['id'], 'head_sha': failed['head_sha']}\n"
+            "else:\n"
+            "    result = {'run_id': None}"
+        ),
+        "anti_patterns": [
+            "return {...}  # SyntaxError — use result = {...} instead",
+            "return None   # SyntaxError — just don't assign result, or assign result = None",
+        ],
+    }
+
+    # Document tool step resolution rules for agents authoring workflows
+    base["tool_steps"] = {
+        "description": (
+            "Tool steps invoke a registered tool via the 'tool' and 'mcp' fields. "
+            "The 'mcp' field is required for tool steps and identifies which MCP "
+            "server hosts the tool. Resolution: if defaults.runner is set (or the "
+            "bridge provides X-Bridge-Runner), the CP constructs "
+            "{runner}__{mcp}__{tool} and verifies it exists. If no runner is "
+            "available, the CP resolves against its own directly-connected MCP "
+            "servers by matching (mcp, tool)."
+        ),
+        "required_fields": ["id", "tool", "mcp"],
+        "resolution_chain": [
+            "1. runner from step → defaults.runner → bridge X-Bridge-Runner",
+            "2. If runner found: lookup {runner}__{mcp}__{tool} in runner registry",
+            "3. If no runner: lookup tool by name on CP-direct MCP server matching mcp",
+            "4. If not found anywhere: validation error with available tools hint",
+        ],
+        "example": (
+            "- id: fetch_runs\n"
+            "  tool: list_workflow_runs\n"
+            "  mcp: github\n"
+            "  params:\n"
+            '    owner: "{{ inputs.owner }}"\n'
+            '    repo: "{{ inputs.repo }}"'
+        ),
+        "note": (
+            "Call workflow_schema to see the live 'available_tools' list — "
+            "it shows every tool grouped by MCP server and runner."
+        ),
+    }
 
     return base
 
@@ -239,6 +333,7 @@ defaults:
 steps:
   - id: fetch
     tool: http_request
+    mcp: http
     params:
       url: "{{ inputs.url }}"
       method: GET

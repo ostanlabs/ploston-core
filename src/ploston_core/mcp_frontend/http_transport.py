@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class BridgeContext:
-    """Bridge context extracted from incoming request headers (DEC-142).
+    """Bridge context extracted from incoming request headers (DEC-142, DEC-157).
 
     Populated by HTTPTransport from X-Bridge-* headers and made available
     via the ``bridge_context`` ContextVar for downstream instrumentation.
@@ -41,6 +41,7 @@ class BridgeContext:
     bridge_expose: str | None = None
     queue_drops: int = 0
     session_start: str | None = None
+    runner_name: str | None = None  # DEC-157: X-Bridge-Runner header
 
 
 #: Per-request bridge context.  Set in ``_handle_mcp_request``.
@@ -157,6 +158,7 @@ class HTTPTransport:
                 bridge_expose=request.headers.get("X-Bridge-Expose"),
                 queue_drops=_drops,
                 session_start=request.headers.get("X-Bridge-Session-Start"),
+                runner_name=request.headers.get("X-Bridge-Runner"),
             )
             bridge_context.set(ctx)
 

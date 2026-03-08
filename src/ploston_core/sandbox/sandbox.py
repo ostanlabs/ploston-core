@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import io
 import time
+import types
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from typing import Any
@@ -184,11 +185,11 @@ class PythonExecSandbox:
         """
         errors = []
 
-        # Check syntax
+        # Check syntax (supports top-level await)
         try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
+            tree = self._parse_code(code)
+        except SecurityError as e:
+            errors.append(str(e))
             return errors  # Can't continue validation if syntax is invalid
 
         # Check imports
@@ -223,6 +224,38 @@ class PythonExecSandbox:
 
         return errors
 
+    def _parse_code(self, code: str) -> ast.AST:
+        """Parse code into AST, supporting top-level await syntax.
+
+        Tries normal parsing first. If that fails with a SyntaxError
+        (e.g. because code contains ``await``), retries with
+        ``PyCF_ALLOW_TOP_LEVEL_AWAIT`` so async code steps work.
+
+        Args:
+            code: Python code to parse
+
+        Returns:
+            Parsed AST
+
+        Raises:
+            SecurityError: If code has syntax errors even with async support
+        """
+        try:
+            return ast.parse(code)
+        except SyntaxError:
+            pass
+        # Retry allowing top-level await
+        try:
+            return ast.parse(code, mode="exec", type_comments=False)
+        except SyntaxError:
+            pass
+        try:
+            return compile(
+                code, "<sandbox>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT | ast.PyCF_ONLY_AST
+            )
+        except SyntaxError as e:
+            raise SecurityError(f"Syntax error in code: {e}") from e
+
     def _validate_imports(self, code: str) -> None:
         """Validate that code only imports allowed modules.
 
@@ -232,10 +265,7 @@ class PythonExecSandbox:
         Raises:
             SecurityError: If code imports disallowed modules
         """
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            raise SecurityError(f"Syntax error in code: {e}") from e
+        tree = self._parse_code(code)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -269,8 +299,8 @@ class PythonExecSandbox:
             SecurityError: If code accesses dangerous attributes
         """
         try:
-            tree = ast.parse(code)
-        except SyntaxError:
+            tree = self._parse_code(code)
+        except SecurityError:
             # Syntax errors are handled in _validate_imports
             return
 
@@ -383,10 +413,26 @@ class PythonExecSandbox:
             # Add result variable to capture output
             safe_globals["result"] = None
 
-            # Execute with timeout
+            # Compile with PyCF_ALLOW_TOP_LEVEL_AWAIT so code steps can use
+            # ``await context.tools.call(...)`` for nested tool invocations.
+            compiled = compile(
+                code,
+                "<sandbox>",
+                "exec",
+                flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+            )
+
+            # Execute with timeout.
+            # When PyCF_ALLOW_TOP_LEVEL_AWAIT is set and the code contains
+            # ``await``, we need to wrap the code object in a FunctionType
+            # and call it to get a coroutine that can be awaited.
+            # For sync code the function returns None immediately.
             async def _execute() -> Any:
                 with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                    exec(code, safe_globals)
+                    fn = types.FunctionType(compiled, safe_globals)
+                    coro_or_none = fn()
+                    if asyncio.iscoroutine(coro_or_none):
+                        await coro_or_none
                 return safe_globals.get("result")
 
             try:

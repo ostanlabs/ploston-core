@@ -72,6 +72,7 @@ class MCPFrontend:
         rest_prefix: str = "/api/v1",
         chain_detector: ChainDetector | None = None,
         runner_registry: RunnerRegistry | None = None,
+        workflow_tools: Any | None = None,
     ):
         """Initialize MCP frontend.
 
@@ -90,6 +91,7 @@ class MCPFrontend:
             rest_prefix: URL prefix for REST API (default: /api/v1)
             chain_detector: Optional chain detector for detecting tool sequences
             runner_registry: Optional runner registry for routing tools to runners (DEC-123)
+            workflow_tools: Optional WorkflowToolsProvider for workflow CRUD tools
         """
         self._workflow_engine = workflow_engine
         self._tool_registry = tool_registry
@@ -113,6 +115,9 @@ class MCPFrontend:
 
         # Runner routing (DEC-123)
         self._runner_registry = runner_registry
+
+        # Workflow CRUD tools
+        self._workflow_tools = workflow_tools
 
         # Register for mode change notifications
         self._mode_manager.on_mode_change(self._on_mode_change)
@@ -240,16 +245,38 @@ class MCPFrontend:
         except AELError as e:
             if is_notification:
                 return None
+            error_data: dict[str, Any] = {"code": e.code}
+            if e.detail:
+                error_data["detail"] = e.detail
+            if e.suggestion:
+                error_data["suggestion"] = e.suggestion
             return self._error_response(
                 msg_id,
                 e.http_status,
                 e.message,
-                {"code": e.code, "detail": e.detail},
+                error_data,
             )
         except Exception as e:
             if is_notification:
                 return None
-            return self._error_response(msg_id, 500, str(e))
+            # Log full traceback server-side for debugging
+            logger.exception("Unhandled exception in MCP message handler")
+            # Return structured error so agents/users can report it
+            import traceback
+
+            tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
+            short_tb = "".join(tb_lines[-3:]).strip()  # last 3 frames
+            return self._error_response(
+                msg_id,
+                500,
+                f"Internal server error: {type(e).__name__}: {e}",
+                {
+                    "code": "INTERNAL_ERROR",
+                    "detail": f"An unexpected error occurred while processing the request. "
+                    f"Error type: {type(e).__name__}, message: {e}",
+                    "traceback_tail": short_tb,
+                },
+            )
 
     async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle initialize request.
@@ -334,9 +361,10 @@ class MCPFrontend:
                 configure_tool = self._config_tool_registry.get_configure_tool_for_mcp_exposure()
                 if configure_tool:
                     tools.append(configure_tool)
-                # Add workflow_schema (available in running mode for authoring)
-                for schema in self._config_tool_registry.get_running_mode_tools():
-                    tools.append(schema)
+            # Add workflow CRUD tools (workflow_schema, workflow_list, etc.)
+            if self._workflow_tools and not source_filter:
+                for tool in self._workflow_tools.get_for_mcp_exposure():
+                    tools.append(tool)
 
             # Add runner tools with prefix (DEC-123)
             # Format: runner__mcp__toolname (e.g., mac__fs__read_file)
@@ -401,7 +429,7 @@ class MCPFrontend:
             tool_for_runner = f"{mcp_name}__{actual_tool}" if mcp_name else actual_tool
             return await self._execute_runner_tool(runner_name, tool_for_runner, arguments)
 
-        # Workflow calls
+        # Workflow calls (CRUD tools + execution)
         if name.startswith("workflow_"):
             if self._mode_manager.mode == Mode.CONFIGURATION:
                 raise AELError(
@@ -411,6 +439,12 @@ class MCPFrontend:
                     tool_name=name,
                     http_status=503,
                 )
+            # Route CRUD tools (workflow_schema, workflow_list, etc.) before execution
+            if self._workflow_tools:
+                from ploston_core.workflow.tools import WorkflowToolsProvider
+
+                if WorkflowToolsProvider.is_crud_tool(name):
+                    return await self._workflow_tools.call(name, arguments)
             workflow_id = name[len("workflow_") :]
             return await self._execute_workflow(workflow_id, arguments)
 
@@ -458,8 +492,8 @@ class MCPFrontend:
                 )
             return await self._config_tool_registry.call(name, arguments)
         else:
-            # In running mode, configure and read-only ploston: tools are available
-            _running_mode_tools = {"configure", "ploston:configure", "ploston:workflow_schema"}
+            # In running mode, only configure is available from config tools
+            _running_mode_tools = {"configure", "ploston:configure"}
             if name in _running_mode_tools:
                 return await self._config_tool_registry.call(name, arguments)
             else:

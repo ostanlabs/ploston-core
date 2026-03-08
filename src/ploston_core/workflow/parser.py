@@ -78,6 +78,7 @@ def parse_workflow_yaml(
             timeout=def_data.get("timeout", 30),
             on_error=OnError(def_data.get("on_error", "fail")),
             retry=retry,
+            runner=def_data.get("runner"),
         )
 
     # Parse inputs
@@ -102,6 +103,7 @@ def parse_workflow_yaml(
             id=step_data["id"],
             tool=step_data.get("tool"),
             code=step_data.get("code"),
+            mcp=step_data.get("mcp"),
             params=step_data.get("params", {}),
             depends_on=step_data.get("depends_on"),
             on_error=OnError(step_data["on_error"]) if "on_error" in step_data else None,

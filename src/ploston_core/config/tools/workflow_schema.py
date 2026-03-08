@@ -42,7 +42,6 @@ async def handle_workflow_schema(
     return {
         "sections": list(schema.get("properties", {}).keys()),
         "schema": schema,
-        "example": schema.get("example"),
     }
 
 
