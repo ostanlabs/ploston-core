@@ -100,3 +100,21 @@ class TestAddMcpServer:
 
         assert "validation" in result
         assert "valid" in result["validation"]
+
+    @pytest.mark.asyncio
+    async def test_add_server_reserved_name_system(self, registry, mock_staged_config):
+        """U-29: Adding MCP server named 'system' is rejected."""
+        result = await registry.call(
+            "ploston:add_mcp_server",
+            {
+                "name": "system",
+                "transport": "stdio",
+                "command": "npx",
+            },
+        )
+
+        assert result["success"] is False
+        validation_errors = result.get("validation", {}).get("errors", [])
+        assert any(e.get("code") == "RESERVED_NAME" for e in validation_errors)
+        # staged_config.set should NOT have been called
+        mock_staged_config.set.assert_not_called()

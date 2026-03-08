@@ -483,6 +483,7 @@ class ToolRegistry:
                 name="python_exec",
                 description="Execute Python code in secure sandbox",
                 source=ToolSource.SYSTEM,
+                server_name="system",
                 input_schema={
                     "type": "object",
                     "properties": {

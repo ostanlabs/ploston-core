@@ -25,6 +25,7 @@ WORKFLOW_CRUD_TOOL_NAMES = frozenset(
         "workflow_update",
         "workflow_delete",
         "workflow_validate",
+        "workflow_tool_schema",
     }
 )
 
@@ -160,6 +161,38 @@ WORKFLOW_VALIDATE_TOOL = {
     },
 }
 
+WORKFLOW_TOOL_SCHEMA_TOOL = {
+    "name": "workflow_tool_schema",
+    "description": (
+        "Get the full parameter schema for a specific tool by its MCP server "
+        "name and tool name. Returns the tool description and inputSchema so "
+        "you can correctly fill the params block when authoring a workflow. "
+        "Use workflow_schema first to discover available mcp server names and "
+        "tool names, then call this to get the schema for the specific tool "
+        "you want to use."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "required": ["mcp", "tool"],
+        "properties": {
+            "mcp": {
+                "type": "string",
+                "description": (
+                    "MCP server name hosting the tool (e.g. github, filesystem, system). "
+                    "Must match a value from workflow_schema available_tools."
+                ),
+            },
+            "tool": {
+                "type": "string",
+                "description": (
+                    "Bare tool name as registered on the MCP server "
+                    "(e.g. actions_list, read_file). Do not include runner or mcp prefix."
+                ),
+            },
+        },
+    },
+}
+
 ALL_WORKFLOW_CRUD_TOOLS = [
     WORKFLOW_SCHEMA_TOOL,
     WORKFLOW_LIST_TOOL,
@@ -168,6 +201,7 @@ ALL_WORKFLOW_CRUD_TOOLS = [
     WORKFLOW_UPDATE_TOOL,
     WORKFLOW_DELETE_TOOL,
     WORKFLOW_VALIDATE_TOOL,
+    WORKFLOW_TOOL_SCHEMA_TOOL,
 ]
 
 
@@ -204,6 +238,7 @@ class WorkflowToolsProvider:
             "workflow_update": self._handle_update,
             "workflow_delete": self._handle_delete,
             "workflow_validate": self._handle_validate,
+            "workflow_tool_schema": self._handle_tool_schema,
         }
 
     @staticmethod
@@ -301,14 +336,24 @@ class WorkflowToolsProvider:
         # 2. Runner-hosted tools from RunnerRegistry
         if self._runner_registry:
             try:
-                runners = self._runner_registry.list_runners()
+                runners = self._runner_registry.list()
                 for runner in runners:
                     runner_name = runner.name if hasattr(runner, "name") else str(runner)
                     available = getattr(runner, "available_tools", None) or []
                     # available_tools are prefixed: "mcp__tool"
+                    # Items can be strings or dicts with a "name" key (full schema)
                     by_server: dict[str, list[str]] = {}
-                    for prefixed_name in available:
-                        parts = prefixed_name.split("__", 1)
+                    for tool_entry in available:
+                        # Extract tool name from str or dict
+                        if isinstance(tool_entry, str):
+                            tool_name = tool_entry
+                        elif isinstance(tool_entry, dict):
+                            tool_name = tool_entry.get("name", "")
+                        else:
+                            continue
+                        if not tool_name:
+                            continue
+                        parts = tool_name.split("__", 1)
                         if len(parts) == 2:
                             server, tool = parts
                             by_server.setdefault(server, []).append(tool)
@@ -444,6 +489,74 @@ class WorkflowToolsProvider:
             "valid": result.valid,
             "errors": [{"path": e.path, "message": e.message} for e in result.errors],
             "warnings": [{"path": w.path, "message": w.message} for w in result.warnings],
+        }
+
+    async def _handle_tool_schema(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle workflow_tool_schema tool call.
+
+        Returns the full parameter schema for a specific tool, resolved using
+        the same CP-first order as the unified tool resolver.
+        """
+        mcp = arguments.get("mcp")
+        tool = arguments.get("tool")
+
+        if not mcp:
+            raise create_error("PARAM_INVALID", message="'mcp' parameter is required")
+        if not tool:
+            raise create_error("PARAM_INVALID", message="'tool' parameter is required")
+
+        # Step 1: CP-direct -- ToolRegistry lookup by server_name
+        # Covers mcp: system (python_exec), mcp: github (CP-registered), etc.
+        if self._tool_registry:
+            cp_tools = self._tool_registry.list_tools(server_name=mcp)
+            for tool_def in cp_tools:
+                if tool_def.name == tool:
+                    return {
+                        "mcp_server": mcp,
+                        "tool": tool,
+                        "runner": None,
+                        "description": tool_def.description,
+                        "input_schema": tool_def.input_schema or {},
+                        "source": "cp",
+                    }
+
+        # Step 2: Runner-hosted -- RunnerRegistry lookup
+        if self._runner_registry:
+            canonical = f"{mcp}__{tool}"
+            for runner in self._runner_registry.list():
+                for entry in runner.available_tools or []:
+                    if isinstance(entry, str):
+                        if entry == canonical:
+                            return {
+                                "mcp_server": mcp,
+                                "tool": tool,
+                                "runner": runner.name,
+                                "description": None,
+                                "input_schema": {},
+                                "source": "runner",
+                            }
+                    elif isinstance(entry, dict):
+                        if entry.get("name") == canonical:
+                            return {
+                                "mcp_server": mcp,
+                                "tool": tool,
+                                "runner": runner.name,
+                                "description": entry.get("description"),
+                                "input_schema": entry.get("inputSchema") or {},
+                                "source": "runner",
+                            }
+
+        # Not found -- return structured error with hint
+        available = self._build_available_tools()
+        return {
+            "found": False,
+            "mcp_server": mcp,
+            "tool": tool,
+            "error": (
+                f"Tool '{tool}' not found on MCP server '{mcp}'. "
+                "Use workflow_schema to see available tools."
+            ),
+            "available_tools": available,
         }
 
 
