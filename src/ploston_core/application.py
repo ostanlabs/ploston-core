@@ -23,6 +23,7 @@ from ploston_core.mcp_frontend import MCPFrontend, MCPServerConfig
 from ploston_core.registry import ToolRegistry
 from ploston_core.sandbox import SandboxConfig
 from ploston_core.telemetry import (
+    ChainDetector,
     OTLPExporterConfig,
     TelemetryConfig,
     get_telemetry,
@@ -33,6 +34,7 @@ from ploston_core.telemetry.store import (
     TelemetryStoreConfig,
     create_telemetry_store,
 )
+from ploston_core.telemetry.store.collector import TelemetryCollector
 from ploston_core.template import TemplateEngine
 from ploston_core.types import MCPTransport
 from ploston_core.workflow import WorkflowRegistry
@@ -113,6 +115,8 @@ class PlostApplication:
         self.redis_config_store: RedisConfigStore | None = None
         self.runner_registry: RunnerRegistry | None = None
         self.telemetry_store: TelemetryStore | None = None
+        self.chain_detector: ChainDetector | None = None
+        self.telemetry_collector: TelemetryCollector | None = None
 
     async def initialize(self) -> None:
         """Initialize all components.
@@ -231,6 +235,12 @@ class PlostApplication:
         )
         self.telemetry_store = create_telemetry_store(store_config)
 
+        # 3c. Telemetry Collector (DEC-152: wraps store for execution lifecycle)
+        self.telemetry_collector = TelemetryCollector(
+            store=self.telemetry_store,
+            config=store_config,
+        )
+
         # 4. Error Registry & Factory
         self.error_registry = ErrorRegistry()
         self.error_factory = ErrorFactory(self.error_registry)
@@ -340,12 +350,21 @@ class PlostApplication:
         self.template_engine = TemplateEngine()
 
         # 10. Tool Invoker
+        # DEC-161: Wire RunnerToolDispatcher so ToolInvoker can dispatch
+        # runner-prefixed tools via WebSocket to connected runners.
+        runner_dispatcher = None
+        if self.runner_registry:
+            from ploston_core.runner_management.dispatcher import RunnerToolDispatcher
+
+            runner_dispatcher = RunnerToolDispatcher(self.runner_registry)
+
         self.tool_invoker = ToolInvoker(
             self.tool_registry,
             self.mcp_manager,
             self.sandbox_factory,
             logger=self.logger,
             error_factory=self.error_factory,
+            runner_dispatcher=runner_dispatcher,
         )
 
         # 11. Workflow Engine
@@ -357,6 +376,20 @@ class PlostApplication:
 
             token_estimator = TokenEstimator(meter=telemetry["meter"])
 
+        # 11b. Create ChainDetector for pattern detection on direct tool calls (DEC-057)
+        chain_detector = None
+        telemetry = get_telemetry()
+        if telemetry and telemetry.get("meter"):
+            redis_client = None
+            if self.redis_config_store and self.redis_config_store.connected:
+                redis_client = self.redis_config_store._redis  # reuse existing connection
+            chain_detector = ChainDetector(
+                redis_client=redis_client,
+                meter=telemetry["meter"],
+                tracer=telemetry.get("tracer"),
+            )
+        self.chain_detector = chain_detector
+
         self.workflow_engine = WorkflowEngine(
             self.workflow_registry,
             self.tool_invoker,
@@ -366,6 +399,8 @@ class PlostApplication:
             error_factory=self.error_factory,
             token_estimator=token_estimator,
             runner_registry=self.runner_registry,
+            tool_registry=self.tool_registry,
+            max_tool_calls=self.config.python_exec.max_tool_calls,
         )
 
         # 12. MCP Frontend
@@ -471,6 +506,8 @@ class PlostApplication:
             rest_prefix=self._rest_api_prefix,
             runner_registry=self.runner_registry,  # DEC-123: Enable runner tool routing
             workflow_tools=workflow_tools,
+            chain_detector=self.chain_detector,  # Tier 0 (DEC-057)
+            telemetry_collector=self.telemetry_collector,  # Tier 3 (DEC-152)
         )
 
         # Wire workflow CRUD → tools/list_changed notification

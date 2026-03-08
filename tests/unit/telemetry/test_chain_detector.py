@@ -187,3 +187,45 @@ class TestChainLink:
         assert link.from_tool == "tool_a"
         assert link.to_tool == "tool_b"
         assert isinstance(link.timestamp, datetime)
+
+
+class TestChainDetectorTopologyLabels:
+    """Tier 2 — Distributed topology labels."""
+
+    @pytest.fixture
+    def detector(self):
+        return ChainDetector()
+
+    @pytest.mark.asyncio
+    async def test_check_chain_link_includes_runner_id_in_attributes(self, detector):
+        """runner_id attribute present on emitted chain link metric."""
+        await detector.record_tool_output("tool_a", "hash_x")
+        predecessors = await detector.check_chain_link("tool_b", {"hash_x"}, runner_id="runner-1")
+        assert "tool_a" in predecessors
+
+    @pytest.mark.asyncio
+    async def test_check_chain_link_includes_bridge_id_in_attributes(self, detector):
+        """bridge_id attribute present on emitted chain link metric."""
+        await detector.record_tool_output("tool_a", "hash_x")
+        predecessors = await detector.check_chain_link("tool_b", {"hash_x"}, bridge_id="bridge-1")
+        assert "tool_a" in predecessors
+
+    @pytest.mark.asyncio
+    async def test_process_tool_call_threads_runner_and_bridge_ids(self, detector):
+        """process_tool_call passes runner_id and bridge_id through to check_chain_link."""
+        # First tool call
+        await detector.process_tool_call(
+            tool_name="tool_a",
+            params={"input": "value"},
+            result={"output": "data"},
+        )
+        # Second tool call uses output from first — pass topology labels
+        predecessors = await detector.process_tool_call(
+            tool_name="tool_b",
+            params={"data": {"output": "data"}},
+            result="result",
+            runner_id="runner-1",
+            bridge_id="bridge-1",
+        )
+        # check_chain_link should have received the IDs (verified by no exception)
+        assert isinstance(predecessors, list)

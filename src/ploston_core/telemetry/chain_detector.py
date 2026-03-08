@@ -11,6 +11,9 @@ repeated tool sequences, demonstrating Ploston's value proposition.
 
 import hashlib
 import json
+import time as _time
+import uuid as _uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -77,6 +80,118 @@ class InMemoryChainCache:
         return None
 
 
+class SequenceTracker:
+    """Tracks consecutive tool-call pairs per session for sequence-consistency scoring.
+
+    Maintains an LRU cache of sessions bounded by ``max_sessions``.
+    """
+
+    def __init__(self, *, max_sessions: int = 500) -> None:
+        self._max_sessions = max_sessions
+        # session_id -> (last_tool, pair_counts)
+        self._sessions: dict[str, tuple[str | None, dict[tuple[str, str], int]]] = {}
+        self._access_order: deque[str] = deque()
+
+    def record_call(self, session_id: str, tool_name: str) -> list[tuple[str, str, int]]:
+        """Record a tool call and return any newly-repeated pairs.
+
+        Returns:
+            List of (from_tool, to_tool, count) where count >= 2.
+        """
+        self._touch(session_id)
+
+        last_tool, pair_counts = self._sessions.get(session_id, (None, {}))
+        repeated: list[tuple[str, str, int]] = []
+
+        if last_tool is not None:
+            key = (last_tool, tool_name)
+            pair_counts[key] = pair_counts.get(key, 0) + 1
+            if pair_counts[key] >= 2:
+                repeated.append((*key, pair_counts[key]))
+
+        self._sessions[session_id] = (tool_name, pair_counts)
+        return repeated
+
+    # -- LRU helpers --
+    def _touch(self, session_id: str) -> None:
+        if session_id in self._sessions:
+            try:
+                self._access_order.remove(session_id)
+            except ValueError:
+                pass
+        self._access_order.append(session_id)
+        while len(self._access_order) > self._max_sessions:
+            evicted = self._access_order.popleft()
+            self._sessions.pop(evicted, None)
+
+
+class TemporalTracker:
+    """Tracks tool calls within time-bounded chunks for co-occurrence scoring.
+
+    Maintains an LRU cache of sessions bounded by ``max_sessions``.
+    """
+
+    CHUNK_SECONDS: float = 30.0  # Window size for temporal chunks
+
+    def __init__(self, *, max_sessions: int = 500) -> None:
+        self._max_sessions = max_sessions
+        # session_id -> (chunk_id, chunk_start_time, tools_in_chunk, pair_counts)
+        self._sessions: dict[
+            str,
+            tuple[str, float, set[str], dict[tuple[str, str], int]],
+        ] = {}
+        self._access_order: deque[str] = deque()
+
+    def record_call(
+        self, session_id: str, tool_name: str
+    ) -> tuple[str, list[tuple[str, str, int]]]:
+        """Record a tool call and return co-occurring pairs from the current chunk.
+
+        Returns:
+            (chunk_id, [(tool_a, tool_b, count), ...]) for pairs with count >= 2.
+        """
+        self._touch(session_id)
+        now = _time.monotonic()
+
+        if session_id not in self._sessions:
+            chunk_id = _uuid.uuid4().hex[:12]
+            self._sessions[session_id] = (chunk_id, now, set(), {})
+
+        chunk_id, chunk_start, tools, pair_counts = self._sessions[session_id]
+
+        # Roll to a new chunk if the window has elapsed
+        if now - chunk_start > self.CHUNK_SECONDS:
+            chunk_id = _uuid.uuid4().hex[:12]
+            chunk_start = now
+            tools = set()
+            pair_counts = {}
+
+        cooccurring: list[tuple[str, str, int]] = []
+        for existing_tool in tools:
+            if existing_tool == tool_name:
+                continue
+            key = tuple(sorted([existing_tool, tool_name]))
+            pair_counts[key] = pair_counts.get(key, 0) + 1  # type: ignore[index]
+            if pair_counts[key] >= 2:  # type: ignore[index]
+                cooccurring.append((*key, pair_counts[key]))  # type: ignore[misc]
+
+        tools.add(tool_name)
+        self._sessions[session_id] = (chunk_id, chunk_start, tools, pair_counts)
+        return chunk_id, cooccurring
+
+    # -- LRU helpers --
+    def _touch(self, session_id: str) -> None:
+        if session_id in self._sessions:
+            try:
+                self._access_order.remove(session_id)
+            except ValueError:
+                pass
+        self._access_order.append(session_id)
+        while len(self._access_order) > self._max_sessions:
+            evicted = self._access_order.popleft()
+            self._sessions.pop(evicted, None)
+
+
 class ChainDetector:
     """Detect chains of tool calls where output flows to input.
 
@@ -104,6 +219,12 @@ class ChainDetector:
         self._meter = meter
         self._tracer = tracer
         self._memory_cache = InMemoryChainCache(ttl_seconds)
+
+        # Tier 4: Trackers for multi-signal scoring
+        self._sequence_tracker = SequenceTracker(max_sessions=500)
+        self._temporal_tracker = TemporalTracker(max_sessions=500)
+        self._composite_scores: dict[tuple[str, str], float] = {}
+
         self._setup_metrics()
 
     def _setup_metrics(self) -> None:
@@ -111,10 +232,32 @@ class ChainDetector:
         if not self._meter:
             return
 
-        # Counter: Chain links detected
+        # Counter: Chain links detected (Signal 1 — data flow)
         self._chain_links_total = self._meter.create_counter(
             name="ploston_chain_links_total",
             description="Total chain links detected between direct tool calls",
+            unit="1",
+        )
+
+        # Counter: Sequence pair repetitions (Signal 2 — sequence consistency)
+        self._sequence_pairs_total = self._meter.create_counter(
+            name="ploston_sequence_pairs_total",
+            description="Repeated consecutive tool-call pairs per session",
+            unit="1",
+        )
+
+        # Counter: Temporal co-occurrences (Signal 3 — temporal proximity)
+        self._temporal_cooccurrence_total = self._meter.create_counter(
+            name="ploston_temporal_cooccurrence_total",
+            description="Temporal co-occurrence of tool pairs within a time chunk",
+            unit="1",
+        )
+
+        # Observable gauge: Composite confidence score
+        self._composite_gauge = self._meter.create_observable_gauge(
+            name="ploston_chain_composite_score",
+            callbacks=[self._composite_score_callback],
+            description="Composite chain-detection confidence score per tool pair",
             unit="1",
         )
 
@@ -124,6 +267,21 @@ class ChainDetector:
             description="Frequency of detected tool chains",
             unit="1",
         )
+
+    def _composite_score_callback(
+        self,
+        options: metrics.CallbackOptions,  # noqa: ARG002
+    ) -> list[metrics.Observation]:
+        """Yield current composite scores for the observable gauge."""
+        observations: list[metrics.Observation] = []
+        for (from_tool, to_tool), score in self._composite_scores.items():
+            observations.append(
+                metrics.Observation(
+                    value=score,
+                    attributes={"from_tool": from_tool, "to_tool": to_tool},
+                )
+            )
+        return observations
 
     @staticmethod
     def compute_input_hashes(params: dict[str, Any]) -> set[str]:
@@ -187,12 +345,20 @@ class ChainDetector:
         else:
             self._memory_cache.set(output_hash, tool_name)
 
-    async def check_chain_link(self, tool_name: str, input_hashes: set[str]) -> list[str]:
+    async def check_chain_link(
+        self,
+        tool_name: str,
+        input_hashes: set[str],
+        runner_id: str | None = None,
+        bridge_id: str | None = None,
+    ) -> list[str]:
         """Check if any input matches a recent output, detecting chain links.
 
         Args:
             tool_name: Name of the current tool being called
             input_hashes: Hashes of the tool's input parameters
+            runner_id: Optional runner identity for distributed topology labels
+            bridge_id: Optional bridge session identity for distributed topology labels
 
         Returns:
             List of predecessor tool names that produced matching outputs
@@ -206,10 +372,15 @@ class ChainDetector:
 
                 # Emit metric
                 if self._meter and hasattr(self, "_chain_links_total"):
-                    self._chain_links_total.add(
-                        1,
-                        {"from_tool": predecessor, "to_tool": tool_name},
-                    )
+                    attributes: dict[str, Any] = {
+                        "from_tool": predecessor,
+                        "to_tool": tool_name,
+                    }
+                    if runner_id:
+                        attributes["runner_id"] = runner_id
+                    if bridge_id:
+                        attributes["bridge_id"] = bridge_id
+                    self._chain_links_total.add(1, attributes)
 
         return predecessors
 
@@ -240,6 +411,9 @@ class ChainDetector:
         tool_name: str,
         params: dict[str, Any],
         result: Any,
+        runner_id: str | None = None,
+        bridge_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[str]:
         """Process a tool call for chain detection.
 
@@ -249,6 +423,9 @@ class ChainDetector:
             tool_name: Name of the tool called
             params: Tool input parameters
             result: Tool output/result
+            runner_id: Optional runner identity for distributed topology labels
+            bridge_id: Optional bridge session identity for distributed topology labels
+            session_id: Optional session ID for sequence/temporal tracking (Tier 4)
 
         Returns:
             List of predecessor tools (chain links detected)
@@ -264,10 +441,47 @@ class ChainDetector:
         input_hashes = self.compute_input_hashes(params)
         output_hash = self.compute_output_hash(result)
 
-        # Check for chain links (input matches previous output)
-        predecessors = await self.check_chain_link(normalized_name, input_hashes)
+        # Signal 1: Data flow (weight 0.50) — existing logic
+        predecessors = await self.check_chain_link(
+            normalized_name, input_hashes, runner_id=runner_id, bridge_id=bridge_id
+        )
 
         # Record this output for future matching
         await self.record_tool_output(normalized_name, output_hash)
+
+        data_flow_score = 1.0 if predecessors else 0.0
+
+        # Signal 2: Sequence consistency (weight 0.30)
+        sequence_score = 0.0
+        if session_id:
+            repeated_pairs = self._sequence_tracker.record_call(session_id, normalized_name)
+            if repeated_pairs:
+                if self._meter and hasattr(self, "_sequence_pairs_total"):
+                    for from_t, to_t, count in repeated_pairs:
+                        self._sequence_pairs_total.add(
+                            1, {"from_tool": from_t, "to_tool": to_t, "session_id": session_id}
+                        )
+                max_count = max(c for _, _, c in repeated_pairs)
+                sequence_score = min(max_count / 10.0, 1.0)
+
+        # Signal 3: Temporal co-occurrence (weight 0.20)
+        temporal_score = 0.0
+        if session_id:
+            _chunk_id, cooccurring_pairs = self._temporal_tracker.record_call(
+                session_id, normalized_name
+            )
+            if cooccurring_pairs:
+                if self._meter and hasattr(self, "_temporal_cooccurrence_total"):
+                    for tool_a, tool_b, count in cooccurring_pairs:
+                        self._temporal_cooccurrence_total.add(
+                            1, {"tool_a": tool_a, "tool_b": tool_b, "chunk_id": _chunk_id}
+                        )
+                max_count = max(c for _, _, c in cooccurring_pairs)
+                temporal_score = min(max_count / 5.0, 1.0)
+
+        # Composite score — stored for observable gauge, emitted per predecessor pair
+        composite = (data_flow_score * 0.50) + (sequence_score * 0.30) + (temporal_score * 0.20)
+        for pred in predecessors:
+            self._composite_scores[(pred, normalized_name)] = composite
 
         return predecessors
