@@ -14,6 +14,7 @@ class WorkflowDefaults:
     timeout: int = 30
     on_error: OnError = OnError.FAIL
     retry: RetryConfig | None = None
+    runner: str | None = None  # Explicit runner override for multi-runner disambiguation
 
 
 @dataclass
@@ -51,6 +52,9 @@ class StepDefinition:
     # Type (tool XOR code)
     tool: str | None = None
     code: str | None = None
+
+    # MCP server hosting the tool (required for tool steps)
+    mcp: str | None = None
 
     # Parameters (for tool steps)
     params: dict[str, Any] = field(default_factory=dict)

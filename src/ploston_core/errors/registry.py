@@ -101,8 +101,16 @@ class ErrorRegistry:
         try:
             return template.format(**context)
         except KeyError:
-            # Missing context variable - return template as-is
-            return template
+            # Missing context variable — try format_map with a defaultdict
+            # so partial interpolation works (e.g. "{detail}" with no detail kwarg)
+            from collections import defaultdict
+
+            safe_ctx = defaultdict(lambda: "", context)
+            try:
+                result = template.format_map(safe_ctx)
+                return result if result.strip() else None
+            except Exception:
+                return template
 
     def _load_builtin_templates(self) -> None:
         """Load hardcoded built-in templates."""
@@ -203,7 +211,7 @@ class ErrorRegistry:
             code="INPUT_INVALID",
             category=ErrorCategory.VALIDATION,
             message_template="Invalid workflow input",
-            detail_template="The workflow input does not match the expected schema",
+            detail_template="{detail}",
             suggestion_template="Check the input schema and provide valid data",
             default_retryable=False,
             default_http_status=400,

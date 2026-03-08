@@ -17,6 +17,7 @@ description: Persistence integration test
 steps:
   - id: step1
     tool: echo
+    mcp: system
     params:
       message: hello
 """
@@ -28,6 +29,7 @@ description: Updated persistence test
 steps:
   - id: step1
     tool: echo
+    mcp: system
     params:
       message: hello v2
 """
@@ -42,6 +44,11 @@ def _make_config(tmp_path: Path) -> MagicMock:
 def _make_tool_registry() -> MagicMock:
     tr = MagicMock()
     tr.get_tool.return_value = MagicMock()
+    # Support (mcp, tool) resolution
+    echo_tool = MagicMock()
+    echo_tool.name = "echo"
+    echo_tool.server_name = "system"
+    tr.list_tools.return_value = [echo_tool]
     return tr
 
 

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ploston_core.config.redis_store import RedisConfigStore
     from ploston_core.logging import AELLogger
     from ploston_core.registry import ToolRegistry
+    from ploston_core.runner_management.registry import RunnerRegistry
 
 
 class WorkflowRegistry:
@@ -32,6 +33,7 @@ class WorkflowRegistry:
         config: "WorkflowsConfig",
         logger: "AELLogger | None" = None,
         redis_store: "RedisConfigStore | None" = None,
+        runner_registry: "RunnerRegistry | None" = None,
     ):
         """Initialize workflow registry.
 
@@ -40,13 +42,15 @@ class WorkflowRegistry:
             config: Workflows configuration
             logger: Optional logger
             redis_store: Optional Redis config store for Premium persistence
+            runner_registry: Optional runner registry for runner-hosted tool validation
         """
         self._workflows: dict[str, WorkflowEntry] = {}
         self._tool_registry = tool_registry
         self._config = config
         self._logger = logger
         self._redis_store = redis_store
-        self._validator = WorkflowValidator(tool_registry)
+        self._runner_registry = runner_registry
+        self._validator = WorkflowValidator(tool_registry, runner_registry=runner_registry)
         self._watching = False
         self._watch_task: asyncio.Task[None] | None = None
 

@@ -136,8 +136,8 @@ class TestPlostontoolSchemas:
         """Verify correct number of ploston: tools."""
         from ploston_core.config.tools import PLOSTON_TOOL_SCHEMAS
 
-        # 8 new tools + 4 renamed tools + 1 workflow_schema = 13 total
-        assert len(PLOSTON_TOOL_SCHEMAS) == 13
+        # 8 new tools + 4 renamed tools = 12 total (workflow_schema moved to workflow.tools)
+        assert len(PLOSTON_TOOL_SCHEMAS) == 12
 
     def test_all_ploston_schemas_have_name(self):
         """All ploston schemas have name."""
@@ -175,13 +175,12 @@ class TestPlostontoolSchemas:
 
         tools = registry.get_for_mcp_exposure(use_ploston_prefix=True)
 
-        assert len(tools) == 13
+        assert len(tools) == 12
         tool_names = [t["name"] for t in tools]
         assert "ploston:get_setup_context" in tool_names
         assert "ploston:add_mcp_server" in tool_names
         assert "ploston:enable_native_tool" in tool_names
         assert "ploston:import_config" in tool_names
-        assert "ploston:workflow_schema" in tool_names
         assert "ploston:remove_mcp_server" in tool_names
         assert "ploston:disable_native_tool" in tool_names
         assert "ploston:config_diff" in tool_names

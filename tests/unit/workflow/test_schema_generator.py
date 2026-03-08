@@ -4,7 +4,12 @@ Tests that the generated schema is complete, accurate, and stays in sync
 with the actual dataclass definitions (single source of truth).
 """
 
+import asyncio
 import dataclasses
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from ploston_core.types.enums import BackoffType, OnError
 from ploston_core.workflow.parser import parse_workflow_yaml
@@ -187,3 +192,140 @@ steps:
         workflow = parse_workflow_yaml(minimal_yaml)
         assert workflow.name == "test-minimal"
         assert len(workflow.steps) == 1
+
+
+class TestSchemaGeneratorCodeSteps:
+    """Tests for code_steps section in workflow schema."""
+
+    def test_code_steps_key_present(self):
+        """workflow_schema output must include code_steps key."""
+        schema = generate_workflow_schema()
+        assert "code_steps" in schema
+
+    def test_code_steps_has_description(self):
+        """code_steps must have a description."""
+        schema = generate_workflow_schema()
+        assert "description" in schema["code_steps"]
+        assert len(schema["code_steps"]["description"]) > 0
+
+    def test_code_steps_documents_result_not_return(self):
+        """code_steps must explicitly mention result variable and warn against return."""
+        schema = generate_workflow_schema()
+        section = str(schema["code_steps"])
+        assert "result" in section
+        assert "return" in section.lower()  # The warning must mention return
+
+    def test_code_steps_documents_context_api(self):
+        """code_steps must document the full context API surface."""
+        schema = generate_workflow_schema()
+        context_api = schema["code_steps"].get("context_api", {})
+        assert "context.inputs" in context_api
+        assert "context.steps['step_id'].output" in context_api
+        assert "context.config" in context_api
+        assert "context.tools.call('tool_name', {...})" in context_api
+
+    def test_code_steps_has_example(self):
+        """code_steps must include a concrete example."""
+        schema = generate_workflow_schema()
+        assert "example" in schema["code_steps"]
+        example = schema["code_steps"]["example"]
+        assert "result =" in example
+        assert "context.steps" in example
+
+    def test_code_steps_has_anti_patterns(self):
+        """code_steps must include anti-patterns list to deter return usage."""
+        schema = generate_workflow_schema()
+        anti_patterns = schema["code_steps"].get("anti_patterns", [])
+        assert len(anti_patterns) > 0
+        combined = " ".join(anti_patterns)
+        assert "return" in combined
+
+    def test_workflow_schema_tool_returns_code_steps(self):
+        """workflow_validate MCP tool response must include code_steps.
+
+        This verifies the schema flows through to what the agent actually
+        receives when calling workflow_schema via MCP.
+        """
+        from ploston_core.workflow.tools import WorkflowToolsProvider
+
+        provider = WorkflowToolsProvider(MagicMock())
+        result = asyncio.run(provider.call("workflow_schema", {}))
+        schema_str = result["content"][0]["text"]
+        schema = json.loads(schema_str)
+        assert "code_steps" in schema["schema"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Notification tests for WorkflowToolsProvider
+# ──────────────────────────────────────────────────────────────────
+
+VALID_WORKFLOW_YAML = """\
+name: test-wf
+version: "1.0"
+description: test
+steps:
+  - id: s1
+    tool: github__get_file_contents
+    input:
+      owner: test
+      repo: test
+"""
+
+
+class TestWorkflowToolsNotification:
+    """Verify _notify_tools_changed fires on create/update/delete."""
+
+    def _make_provider(self, callback=None):
+        from ploston_core.workflow.tools import WorkflowToolsProvider
+
+        registry = MagicMock()
+        registry.register_from_yaml.return_value = MagicMock(valid=True, errors=[], warnings=[])
+        registry.get.return_value = MagicMock(name="test-wf")
+        registry.unregister.return_value = True
+        return WorkflowToolsProvider(registry, on_tools_changed=callback)
+
+    @pytest.mark.asyncio
+    async def test_create_fires_notification(self):
+        cb = AsyncMock()
+        provider = self._make_provider(cb)
+        await provider.call("workflow_create", {"yaml_content": VALID_WORKFLOW_YAML})
+        cb.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_fires_notification(self):
+        cb = AsyncMock()
+        provider = self._make_provider(cb)
+        await provider.call(
+            "workflow_update", {"name": "test-wf", "yaml_content": VALID_WORKFLOW_YAML}
+        )
+        cb.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_fires_notification(self):
+        cb = AsyncMock()
+        provider = self._make_provider(cb)
+        await provider.call("workflow_delete", {"name": "test-wf"})
+        cb.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_notification_without_callback(self):
+        """Provider works fine without on_tools_changed."""
+        provider = self._make_provider(None)
+        result = await provider.call("workflow_create", {"yaml_content": VALID_WORKFLOW_YAML})
+        parsed = json.loads(result["content"][0]["text"])
+        assert parsed["status"] == "created"
+
+    @pytest.mark.asyncio
+    async def test_schema_does_not_fire_notification(self):
+        cb = AsyncMock()
+        provider = self._make_provider(cb)
+        await provider.call("workflow_schema", {})
+        cb.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_list_does_not_fire_notification(self):
+        cb = AsyncMock()
+        provider = self._make_provider(cb)
+        provider._registry.list_workflows.return_value = []
+        await provider.call("workflow_list", {})
+        cb.assert_not_awaited()

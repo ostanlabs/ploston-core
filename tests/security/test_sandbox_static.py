@@ -209,3 +209,83 @@ result = json.dumps({"pi": math.pi})
 
         assert result.success
         assert "pi" in result.result
+
+
+@pytest.mark.security
+class TestAsyncCodeExecution:
+    """Test that sandbox supports top-level await for async tool calls.
+
+    Regression tests for the bug where exec() ran synchronously,
+    causing ``await context.tools.call(...)`` to either fail or
+    return unawaited coroutine objects.
+    """
+
+    @pytest.fixture
+    def sandbox(self):
+        return PythonExecSandbox(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_top_level_await_basic(self, sandbox):
+        """Top-level await on a simple coroutine should work."""
+
+        # Provide an async function in context that code can await
+        async def async_double(x):
+            return x * 2
+
+        result = await sandbox.execute(
+            "result = await async_double(21)",
+            {"async_double": async_double},
+        )
+
+        assert result.success, f"Expected success, got error: {result.error}"
+        assert result.result == 42
+
+    @pytest.mark.asyncio
+    async def test_top_level_await_tool_call_interface(self):
+        """Await on ToolCallInterface.call() should return actual data."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ploston_core.sandbox.types import ToolCallInterface
+
+        # Create a mock tool caller implementing ToolCallerProtocol
+        mock_caller = MagicMock()
+        mock_caller.call = AsyncMock(return_value={"value": 99})
+        tool_interface = ToolCallInterface(tool_caller=mock_caller, max_calls=10)
+
+        sandbox = PythonExecSandbox(timeout=5)
+
+        code = """
+data = await tools.call("my_tool", {"key": "test"})
+result = data["value"]
+"""
+        result = await sandbox.execute(code, {"tools": tool_interface})
+
+        assert result.success, f"Expected success, got error: {result.error}"
+        assert result.result == 99
+        mock_caller.call.assert_called_once_with("my_tool", {"key": "test"})
+
+    @pytest.mark.asyncio
+    async def test_sync_code_still_works(self, sandbox):
+        """Normal synchronous code should continue to work unchanged."""
+        code = "result = 2 + 2"
+        result = await sandbox.execute(code, {})
+
+        assert result.success
+        assert result.result == 4
+
+    @pytest.mark.asyncio
+    async def test_mixed_sync_and_async(self, sandbox):
+        """Code mixing sync operations and await should work."""
+
+        async def fetch(key):
+            return {"key": key, "value": len(key)}
+
+        code = """
+x = 10
+data = await fetch("hello")
+result = x + data["value"]
+"""
+        result = await sandbox.execute(code, {"fetch": fetch})
+
+        assert result.success, f"Expected success, got error: {result.error}"
+        assert result.result == 15
