@@ -99,16 +99,22 @@ class ToolInvoker(ToolCallerProtocol):
     def _get_source_label(self, tool_name: str, tool_source: ToolSource) -> str:
         """Get the metric source label for a tool.
 
+        For runner tools (runner__mcp__tool format), returns the runner name
+        so dashboards can filter/group by runner identity.
+        For other tools, maps ToolSource enum to a fixed label.
+
         Args:
             tool_name: Tool name (may have runner prefix)
             tool_source: Tool source enum
 
         Returns:
-            Source label for metrics (native, local, system, configured)
+            Source label for metrics (runner name, native, system, configured)
         """
-        # Check for runner prefix (e.g., "runner__mcp__tool_name")
-        if tool_name.startswith("runner__") or "__runner__" in tool_name:
-            return MetricLabels.SOURCE_LOCAL
+        # Check for runner prefix using normalize_tool_name_for_metrics
+        # which correctly parses "macbook-pro-local__obsidian-mcp__tool"
+        _, runner_name = normalize_tool_name_for_metrics(tool_name)
+        if runner_name:
+            return runner_name
 
         # Map ToolSource to metric label
         return _SOURCE_TO_METRIC_LABEL.get(tool_source, MetricLabels.SOURCE_CONFIGURED)

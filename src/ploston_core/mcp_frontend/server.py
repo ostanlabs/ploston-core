@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from ploston_core.api.routers import is_runner_connected, send_tool_call_to_runner
@@ -17,7 +18,7 @@ from ploston_core.registry import ToolRegistry
 from ploston_core.runner_management.registry import RunnerRegistry
 from ploston_core.runner_management.router import parse_tool_prefix
 from ploston_core.telemetry import ChainDetector, instrument_tool_call, record_tool_result
-from ploston_core.types import ExecutionStatus, MCPTransport
+from ploston_core.types import ExecutionStatus, LogLevel, MCPTransport
 from ploston_core.types.internal import InternalToolSource
 
 if TYPE_CHECKING:
@@ -28,6 +29,20 @@ from .stdio import read_message, write_message
 from .types import MCPServerConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _split_tool_name(qualified_name: str) -> tuple[str, str]:
+    """Split a qualified tool name into (bridge, tool_name).
+
+    ``obsidian-mcp__read_docs`` → ``("obsidian-mcp", "read_docs")``
+
+    If the name does not contain ``__``, *bridge* is returned as an empty
+    string and *tool_name* is the original name.
+    """
+    if "__" in qualified_name:
+        bridge, _, tool = qualified_name.partition("__")
+        return bridge, tool
+    return "", qualified_name
 
 
 class MCPFrontend:
@@ -507,7 +522,56 @@ class MCPFrontend:
         Returns:
             MCP response
         """
+        start_ms = int(time.time() * 1000)
+        bridge, short_tool = _split_tool_name(tool_name)
+
+        # START event
+        if self._logger:
+            self._logger._log(
+                LogLevel.INFO,
+                "direct",
+                f"Direct tool call: {tool_name}",
+                {
+                    "source": "tool",
+                    "event": "direct_tool_called",
+                    "tool_name": short_tool,
+                    "bridge": bridge,
+                },
+            )
+
         result = await self._tool_invoker.invoke(tool_name, arguments)
+        duration_ms = int(time.time() * 1000) - start_ms
+
+        # RESULT events
+        if self._logger:
+            if result.success:
+                self._logger._log(
+                    LogLevel.INFO,
+                    "direct",
+                    f"Direct tool completed ({duration_ms}ms): {tool_name}",
+                    {
+                        "source": "tool",
+                        "event": "direct_tool_completed",
+                        "tool_name": short_tool,
+                        "bridge": bridge,
+                        "duration_ms": duration_ms,
+                    },
+                )
+            else:
+                self._logger._log(
+                    LogLevel.ERROR,
+                    "direct",
+                    f"Direct tool failed ({duration_ms}ms): {tool_name}",
+                    {
+                        "source": "tool",
+                        "event": "direct_tool_failed",
+                        "tool_name": short_tool,
+                        "bridge": bridge,
+                        "duration_ms": duration_ms,
+                        "error": result.error.message if result.error else "unknown",
+                        "error_type": result.error.code if result.error else "UNKNOWN",
+                    },
+                )
 
         # Chain detection (T-446): Process tool call for chain detection
         # Only for direct tool calls (not workflows)
@@ -600,25 +664,44 @@ class MCPFrontend:
                 http_status=503,
             )
 
-        # Instrument runner tool calls for telemetry (source="runner")
+        # Instrument runner tool calls for telemetry
         # tool_name is already mcp__actual_tool at this point (runner prefix stripped above)
+        # source = runner.name so dashboards can filter/group by runner identity
         # Extract bridge context for distributed topology labels (DEC-142)
         _bctx = bridge_context.get()
         _bridge_id = _bctx.bridge_id if _bctx else None
+        start_ms = int(time.time() * 1000)
+        bridge, short_tool = _split_tool_name(tool_name)
         async with instrument_tool_call(
             tool_name,  # "obsidian-mcp__list_files" — NOT prefixed with runner
-            source="runner",
+            source=runner.name,  # human-readable runner name as tool_source
             runner_id=runner.name,  # human-readable name, NOT runner.id (UUID)
             bridge_id=_bridge_id,
         ) as telemetry_result:
             try:
-                logger.info(f"Routing tool '{tool_name}' to runner '{runner_name}'")
+                # START event
+                if self._logger:
+                    self._logger._log(
+                        LogLevel.INFO,
+                        "direct",
+                        f"Direct runner tool call: {tool_name}",
+                        {
+                            "source": "tool",
+                            "event": "direct_tool_called",
+                            "tool_name": short_tool,
+                            "bridge": bridge,
+                            "runner_id": runner.name,
+                        },
+                    )
+
                 result = await send_tool_call_to_runner(
                     runner_id=runner.id,
                     tool_name=tool_name,
                     arguments=arguments,
                     timeout=60.0,
                 )
+
+                duration_ms = int(time.time() * 1000) - start_ms
 
                 # Result from runner is in format: {"output": ..., "error": ...}
                 # or {"content": [...], "isError": ...} if runner returns MCP format
@@ -627,9 +710,56 @@ class MCPFrontend:
                     # Runner returned MCP format directly
                     is_error = result.get("isError", False)
                     record_tool_result(telemetry_result, success=not is_error)
+                    if self._logger:
+                        if is_error:
+                            self._logger._log(
+                                LogLevel.ERROR,
+                                "direct",
+                                f"Direct runner tool failed ({duration_ms}ms): {tool_name}",
+                                {
+                                    "source": "tool",
+                                    "event": "direct_tool_failed",
+                                    "tool_name": short_tool,
+                                    "bridge": bridge,
+                                    "runner_id": runner.name,
+                                    "duration_ms": duration_ms,
+                                    "error": "runner returned error",
+                                    "error_type": "TOOL_FAILED",
+                                },
+                            )
+                        else:
+                            self._logger._log(
+                                LogLevel.INFO,
+                                "direct",
+                                f"Direct runner tool completed ({duration_ms}ms): {tool_name}",
+                                {
+                                    "source": "tool",
+                                    "event": "direct_tool_completed",
+                                    "tool_name": short_tool,
+                                    "bridge": bridge,
+                                    "runner_id": runner.name,
+                                    "duration_ms": duration_ms,
+                                },
+                            )
                     return result
                 elif "error" in result and result.get("error"):
                     record_tool_result(telemetry_result, success=False, error_code="TOOL_FAILED")
+                    if self._logger:
+                        self._logger._log(
+                            LogLevel.ERROR,
+                            "direct",
+                            f"Direct runner tool failed ({duration_ms}ms): {tool_name}",
+                            {
+                                "source": "tool",
+                                "event": "direct_tool_failed",
+                                "tool_name": short_tool,
+                                "bridge": bridge,
+                                "runner_id": runner.name,
+                                "duration_ms": duration_ms,
+                                "error": str(result["error"]),
+                                "error_type": "TOOL_FAILED",
+                            },
+                        )
                     return {
                         "content": [{"type": "text", "text": str(result["error"])}],
                         "isError": True,
@@ -637,6 +767,20 @@ class MCPFrontend:
                 else:
                     output = result.get("output", result)
                     record_tool_result(telemetry_result, success=True)
+                    if self._logger:
+                        self._logger._log(
+                            LogLevel.INFO,
+                            "direct",
+                            f"Direct runner tool completed ({duration_ms}ms): {tool_name}",
+                            {
+                                "source": "tool",
+                                "event": "direct_tool_completed",
+                                "tool_name": short_tool,
+                                "bridge": bridge,
+                                "runner_id": runner.name,
+                                "duration_ms": duration_ms,
+                            },
+                        )
                     return {
                         "content": [
                             {
@@ -650,6 +794,23 @@ class MCPFrontend:
                     }
 
             except TimeoutError:
+                duration_ms = int(time.time() * 1000) - start_ms
+                if self._logger:
+                    self._logger._log(
+                        LogLevel.ERROR,
+                        "direct",
+                        f"Direct runner tool failed ({duration_ms}ms): {tool_name}",
+                        {
+                            "source": "tool",
+                            "event": "direct_tool_failed",
+                            "tool_name": short_tool,
+                            "bridge": bridge,
+                            "runner_id": runner.name,
+                            "duration_ms": duration_ms,
+                            "error": f"Tool call to runner '{runner_name}' timed out",
+                            "error_type": "TimeoutError",
+                        },
+                    )
                 raise AELError(
                     code="TOOL_TIMEOUT",
                     category=ErrorCategory.TOOL,
@@ -657,7 +818,26 @@ class MCPFrontend:
                     tool_name=f"{runner_name}:{tool_name}",
                     http_status=504,
                 )
+            except AELError:
+                raise
             except Exception as e:
+                duration_ms = int(time.time() * 1000) - start_ms
+                if self._logger:
+                    self._logger._log(
+                        LogLevel.ERROR,
+                        "direct",
+                        f"Direct runner tool failed ({duration_ms}ms): {tool_name}",
+                        {
+                            "source": "tool",
+                            "event": "direct_tool_failed",
+                            "tool_name": short_tool,
+                            "bridge": bridge,
+                            "runner_id": runner.name,
+                            "duration_ms": duration_ms,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        },
+                    )
                 logger.exception(f"Error routing tool to runner: {e}")
                 raise AELError(
                     code="TOOL_EXECUTION_FAILED",

@@ -10,8 +10,11 @@ Implements S-182: Runner Registry (CP)
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import secrets
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -19,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ploston_core.telemetry.metrics import AELMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class RunnerStatus(str, Enum):
@@ -51,6 +56,8 @@ class Runner:
     available_tools: list[str | dict[str, Any]] = field(default_factory=list)
     token_hash: str = ""
     mcps: dict[str, dict] = field(default_factory=dict)
+    unavailable_mcps: dict[str, str] = field(default_factory=dict)
+    """Map of unavailable MCP name → last error string."""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -108,6 +115,8 @@ class RunnerRegistry:
         self._name_to_id: dict[str, str] = {}  # name -> id
         self._token_to_id: dict[str, str] = {}  # token_hash -> id
         self._metrics: AELMetrics | None = None
+        # Pub/sub: bridge SSE subscribers keyed by MCP name
+        self._mcp_subscribers: dict[str, list[asyncio.Queue[dict]]] = defaultdict(list)
 
     def set_metrics(self, metrics: AELMetrics) -> None:
         """Set the metrics instance for telemetry.
@@ -287,6 +296,103 @@ class RunnerRegistry:
         if result:
             self._update_metrics()
         return result
+
+    def update_unavailable_mcps(
+        self,
+        runner_id: str,
+        unavailable: list[dict[str, Any]],
+    ) -> Runner | None:
+        """Update the set of unavailable MCPs on a runner.
+
+        Also fans out ``mcp/unavailable`` events to bridge SSE subscribers.
+
+        Args:
+            runner_id: Runner ID
+            unavailable: List of dicts with ``name``, ``error``, ``log_path``
+
+        Returns:
+            Updated runner or ``None`` if not found
+        """
+        runner = self._runners.get(runner_id)
+        if not runner:
+            return None
+
+        new_map: dict[str, str] = {}
+        for entry in unavailable:
+            name = entry.get("name", "")
+            error = entry.get("error", "unavailable")
+            new_map[name] = error
+
+        runner.unavailable_mcps = new_map
+
+        # Fan out to subscribers
+        for mcp_name, error_msg in new_map.items():
+            event = {
+                "type": "mcp/unavailable",
+                "mcp_name": mcp_name,
+                "runner_id": runner_id,
+                "error": error_msg,
+            }
+            for queue in self._mcp_subscribers.get(mcp_name, []):
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    logger.warning(
+                        f"Dropped mcp/unavailable event for subscriber (queue full): {mcp_name}"
+                    )
+
+        return runner
+
+    # ── Pub/sub helpers ────────────────────────────────────
+
+    def subscribe_mcp(self, mcp_name: str) -> asyncio.Queue[dict]:
+        """Subscribe to events for a specific MCP.
+
+        Returns an :class:`asyncio.Queue` that will receive events such as
+        ``mcp/unavailable`` whenever that MCP's status changes on any runner.
+        """
+        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=64)
+        self._mcp_subscribers[mcp_name].append(queue)
+        return queue
+
+    def unsubscribe_mcp(self, mcp_name: str, queue: asyncio.Queue[dict]) -> None:
+        """Remove a subscriber queue for a specific MCP."""
+        subs = self._mcp_subscribers.get(mcp_name)
+        if subs:
+            try:
+                subs.remove(queue)
+            except ValueError:
+                pass
+
+    def get_mcp_status(self, mcp_name: str) -> dict[str, Any] | None:
+        """Return current status of a single MCP across all runners.
+
+        Looks through all connected runners and reports whether the MCP is
+        available, unavailable (with error), or unknown.
+        """
+        for runner in self._runners.values():
+            if runner.status != RunnerStatus.CONNECTED:
+                continue
+            # Check unavailable first
+            if mcp_name in runner.unavailable_mcps:
+                return {
+                    "mcp_name": mcp_name,
+                    "status": "unavailable",
+                    "runner_id": runner.id,
+                    "runner_name": runner.name,
+                    "error": runner.unavailable_mcps[mcp_name],
+                }
+            # Check available tools for this MCP prefix
+            for tool in runner.available_tools:
+                tool_name = self._get_tool_name(tool)
+                if tool_name.startswith(f"{mcp_name}__"):
+                    return {
+                        "mcp_name": mcp_name,
+                        "status": "available",
+                        "runner_id": runner.id,
+                        "runner_name": runner.name,
+                    }
+        return None
 
     def _get_tool_name(self, tool: str | dict[str, Any]) -> str:
         """Extract tool name from string or dict format.

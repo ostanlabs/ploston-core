@@ -260,3 +260,56 @@ async def get_runner_token(
             f"Use POST /api/v1/runners/{name}/regenerate-token to get a new token."
         ),
     )
+
+
+# ── MCP status endpoint ────────────────────────────────
+
+
+@runner_router.get("/{runner_name}/mcps/{mcp_name}/status")
+async def get_mcp_status(
+    request: Request,
+    runner_name: str = Path(..., description="Runner name"),
+    mcp_name: str = Path(..., description="MCP server name"),
+) -> dict:
+    """Get the current status of an MCP server on a specific runner.
+
+    Returns availability status, error message (if unavailable), and
+    runner metadata.
+    """
+    await auth_hook.check_permission(request, RunnerPermissions.READ)
+    registry = _get_registry(request)
+    runner = registry.get_by_name(runner_name)
+    if not runner:
+        raise HTTPException(status_code=404, detail=f"Runner '{runner_name}' not found")
+
+    if runner.status != RunnerStatus.CONNECTED:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Runner '{runner_name}' is not connected",
+        )
+
+    # Check unavailable first
+    if mcp_name in runner.unavailable_mcps:
+        return {
+            "mcp_name": mcp_name,
+            "status": "unavailable",
+            "runner_id": runner.id,
+            "runner_name": runner.name,
+            "error": runner.unavailable_mcps[mcp_name],
+        }
+
+    # Check available tools
+    for tool in runner.available_tools:
+        tool_name = tool if isinstance(tool, str) else tool.get("name", "")
+        if tool_name.startswith(f"{mcp_name}__"):
+            return {
+                "mcp_name": mcp_name,
+                "status": "available",
+                "runner_id": runner.id,
+                "runner_name": runner.name,
+            }
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"MCP '{mcp_name}' not found on runner '{runner_name}'",
+    )

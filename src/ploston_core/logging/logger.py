@@ -1,6 +1,7 @@
 """AEL Logger - Hierarchical colored logging for workflow execution."""
 
 import json
+import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -45,6 +46,14 @@ class LogConfig:
 class AELLogger:
     """Main logger facade. Creates component-specific loggers."""
 
+    # Map LogLevel → stdlib logging level for OTEL bridge
+    _LEVEL_TO_STDLIB = {
+        LogLevel.DEBUG: logging.DEBUG,
+        LogLevel.INFO: logging.INFO,
+        LogLevel.WARN: logging.WARNING,
+        LogLevel.ERROR: logging.ERROR,
+    }
+
     def __init__(self, config: LogConfig | None = None):
         """Initialize logger with configuration.
 
@@ -58,6 +67,14 @@ class AELLogger:
             LogLevel.WARN: 2,
             LogLevel.ERROR: 3,
         }
+        # Stdlib logger for OTEL bridge.  LoggingInstrumentor attaches an
+        # OTELHandler to the root logger, so any stdlib log record emitted
+        # here is forwarded to the OTEL LoggerProvider → Loki.
+        # propagate=True (default) ensures the record reaches the root handler
+        # added by LoggingInstrumentor.  We set no handlers of our own so
+        # there is no duplicate console output.
+        self._stdlib_logger = logging.getLogger("ploston.execution")
+        self._stdlib_logger.setLevel(logging.DEBUG)
 
     def workflow(self, workflow_id: str, execution_id: str) -> "WorkflowLogger":
         """Get a logger scoped to a workflow execution.
@@ -115,6 +132,14 @@ class AELLogger:
             self._log_json(level, component, message, context)
         else:
             self._log_colored(level, component, message, context)
+
+        # Bridge to stdlib logging so LoggingInstrumentor forwards the
+        # record (with context attributes) to the OTEL LoggerProvider → Loki.
+        stdlib_level = self._LEVEL_TO_STDLIB.get(level, logging.INFO)
+        extra = {"component": component}
+        if context:
+            extra.update(context)
+        self._stdlib_logger.log(stdlib_level, message, extra=extra)
 
     def _log_json(
         self,
@@ -208,6 +233,7 @@ class WorkflowLogger:
             version: Optional workflow version
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.workflow_id,
             "execution_id": self.execution_id,
             "event": "workflow_started",
@@ -229,6 +255,7 @@ class WorkflowLogger:
             step_count: Number of steps executed
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.workflow_id,
             "execution_id": self.execution_id,
             "event": "workflow_completed",
@@ -251,6 +278,7 @@ class WorkflowLogger:
             duration_ms: Execution duration in milliseconds
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.workflow_id,
             "execution_id": self.execution_id,
             "event": "workflow_failed",
@@ -297,6 +325,7 @@ class StepLogger:
             tool_name: Optional tool name for tool steps
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.workflow_id,
             "execution_id": self.parent.execution_id,
             "step_id": self.step_id,
@@ -320,6 +349,7 @@ class StepLogger:
             result_preview: Optional preview of result
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.workflow_id,
             "execution_id": self.parent.execution_id,
             "step_id": self.step_id,
@@ -341,6 +371,7 @@ class StepLogger:
             reason: Reason for skipping
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.workflow_id,
             "execution_id": self.parent.execution_id,
             "step_id": self.step_id,
@@ -359,6 +390,7 @@ class StepLogger:
             error: Exception that caused failure
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.workflow_id,
             "execution_id": self.parent.execution_id,
             "step_id": self.step_id,
@@ -380,6 +412,7 @@ class StepLogger:
             delay_seconds: Delay before retry in seconds
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.workflow_id,
             "execution_id": self.parent.execution_id,
             "step_id": self.step_id,
@@ -432,6 +465,7 @@ class ToolLogger:
             params: Optional tool parameters
         """
         context: dict[str, Any] = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -454,6 +488,7 @@ class ToolLogger:
             duration_ms: Execution duration in milliseconds
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -482,6 +517,7 @@ class ToolLogger:
             duration_ms: Execution duration in milliseconds
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -511,6 +547,7 @@ class SandboxLogger:
     def executing(self) -> None:
         """Log sandbox execution start."""
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -524,6 +561,7 @@ class SandboxLogger:
     def imports_validated(self) -> None:
         """Log successful import validation."""
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -542,6 +580,7 @@ class SandboxLogger:
             tool_calls: Number of tool calls made
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,
@@ -563,6 +602,7 @@ class SandboxLogger:
             message_text: Error message
         """
         context = {
+            "source": "workflow",
             "workflow_id": self.parent.parent.workflow_id,
             "execution_id": self.parent.parent.execution_id,
             "step_id": self.parent.step_id,

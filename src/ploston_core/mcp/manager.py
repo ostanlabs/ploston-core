@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from ploston_core.config.models import ToolsConfig
@@ -30,6 +31,7 @@ class MCPClientManager:
         logger: AELLogger | None = None,
         error_factory: ErrorFactory | None = None,
         on_tools_changed: ManagerToolChangeCallback | None = None,
+        log_dir: Path | None = None,
     ):
         """Initialize MCP client manager.
 
@@ -38,17 +40,27 @@ class MCPClientManager:
             logger: Optional logger
             error_factory: Optional error factory
             on_tools_changed: Optional callback when tools change on any server
+            log_dir: Optional directory for MCP server log files.
+                     When set, each MCP server's stderr is captured to
+                     ``log_dir / "<name>.log"``.
         """
         self._connections: dict[str, MCPConnection] = {}
         self._config = config
         self._logger = logger
         self._error_factory = error_factory
         self._on_tools_changed = on_tools_changed
+        self._log_dir: Path | None = log_dir
 
     def _log(self, level: LogLevel, message: str, **kwargs: Any) -> None:
         """Log message if logger available."""
         if self._logger:
             self._logger._log(level, "mcp.manager", message, **kwargs)
+
+    def _mcp_log_file(self, name: str) -> Path | None:
+        """Get log file path for a named MCP server, or None if logging disabled."""
+        if self._log_dir is None:
+            return None
+        return self._log_dir / f"{name}.log"
 
     async def connect_all(self) -> dict[str, ServerStatus]:
         """Connect to all configured MCP servers.
@@ -72,6 +84,7 @@ class MCPClientManager:
                     config=server_config,
                     logger=self._logger,
                     on_tools_changed=self._handle_tools_changed,
+                    log_file=self._mcp_log_file(name),
                 )
 
         # Connect in parallel
@@ -293,6 +306,7 @@ class MCPClientManager:
                 config=new_config.mcp_servers[name],
                 logger=self._logger,
                 on_tools_changed=self._handle_tools_changed,
+                log_file=self._mcp_log_file(name),
             )
             self._connections[name] = conn
             await self._connect_one(name, conn)
@@ -318,6 +332,7 @@ class MCPClientManager:
                     config=new_server_config,
                     logger=self._logger,
                     on_tools_changed=self._handle_tools_changed,
+                    log_file=self._mcp_log_file(name),
                 )
                 self._connections[name] = new_conn
                 await self._connect_one(name, new_conn)
