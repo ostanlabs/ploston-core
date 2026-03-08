@@ -166,3 +166,34 @@ class TestImportConfig:
 
             assert result["success"] is True
             assert len(result.get("secrets_detected", [])) > 0
+
+    @pytest.mark.asyncio
+    async def test_import_reserved_name_system(self, registry, mock_staged_config):
+        """U-30: Importing config with MCP server named 'system' is rejected."""
+        with patch("ploston_core.config.tools.import_config.ConfigImporter") as mock_importer_class:
+            mock_importer = MagicMock()
+            mock_result = MagicMock()
+            mock_result.imported = ["system"]
+            mock_result.skipped = []
+            mock_result.warnings = []
+            mock_result.errors = []
+            mock_result.secrets_detected = []
+            # The importer returns servers dict with reserved name
+            mock_result.servers = {"system": {"command": "npx", "transport": "stdio"}}
+            mock_importer.import_config.return_value = mock_result
+            mock_importer.load_source_config.return_value = {"mcpServers": {"system": {}}}
+            mock_importer.get_source_config_path.return_value = "/mock/path"
+            mock_importer_class.return_value = mock_importer
+
+            result = await registry.call(
+                "ploston:import_config",
+                {
+                    "source": "claude_desktop",
+                },
+            )
+
+            # The validation should flag the reserved name
+            validation_errors = result.get("validation", {}).get("errors", [])
+            assert any(e.get("code") == "RESERVED_NAME" for e in validation_errors), (
+                f"Expected RESERVED_NAME error, got: {result}"
+            )

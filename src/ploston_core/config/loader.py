@@ -323,7 +323,22 @@ class ConfigLoader:
                                 )
                             )
 
-        return ValidationResult(valid=True, errors=errors, warnings=warnings)
+        # Validate MCP server names — reject reserved names
+        if "tools" in data and isinstance(data["tools"], dict):
+            mcp_servers = data["tools"].get("mcp_servers", {})
+            if isinstance(mcp_servers, dict) and "system" in mcp_servers:
+                errors.append(
+                    ValidationIssue(
+                        path="tools.mcp_servers.system",
+                        message=(
+                            "MCP server name 'system' is reserved by Ploston for "
+                            "built-in system tools. Choose a different name."
+                        ),
+                        severity="error",
+                    )
+                )
+
+        return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     def get(self) -> AELConfig:
         """Get current configuration.

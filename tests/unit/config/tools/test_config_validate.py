@@ -85,3 +85,34 @@ class TestHandleConfigValidate:
         result = await handle_config_validate({}, mock_staged_config)
 
         assert result["staged_changes_count"] == 2
+
+
+class TestLoaderValidateReservedName:
+    """U-28: ConfigLoader.validate() rejects 'system' as MCP server name."""
+
+    def test_validate_rejects_system_mcp_server(self):
+        """ConfigLoader.validate() flags 'system' as reserved."""
+        from ploston_core.config import ConfigLoader
+
+        config_data = {
+            "tools": {
+                "mcp_servers": {
+                    "system": {
+                        "command": "npx",
+                        "transport": "stdio",
+                    },
+                    "github": {
+                        "command": "npx",
+                        "transport": "stdio",
+                    },
+                }
+            }
+        }
+
+        loader = ConfigLoader()
+        result = loader.validate(config_data)
+
+        assert result.valid is False
+        assert any(
+            "system" in e.message.lower() and "reserved" in e.message.lower() for e in result.errors
+        )

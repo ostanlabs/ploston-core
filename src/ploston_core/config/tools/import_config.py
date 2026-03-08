@@ -123,6 +123,20 @@ def _validate_imported_servers(
     secret_detector = SecretDetector()
 
     for name, server_config in servers.items():
+        # Reject reserved server names
+        if name == "system":
+            errors.append(
+                {
+                    "code": "RESERVED_NAME",
+                    "field": f"tools.mcp_servers.{name}",
+                    "message": (
+                        "MCP server name 'system' is reserved by Ploston for built-in "
+                        "system tools. Rename this server in your source config."
+                    ),
+                }
+            )
+            continue
+
         transport = server_config.get("transport", "stdio")
 
         # Check transport-specific requirements

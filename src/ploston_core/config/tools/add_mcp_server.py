@@ -74,12 +74,22 @@ async def handle_add_mcp_server(
     if "timeout" in arguments:
         server_config["timeout"] = arguments["timeout"]
 
+    # Validate before staging — reject reserved names early
+    validation = _validate_mcp_server(name, server_config, staged_config)
+    if not validation["valid"]:
+        return {
+            "success": False,
+            "error": validation["errors"][0]["message"]
+            if validation["errors"]
+            else "Validation failed",
+            "validation": validation,
+            "staged_changes_count": _count_staged_changes(staged_config),
+            "ready_to_apply": False,
+        }
+
     # Stage the change
     path = f"tools.mcp_servers.{name}"
     staged_config.set(path, server_config)
-
-    # Validate the entire config
-    validation = _validate_mcp_server(name, server_config, staged_config)
 
     # Count staged changes
     staged_changes_count = _count_staged_changes(staged_config)
@@ -101,6 +111,20 @@ def _validate_mcp_server(
     """Validate an MCP server configuration."""
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+
+    # Reject reserved server names
+    if name == "system":
+        errors.append(
+            {
+                "code": "RESERVED_NAME",
+                "field": "name",
+                "message": (
+                    "MCP server name 'system' is reserved by Ploston for built-in "
+                    "system tools. Choose a different name."
+                ),
+            }
+        )
+        return {"valid": False, "errors": errors, "warnings": warnings}
 
     transport = server_config.get("transport", "stdio")
 
