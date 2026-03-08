@@ -290,12 +290,15 @@ async def get_mcp_status(
 
     # Check unavailable first
     if mcp_name in runner.unavailable_mcps:
+        detail = runner.unavailable_mcps[mcp_name]
         return {
             "mcp_name": mcp_name,
             "status": "unavailable",
             "runner_id": runner.id,
             "runner_name": runner.name,
-            "error": runner.unavailable_mcps[mcp_name],
+            "error": detail.get("error", "unavailable"),
+            "log_path": detail.get("log_path", ""),
+            "crash_snapshot": detail.get("crash_snapshot", ""),
         }
 
     # Check available tools

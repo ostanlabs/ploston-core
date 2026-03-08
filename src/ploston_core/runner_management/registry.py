@@ -56,8 +56,8 @@ class Runner:
     available_tools: list[str | dict[str, Any]] = field(default_factory=list)
     token_hash: str = ""
     mcps: dict[str, dict] = field(default_factory=dict)
-    unavailable_mcps: dict[str, str] = field(default_factory=dict)
-    """Map of unavailable MCP name → last error string."""
+    unavailable_mcps: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Map of unavailable MCP name → detail dict (error, log_path, crash_snapshot)."""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -317,21 +317,26 @@ class RunnerRegistry:
         if not runner:
             return None
 
-        new_map: dict[str, str] = {}
+        new_map: dict[str, dict[str, Any]] = {}
         for entry in unavailable:
             name = entry.get("name", "")
-            error = entry.get("error", "unavailable")
-            new_map[name] = error
+            new_map[name] = {
+                "error": entry.get("error", "unavailable"),
+                "log_path": entry.get("log_path", ""),
+                "crash_snapshot": entry.get("crash_snapshot", ""),
+            }
 
         runner.unavailable_mcps = new_map
 
         # Fan out to subscribers
-        for mcp_name, error_msg in new_map.items():
+        for mcp_name, detail in new_map.items():
             event = {
                 "type": "mcp/unavailable",
                 "mcp_name": mcp_name,
                 "runner_id": runner_id,
-                "error": error_msg,
+                "error": detail["error"],
+                "log_path": detail.get("log_path", ""),
+                "crash_snapshot": detail.get("crash_snapshot", ""),
             }
             for queue in self._mcp_subscribers.get(mcp_name, []):
                 try:
@@ -375,12 +380,15 @@ class RunnerRegistry:
                 continue
             # Check unavailable first
             if mcp_name in runner.unavailable_mcps:
+                detail = runner.unavailable_mcps[mcp_name]
                 return {
                     "mcp_name": mcp_name,
                     "status": "unavailable",
                     "runner_id": runner.id,
                     "runner_name": runner.name,
-                    "error": runner.unavailable_mcps[mcp_name],
+                    "error": detail.get("error", "unavailable"),
+                    "log_path": detail.get("log_path", ""),
+                    "crash_snapshot": detail.get("crash_snapshot", ""),
                 }
             # Check available tools for this MCP prefix
             for tool in runner.available_tools:
