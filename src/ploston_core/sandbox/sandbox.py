@@ -451,7 +451,17 @@ class PythonExecSandbox:
             except Exception as e:
                 success = False
                 result = None
-                error = f"{type(e).__name__}: {str(e)}"
+                # Walk traceback to find the <sandbox> frame for line number
+                lineno = None
+                tb = e.__traceback__
+                while tb is not None:
+                    if tb.tb_frame.f_code.co_filename == "<sandbox>":
+                        lineno = tb.tb_lineno
+                    tb = tb.tb_next
+                if lineno is not None:
+                    error = f"{type(e).__name__} at line {lineno}: {str(e)}"
+                else:
+                    error = f"{type(e).__name__}: {str(e)}"
 
             execution_time = time.perf_counter() - start_time
 

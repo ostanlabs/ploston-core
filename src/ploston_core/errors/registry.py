@@ -169,9 +169,9 @@ class ErrorRegistry:
         self._templates["CODE_RUNTIME"] = ErrorTemplate(
             code="CODE_RUNTIME",
             category=ErrorCategory.EXECUTION,
-            message_template="Runtime error in code block",
-            detail_template="The Python code raised an exception during execution",
-            suggestion_template="Check the code logic and error message",
+            message_template="Runtime error in code block: {message}",
+            detail_template="The Python code raised an exception: {message}",
+            suggestion_template="Check the code logic and fix the exception",
             default_retryable=False,
             default_http_status=500,
         )

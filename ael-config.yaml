@@ -60,7 +60,7 @@ logging:
   options:
     show_params: true
     show_results: true
-    truncate_at: 200
+    truncate_at: 5000
 plugins: []
 security:
   require_auth: false

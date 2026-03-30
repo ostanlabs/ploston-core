@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ploston_core.registry import ToolRegistry
 
     from .factory import SandboxFactory
+    from .runner_dispatcher import RunnerDispatcher
 
 
 class ToolInvoker(ToolCallerProtocol):
@@ -47,6 +48,7 @@ class ToolInvoker(ToolCallerProtocol):
         sandbox_factory: "SandboxFactory",
         logger: "AELLogger | None" = None,
         error_factory: "ErrorFactory | None" = None,
+        runner_dispatcher: "RunnerDispatcher | None" = None,
     ):
         """Initialize tool invoker.
 
@@ -56,12 +58,14 @@ class ToolInvoker(ToolCallerProtocol):
             sandbox_factory: Factory for creating sandboxes
             logger: Optional logger
             error_factory: Optional error factory
+            runner_dispatcher: Optional dispatcher for runner-hosted tools (DEC-161)
         """
         self._registry = tool_registry
         self._mcp_manager = mcp_manager
         self._sandbox_factory = sandbox_factory
         self._logger = logger
         self._error_factory = error_factory
+        self._runner_dispatcher = runner_dispatcher
 
     # ─────────────────────────────────────────────────────────────
     # ToolCallerProtocol implementation
@@ -144,6 +148,78 @@ class ToolInvoker(ToolCallerProtocol):
             AELError(TOOL_TIMEOUT) if call times out
             AELError(TOOL_FAILED) if tool returns error
         """
+        # Normalize tool name for metrics: strip runner prefix if present
+        # Does NOT change tool_name for routing — only affects metric labels
+        metric_tool_name, inferred_runner_id = normalize_tool_name_for_metrics(tool_name)
+
+        # ── Runner-hosted tool: bypass ToolRegistry entirely ──
+        if inferred_runner_id:
+            bare_tool_name = metric_tool_name  # e.g. "github__actions_list"
+
+            # Config guard: raise BEFORE opening the telemetry context manager.
+            # This is a misconfiguration, not a tool invocation attempt, so it
+            # intentionally falls outside telemetry.
+            if self._runner_dispatcher is None:
+                raise create_error(
+                    "TOOL_UNAVAILABLE",
+                    tool_name=tool_name,
+                    reason="Runner tool called but no RunnerDispatcher configured",
+                )
+
+            # Log with metric_tool_name (no runner prefix) so Grafana dashboards
+            # that parse 'tool_name' from structured logs group correctly.
+            if self._logger:
+                self._logger._log(
+                    LogLevel.INFO,
+                    "invoker",
+                    f"Invoking runner tool: {metric_tool_name}",
+                    {
+                        "tool_name": metric_tool_name,
+                        "source": inferred_runner_id,
+                        "runner_id": inferred_runner_id,
+                        "step_id": step_id,
+                        "execution_id": execution_id,
+                    },
+                )
+
+            start = time.time()
+            async with instrument_tool_call(
+                metric_tool_name,
+                source=inferred_runner_id,
+                runner_id=inferred_runner_id,
+            ) as telemetry_result:
+                try:
+                    output = await self._runner_dispatcher.dispatch(
+                        runner_name=inferred_runner_id,
+                        tool_name=bare_tool_name,
+                        arguments=params,
+                        timeout=timeout_seconds or 60.0,
+                    )
+                    duration_ms = int((time.time() - start) * 1000)
+                    record_tool_result(telemetry_result, success=True)
+                    return ToolCallResult(
+                        success=True,
+                        output=output,
+                        duration_ms=duration_ms,
+                        tool_name=tool_name,
+                    )
+                except Exception as e:
+                    duration_ms = int((time.time() - start) * 1000)
+                    record_tool_result(
+                        telemetry_result,
+                        success=False,
+                        error_code=type(e).__name__,
+                    )
+                    return ToolCallResult(
+                        success=False,
+                        output=None,
+                        duration_ms=duration_ms,
+                        tool_name=tool_name,
+                        error=e,
+                    )
+
+        # ── CP-direct path (no runner prefix) ──
+
         # 1. Get tool from registry first to determine source for telemetry
         tool = self._registry.get_or_raise(tool_name)
 
@@ -158,10 +234,6 @@ class ToolInvoker(ToolCallerProtocol):
 
         # 3. Determine source label for metrics
         source_label = self._get_source_label(tool_name, router.source)
-
-        # Normalize tool name for metrics: strip runner prefix if present
-        # Does NOT change tool_name for routing — only affects metric labels
-        metric_tool_name, inferred_runner_id = normalize_tool_name_for_metrics(tool_name)
 
         # Instrument tool invocation with telemetry (including source)
         async with instrument_tool_call(

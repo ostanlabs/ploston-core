@@ -358,3 +358,113 @@ class TestHTTPTransportDualMode:
         # MCP health doesn't have "source" field
         assert "source" not in data
         assert data["status"] == "ok"
+
+
+class TestBridgeRunnerHeader:
+    """U-25, U-26: X-Ploston-Runner / X-Bridge-Runner backward compat."""
+
+    @pytest.fixture
+    def message_handler(self):
+        handler = AsyncMock()
+        handler.return_value = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"tools": []},
+        }
+        return handler
+
+    @pytest.fixture
+    def transport(self, message_handler):
+        return HTTPTransport(
+            message_handler=message_handler,
+            host="127.0.0.1",
+            port=8022,
+            cors_origins=["*"],
+        )
+
+    @pytest.fixture
+    def client(self, transport):
+        transport.start()
+        return TestClient(transport.app)
+
+    def test_u25_new_header_sets_runner_name(self, client, message_handler):
+        """U-25: X-Ploston-Runner header populates BridgeContext.runner_name."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["runner_name"] = ctx.runner_name if ctx else None
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"tools": []},
+            }
+
+        message_handler.side_effect = capture_handler
+
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={
+                "X-Bridge-ID": "bridge-123",
+                "X-Ploston-Runner": "macbook-pro-local",
+            },
+        )
+        assert captured.get("runner_name") == "macbook-pro-local"
+
+    def test_u26_fallback_header_sets_runner_name(self, client, message_handler):
+        """U-26: X-Bridge-Runner (old name) still populates BridgeContext.runner_name."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["runner_name"] = ctx.runner_name if ctx else None
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"tools": []},
+            }
+
+        message_handler.side_effect = capture_handler
+
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={
+                "X-Bridge-ID": "bridge-123",
+                "X-Bridge-Runner": "macbook-pro-local",
+            },
+        )
+        assert captured.get("runner_name") == "macbook-pro-local"
+
+    def test_new_header_takes_precedence(self, client, message_handler):
+        """X-Ploston-Runner takes precedence over X-Bridge-Runner when both present."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["runner_name"] = ctx.runner_name if ctx else None
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"tools": []},
+            }
+
+        message_handler.side_effect = capture_handler
+
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={
+                "X-Bridge-ID": "bridge-123",
+                "X-Ploston-Runner": "new-runner",
+                "X-Bridge-Runner": "old-runner",
+            },
+        )
+        assert captured.get("runner_name") == "new-runner"

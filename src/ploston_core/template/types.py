@@ -20,6 +20,7 @@ class TemplateContext:
     steps: dict[str, StepOutput]  # Previous step outputs (wrapped)
     config: dict[str, Any]  # Workflow config
     execution_id: str  # Current execution ID
+    workflow: dict[str, str] | None = None  # Workflow metadata (name, version, start_time)
 
 
 @dataclass

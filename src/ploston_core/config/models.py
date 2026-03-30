@@ -155,7 +155,7 @@ class LoggingOptionsConfig:
 
     show_params: bool = True
     show_results: bool = True
-    truncate_at: int = 200
+    truncate_at: int = 5000
 
 
 @dataclass

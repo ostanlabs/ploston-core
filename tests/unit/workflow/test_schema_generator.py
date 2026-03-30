@@ -329,3 +329,83 @@ class TestWorkflowToolsNotification:
         provider._registry.list_workflows.return_value = []
         await provider.call("workflow_list", {})
         cb.assert_not_awaited()
+
+
+class TestBuildAvailableTools:
+    """Verify _build_available_tools handles str and dict tool entries."""
+
+    def _make_provider(self, tool_registry=None, runner_registry=None):
+        from ploston_core.workflow.tools import WorkflowToolsProvider
+
+        registry = MagicMock()
+        return WorkflowToolsProvider(
+            registry,
+            tool_registry=tool_registry,
+            runner_registry=runner_registry,
+        )
+
+    def test_runner_tools_as_strings(self):
+        """Runner available_tools as plain strings (mcp__tool)."""
+        runner = MagicMock()
+        runner.name = "my-runner"
+        runner.available_tools = ["github__actions_list", "github__list_commits", "fs__read_file"]
+
+        runner_reg = MagicMock()
+        runner_reg.list.return_value = [runner]
+
+        provider = self._make_provider(runner_registry=runner_reg)
+        result = provider._build_available_tools()
+
+        # Should group by mcp_server
+        by_server = {g["mcp_server"]: g for g in result}
+        assert "github" in by_server
+        assert sorted(by_server["github"]["tools"]) == ["actions_list", "list_commits"]
+        assert by_server["github"]["runner"] == "my-runner"
+        assert "fs" in by_server
+        assert by_server["fs"]["tools"] == ["read_file"]
+
+    def test_runner_tools_as_dicts(self):
+        """Runner available_tools as dicts with name/description/inputSchema."""
+        runner = MagicMock()
+        runner.name = "my-runner"
+        runner.available_tools = [
+            {"name": "github__actions_list", "description": "List actions", "inputSchema": {}},
+            {"name": "github__list_commits", "description": "List commits", "inputSchema": {}},
+            {"name": "fs__read_file", "description": "Read file", "inputSchema": {}},
+        ]
+
+        runner_reg = MagicMock()
+        runner_reg.list.return_value = [runner]
+
+        provider = self._make_provider(runner_registry=runner_reg)
+        result = provider._build_available_tools()
+
+        by_server = {g["mcp_server"]: g for g in result}
+        assert "github" in by_server
+        assert sorted(by_server["github"]["tools"]) == ["actions_list", "list_commits"]
+        assert "fs" in by_server
+        assert by_server["fs"]["tools"] == ["read_file"]
+
+    def test_runner_tools_mixed_str_and_dict(self):
+        """Runner available_tools can have a mix of str and dict entries."""
+        runner = MagicMock()
+        runner.name = "my-runner"
+        runner.available_tools = [
+            "github__actions_list",
+            {"name": "fs__read_file", "description": "Read", "inputSchema": {}},
+        ]
+
+        runner_reg = MagicMock()
+        runner_reg.list.return_value = [runner]
+
+        provider = self._make_provider(runner_registry=runner_reg)
+        result = provider._build_available_tools()
+
+        by_server = {g["mcp_server"]: g for g in result}
+        assert "github" in by_server
+        assert "fs" in by_server
+
+    def test_no_registries(self):
+        """Returns empty when neither registry is provided."""
+        provider = self._make_provider()
+        assert provider._build_available_tools() == []

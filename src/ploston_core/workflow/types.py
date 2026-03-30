@@ -70,6 +70,9 @@ class StepDefinition:
     # Missing tool handling (tool steps only)
     on_missing_tool: OnMissingTool | None = None
 
+    # Conditional execution (Jinja2 expression evaluated to truthy/falsy)
+    when: str | None = None
+
     @property
     def step_type(self) -> StepType:
         """Get step type (TOOL or CODE)."""

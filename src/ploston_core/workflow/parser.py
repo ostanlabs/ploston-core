@@ -110,6 +110,7 @@ def parse_workflow_yaml(
             timeout=step_data.get("timeout"),
             retry=retry,
             on_missing_tool=on_missing_tool,
+            when=step_data.get("when"),
         )
         steps.append(step)
 

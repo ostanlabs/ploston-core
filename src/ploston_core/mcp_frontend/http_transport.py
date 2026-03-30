@@ -41,7 +41,7 @@ class BridgeContext:
     bridge_expose: str | None = None
     queue_drops: int = 0
     session_start: str | None = None
-    runner_name: str | None = None  # DEC-157: X-Bridge-Runner header
+    runner_name: str | None = None  # DEC-157/DEC-159: X-Ploston-Runner header
 
 
 #: Per-request bridge context.  Set in ``_handle_mcp_request``.
@@ -153,12 +153,17 @@ class HTTPTransport:
                 _drops = int(_drops_str)
             except (ValueError, TypeError):
                 _drops = 0
+            # DEC-159: Read X-Ploston-Runner, fall back to X-Bridge-Runner
+            # for backward compat (remove fallback in next release).
+            _runner_name = request.headers.get("X-Ploston-Runner") or request.headers.get(
+                "X-Bridge-Runner"
+            )
             ctx = BridgeContext(
                 bridge_id=_bridge_id,
                 bridge_expose=request.headers.get("X-Bridge-Expose"),
                 queue_drops=_drops,
                 session_start=request.headers.get("X-Bridge-Session-Start"),
-                runner_name=request.headers.get("X-Bridge-Runner"),
+                runner_name=_runner_name,
             )
             bridge_context.set(ctx)
 

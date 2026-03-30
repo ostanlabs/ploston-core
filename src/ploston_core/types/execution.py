@@ -1,6 +1,6 @@
 """Shared execution types for AEL."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -21,6 +21,9 @@ class StepOutput:
     success: bool  # Whether step succeeded
     duration_ms: int  # Execution time
     step_id: str  # Step identifier
+    status: str = "completed"  # "completed" | "failed" | "skipped"
+    error: str | None = None  # Error message if failed
+    debug_log: list[str] = field(default_factory=list)  # context.log() entries
 
 
 @dataclass

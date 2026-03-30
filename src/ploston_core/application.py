@@ -382,7 +382,7 @@ class PlostApplication:
         if telemetry and telemetry.get("meter"):
             redis_client = None
             if self.redis_config_store and self.redis_config_store.connected:
-                redis_client = self.redis_config_store._redis  # reuse existing connection
+                redis_client = self.redis_config_store._client  # reuse existing connection
             chain_detector = ChainDetector(
                 redis_client=redis_client,
                 meter=telemetry["meter"],
