@@ -260,8 +260,12 @@ def _initialize_metrics(ael_metrics: AELMetrics, meter: metrics.Meter) -> None:
     ael_metrics.step_executions_total.add(
         0, {"workflow_id": "_init", "step_id": "_init", "status": "init"}
     )
-    ael_metrics.tool_invocations_total.add(0, {"tool_name": "_init", "status": "init"})
-    ael_metrics.chain_links_total.add(0, {"from_tool": "_init", "to_tool": "_init"})
+    ael_metrics.tool_invocations_total.add(
+        0, {"tool_name": "_init", "status": "init", "bridge_id": "_init", "runner_id": "_init"}
+    )
+    ael_metrics.chain_links_total.add(
+        0, {"from_tool": "_init", "to_tool": "_init", "bridge_id": "_init", "runner_id": "_init"}
+    )
 
     # Initialize gauges
     ael_metrics.active_workflows.add(0, {"workflow_id": "_init"})
@@ -287,6 +291,26 @@ def _initialize_metrics(ael_metrics: AELMetrics, meter: metrics.Meter) -> None:
     token_estimator._cost_saved_cents_total.add(0, {"workflow_name": "_init", "model": "_init"})
     token_estimator._raw_mcp_estimate_total.add(0, {"workflow_name": "_init"})
     token_estimator._tokens_saved_per_execution.record(0, {"workflow_name": "_init"})
+
+    # Initialize Tier-4 chain detection metrics (sequence pairs + temporal co-occurrence)
+    # These are created by ChainDetector._setup_metrics() but need seeds here so they
+    # appear in Prometheus at startup before any chain detection events fire.
+    # OTel SDK deduplicates counter registrations by name, so this shares the same
+    # underlying instrument as the real ChainDetector instance created later.
+    from .chain_detector import ChainDetector as _ChainDetector
+
+    _chain_detector_seed = _ChainDetector(meter=meter)
+    if hasattr(_chain_detector_seed, "_sequence_pairs_total"):
+        _chain_detector_seed._sequence_pairs_total.add(
+            0, {"from_tool": "_init", "to_tool": "_init", "session_id": "_init"}
+        )
+    if hasattr(_chain_detector_seed, "_temporal_cooccurrence_total"):
+        # Note: temporal counter uses tool_a/tool_b labels (matches chain_detector.py emission)
+        _chain_detector_seed._temporal_cooccurrence_total.add(
+            0, {"tool_a": "_init", "tool_b": "_init", "chunk_id": "_init"}
+        )
+    # ploston_chain_composite_score is an observable gauge —
+    # it appears automatically once ChainDetector registers it at startup. No seed needed.
 
 
 def get_telemetry() -> dict[str, Any] | None:

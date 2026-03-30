@@ -89,8 +89,8 @@ class TestRegisterFromYamlPersist:
         assert target.exists(), "Workflow YAML should be written to disk"
         assert target.read_text() == SAMPLE_YAML
 
-    def test_persist_writes_to_redis(self, tmp_path: Path):
-        """persist=True with Redis connected writes to Redis, not disk."""
+    def test_persist_writes_to_redis_and_disk(self, tmp_path: Path):
+        """persist=True with Redis connected writes to both Redis and disk (dual-write)."""
         config = _make_config(tmp_path)
         redis_store = _make_redis_store(connected=True)
         registry = WorkflowRegistry(_make_tool_registry(), config, redis_store=redis_store)
@@ -108,7 +108,8 @@ class TestRegisterFromYamlPersist:
 
         redis_store.set_value.assert_called_once_with("workflows:test-workflow", SAMPLE_YAML)
         target = Path(config.directory) / "test-workflow.yaml"
-        assert not target.exists()
+        assert target.exists(), "Dual-write: disk copy should exist even when Redis is available"
+        assert target.read_text() == SAMPLE_YAML
 
     def test_no_persist_does_not_write(self, tmp_path: Path):
         """persist=False (default) does not write to disk or Redis."""
@@ -147,8 +148,8 @@ class TestUnregisterPersistence:
         finally:
             loop.close()
 
-    def test_unregister_api_source_deletes_redis_key(self, tmp_path: Path):
-        """Unregistering an API-sourced workflow deletes its Redis key."""
+    def test_unregister_api_source_deletes_redis_key_and_disk(self, tmp_path: Path):
+        """Unregistering an API-sourced workflow deletes from both Redis and disk."""
         config = _make_config(tmp_path)
         redis_store = _make_redis_store(connected=True)
         registry = WorkflowRegistry(_make_tool_registry(), config, redis_store=redis_store)
@@ -159,8 +160,11 @@ class TestUnregisterPersistence:
             async def _run():
                 registry.register_from_yaml(SAMPLE_YAML, persist=True)
                 await asyncio.sleep(0.1)
+                target = Path(config.directory) / "test-workflow.yaml"
+                assert target.exists(), "Disk file should exist after persist"
                 registry.unregister("test-workflow")
                 await asyncio.sleep(0.1)
+                assert not target.exists(), "Disk file should be deleted on unregister"
 
             loop.run_until_complete(_run())
         finally:
@@ -244,6 +248,46 @@ steps:
 
         entry = registry._workflows["test-workflow"]
         assert entry.source == "api"
+
+    def test_initialize_loads_disk_without_tool_validation(self, tmp_path: Path):
+        """Workflows loaded from disk at startup skip tool validation.
+
+        At startup, runners/bridges haven't connected yet so tools aren't
+        available. Persisted workflows were already validated when first
+        registered via API, so they should load without re-validating tools.
+        """
+        # Use a workflow referencing a tool that does NOT exist in the registry
+        unknown_tool_yaml = """\
+name: uses-unknown-tool
+version: "1.0.0"
+description: Workflow referencing a tool not in the registry
+steps:
+  - id: step1
+    tool: nonexistent_tool
+    mcp: nonexistent_server
+    params:
+      foo: bar
+"""
+        config = _make_config(tmp_path)
+        workflows_dir = Path(config.directory)
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        (workflows_dir / "uses-unknown-tool.yaml").write_text(unknown_tool_yaml)
+
+        # Tool registry returns nothing — simulates startup before runners connect
+        empty_tool_registry = MagicMock()
+        empty_tool_registry.get_tool.return_value = None
+        empty_tool_registry.list_tools.return_value = []
+
+        registry = WorkflowRegistry(empty_tool_registry, config)
+
+        loop = asyncio.new_event_loop()
+        try:
+            count = loop.run_until_complete(registry.initialize())
+        finally:
+            loop.close()
+
+        assert count == 1
+        assert registry.get("uses-unknown-tool") is not None
 
 
 class TestYamlContentPreserved:

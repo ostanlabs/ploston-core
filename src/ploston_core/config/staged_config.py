@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
+import enum
 import json
 import logging
 import re
@@ -16,6 +17,22 @@ from ploston_core.types import ValidationIssue, ValidationResult
 
 from .loader import ConfigLoader, deep_merge
 from .models import AELConfig
+
+
+def _strip_enums(obj: Any) -> Any:
+    """Recursively convert enum values to their plain string/value equivalents.
+
+    This ensures that ``yaml.dump`` never emits ``!!python/object/apply:…``
+    tags, which ``yaml.safe_load`` cannot parse.
+    """
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if isinstance(obj, dict):
+        return {k: _strip_enums(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_enums(item) for item in obj]
+    return obj
+
 
 if TYPE_CHECKING:
     from .redis_store import RedisConfigStore
@@ -70,13 +87,16 @@ class StagedConfig:
     def _config_to_dict(self, config: AELConfig) -> dict[str, Any]:
         """Convert AELConfig dataclass to dict.
 
+        Enum values are converted to their plain string equivalents so that
+        ``yaml.dump`` produces output compatible with ``yaml.safe_load``.
+
         Args:
             config: AELConfig instance
 
         Returns:
-            Dictionary representation
+            Dictionary representation with plain-string enum values
         """
-        return dataclasses.asdict(config)
+        return _strip_enums(dataclasses.asdict(config))
 
     def set(self, path: str, value: Any) -> None:
         """

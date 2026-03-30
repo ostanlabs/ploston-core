@@ -40,6 +40,50 @@ if TYPE_CHECKING:
     from ploston_core.plugins import PluginRegistry
 
 
+class _WorkflowSourceLogger:
+    """Thin wrapper that injects workflow context into every log record.
+
+    Automatically adds ``source``, ``execution_id``, and ``step_id`` to the
+    OTEL log attributes so that Loki can promote them to stream labels
+    (``ael_source``, ``ael_execution_id``, ``ael_step_id``).
+
+    The engine sets ``execution_id`` once at workflow start and updates
+    ``step_id`` before each step.  The wrapper merges these into every
+    ``_log()`` call without the caller needing to remember.
+    """
+
+    def __init__(self, inner: "AELLogger") -> None:
+        self._inner = inner
+        self._execution_id: str | None = None
+        self._step_id: str | None = None
+
+    def set_execution_id(self, execution_id: str) -> None:
+        self._execution_id = execution_id
+
+    def set_step_id(self, step_id: str | None) -> None:
+        self._step_id = step_id
+
+    def _log(
+        self,
+        level: "LogLevel",
+        component: str,
+        message: str,
+        context: dict | None = None,
+    ) -> None:
+        ctx = dict(context) if context else {}
+        ctx.setdefault("source", "workflow")
+        if self._execution_id:
+            ctx.setdefault("execution_id", self._execution_id)
+        if self._step_id:
+            ctx.setdefault("step_id", self._step_id)
+        self._inner._log(level, component, message, ctx)
+
+    # Forward attribute access so callers that read other logger properties
+    # (e.g. ``self._logger.config``) still work.
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
 class WorkflowEngine:
     """
     Execute workflow definitions.
@@ -88,7 +132,7 @@ class WorkflowEngine:
         self._tool_invoker = tool_invoker
         self._template_engine = template_engine
         self._config = config
-        self._logger = logger
+        self._logger = _WorkflowSourceLogger(logger) if logger else None
         self._error_factory = error_factory
         self._plugin_registry = plugin_registry
         self._token_estimator = token_estimator
@@ -151,6 +195,8 @@ class WorkflowEngine:
         started_at = datetime.now()
 
         if self._logger:
+            self._logger.set_execution_id(execution_id)
+            self._logger.set_step_id(None)
             self._logger._log(
                 LogLevel.INFO,
                 "engine",
@@ -265,6 +311,7 @@ class WorkflowEngine:
             )
 
             if self._logger:
+                self._logger.set_step_id(None)  # workflow-level log
                 self._logger._log(
                     LogLevel.INFO,
                     "engine",
@@ -369,6 +416,11 @@ class WorkflowEngine:
             StepResult
         """
         step_config = self._get_step_config(step, context.workflow)
+
+        # Set step context on wrapper logger so all subsequent log calls
+        # automatically include ael_step_id for Loki label promotion.
+        if self._logger:
+            self._logger.set_step_id(step.id)
 
         # Retry logic
         for attempt in range(1, (step_config.retry.max_attempts if step_config.retry else 1) + 1):
