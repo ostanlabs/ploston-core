@@ -228,6 +228,39 @@ def generate_workflow_schema() -> dict[str, Any]:
     # Add a concrete example that parses through the real parser
     base["example"] = _get_example_workflow()
 
+    # Import sandbox constraints as the single source of truth.
+    # Local import to avoid any circular dependency risk.
+    from ploston_core.sandbox.sandbox import (
+        DANGEROUS_BUILTINS,
+        DANGEROUS_DUNDERS,
+        SAFE_IMPORTS,
+    )
+
+    # Builtins that are surprising to developers — annotate them.
+    _surprising_forbidden = {
+        "type": "blocks runtime type inspection (isinstance() still works)",
+        "dir": "blocks attribute listing",
+        "getattr": "blocks dynamic attribute access",
+        "setattr": "blocks dynamic attribute mutation",
+        "delattr": "blocks dynamic attribute deletion",
+        "hasattr": "blocks attribute existence check",
+        "callable": "blocks callable check",
+        "vars": "blocks variable dict access",
+        "globals": "blocks global scope access",
+        "locals": "blocks local scope access",
+        "classmethod": "no OOP class methods",
+        "staticmethod": "no OOP static methods",
+        "property": "no OOP property descriptors",
+        "super": "no OOP super() calls",
+    }
+
+    forbidden_builtins_annotated = []
+    for name in sorted(DANGEROUS_BUILTINS):
+        entry: dict[str, Any] = {"name": name}
+        if name in _surprising_forbidden:
+            entry["note"] = _surprising_forbidden[name]
+        forbidden_builtins_annotated.append(entry)
+
     # Document the code step contract for agents authoring workflows
     base["code_steps"] = {
         "description": (
@@ -253,11 +286,70 @@ def generate_workflow_schema() -> dict[str, Any]:
             ),
             "context.config": ("dict — workflow-level config values."),
             "context.tools.call('tool_name', {...})": (
-                "Call a registered tool from within a code step. "
+                "Call a registered tool from within a code step by full canonical name. "
                 "Returns the tool's output directly. "
                 "Max 10 calls per step. "
                 "python_exec cannot call itself (recursion prevention)."
             ),
+            "context.tools.call_mcp('mcp', 'tool', {...})": (
+                "Call a tool by MCP server name and bare tool name. "
+                "Runner is resolved implicitly from the bridge context — "
+                "same resolution rules as tool steps. "
+                "Preferred over call() for portable workflows."
+            ),
+            "context.tools.call_mcp_loop_example": (
+                "# Fan-out over a list (foreach not yet available — use a code step loop)\n"
+                "repos = context.steps['discover'].output.get('repos', [])\n"
+                "results = []\n"
+                "for repo in repos:\n"
+                "    data = await context.tools.call_mcp(\n"
+                "        'github', 'list_commits',\n"
+                "        {'owner': repo['owner'], 'repo': repo['name']}\n"
+                "    )\n"
+                "    results.append({'repo': repo['name'], 'commits': data})\n"
+                "result = results"
+            ),
+            "context.log('message')": (
+                "Append a debug message to the step's debug log. "
+                "Messages are captured and attached to the StepOutput. "
+                "Available in subsequent templates as {{ steps.<id>.debug_log }}."
+            ),
+            "context.workflow": (
+                "WorkflowMeta object with name, version, execution_id, start_time. "
+                "Access: context.workflow.name, context.workflow.version, "
+                "context.workflow.start_time (ISO 8601)."
+            ),
+        },
+        "sandbox_constraints": {
+            "description": (
+                "The sandbox enforces three layers of constraints. "
+                "Violating any of them raises a SecurityError before execution."
+            ),
+            "allowed_imports": {
+                "description": (
+                    "Only these modules may be imported. Any other import raises SecurityError."
+                ),
+                "modules": sorted(SAFE_IMPORTS),
+            },
+            "forbidden_builtins": {
+                "description": (
+                    "These built-in names are removed from the execution scope. "
+                    "Using them raises NameError or SecurityError. "
+                    "Note: isinstance(), len(), range(), print(), str(), int(), "
+                    "float(), list(), dict(), tuple(), set(), bool(), abs(), "
+                    "min(), max(), sum(), round(), sorted(), enumerate(), zip(), "
+                    "map(), filter() and most other builtins are available."
+                ),
+                "names": forbidden_builtins_annotated,
+            },
+            "forbidden_attribute_access": {
+                "description": (
+                    "Accessing these dunder attributes raises SecurityError. "
+                    "This prevents sandbox escape via class hierarchy traversal "
+                    "or code object manipulation."
+                ),
+                "attributes": sorted(DANGEROUS_DUNDERS),
+            },
         },
         "example": (
             "# Read prior step output and set result\n"
@@ -271,6 +363,10 @@ def generate_workflow_schema() -> dict[str, Any]:
         "anti_patterns": [
             "return {...}  # SyntaxError — use result = {...} instead",
             "return None   # SyntaxError — just don't assign result, or assign result = None",
+            "import os     # SecurityError — os is not in allowed_imports",
+            "type(x)       # NameError — type is in forbidden_builtins",
+            "dir(x)        # NameError — dir is in forbidden_builtins",
+            "getattr(x, k) # NameError — getattr is in forbidden_builtins; use x.key notation instead",
         ],
     }
 
@@ -304,6 +400,34 @@ def generate_workflow_schema() -> dict[str, Any]:
             "Call workflow_schema to see the live 'available_tools' list — "
             "it shows every tool grouped by MCP server and runner."
         ),
+    }
+
+    base["authoring_tools"] = {
+        "description": (
+            "MCP tools for iterative workflow authoring. "
+            "Recommended flow: workflow_schema → author YAML → workflow_validate → workflow_create → workflow_list"
+        ),
+        "tools": [
+            {
+                "name": "workflow_validate",
+                "description": (
+                    "Validate a YAML workflow definition without registering it. "
+                    "Returns schema errors and tool resolution warnings. "
+                    "Call after every edit before workflow_create."
+                ),
+            },
+            {
+                "name": "workflow_list",
+                "description": "List all registered workflows. Confirm registration after workflow_create.",
+            },
+            {
+                "name": "workflow_schema",
+                "description": (
+                    "Return this schema document. Re-call after Ploston config changes "
+                    "to get an updated available_tools list."
+                ),
+            },
+        ],
     }
 
     return base

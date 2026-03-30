@@ -52,6 +52,18 @@ class ContextBuilder:
             step_id=step_id,
         )
 
+    def with_workflow(self, workflow: dict[str, str]) -> "ContextBuilder":
+        """Set workflow metadata on the context.
+
+        Args:
+            workflow: Dict with name, version, start_time keys
+
+        Returns:
+            Self for chaining
+        """
+        self._context.workflow = workflow
+        return self
+
     def get_context(self) -> TemplateContext:
         """Get current context.
 

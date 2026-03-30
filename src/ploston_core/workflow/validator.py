@@ -162,6 +162,18 @@ class WorkflowValidator:
                         )
                     )
 
+            # Validate when expression syntax (must be a valid Jinja2 expression)
+            if step.when:
+                when_errors = self._template_engine.validate({"_when": "{{ " + step.when + " }}"})
+                for error in when_errors:
+                    errors.append(
+                        ValidationIssue(
+                            path=f"steps.{step.id}.when",
+                            message=f"Template error in when expression: {error}",
+                            severity="error",
+                        )
+                    )
+
         # Check for circular dependencies
         try:
             workflow.get_execution_order()
@@ -221,32 +233,56 @@ class WorkflowValidator:
         assert step.tool is not None
         assert step.mcp is not None
 
-        # Path 1: Runner-hosted tool
-        if default_runner and self._runner_registry:
-            canonical = f"{default_runner}__{step.mcp}__{step.tool}"
-            if self._runner_registry.has_tool(default_runner, canonical):
+        # Determine effective runner: explicit default > inference from registry
+        runner = default_runner
+
+        # Path 1: Runner inference — if no explicit runner, check if exactly
+        # one connected runner hosts this MCP server (spec step 3, DEC-157).
+        if runner is None and self._runner_registry:
+            matching_runners = []
+            for r in self._runner_registry.list():
+                if r.status.value != "connected":
+                    continue
+                for tool_entry in r.available_tools:
+                    name = self._runner_registry._get_tool_name(tool_entry)
+                    if name.startswith(f"{step.mcp}__"):
+                        matching_runners.append(r)
+                        break
+            if len(matching_runners) == 1:
+                runner = matching_runners[0].name
+            elif len(matching_runners) > 1:
+                names = sorted(r.name for r in matching_runners)
+                return False, (
+                    f"MCP server '{step.mcp}' is hosted on multiple runners: {names}. "
+                    f"Add 'defaults.runner' to the workflow to disambiguate."
+                )
+
+        # Path 2: Runner-hosted tool lookup (explicit or inferred runner)
+        if runner and self._runner_registry:
+            canonical = f"{runner}__{step.mcp}__{step.tool}"
+            if self._runner_registry.has_tool(runner, canonical):
                 return True, None
             # Build hint
-            runner = self._runner_registry.get_by_name(default_runner)
-            if runner:
+            runner_obj = self._runner_registry.get_by_name(runner)
+            if runner_obj:
                 avail = [
                     self._runner_registry._get_tool_name(t)
-                    for t in runner.available_tools
+                    for t in runner_obj.available_tools
                     if self._runner_registry._get_tool_name(t).startswith(f"{step.mcp}__")
                 ]
                 hint = (
-                    f" Available tools on '{step.mcp}' server (runner '{default_runner}'): {avail}"
+                    f" Available tools on '{step.mcp}' server (runner '{runner}'): {avail}"
                     if avail
                     else ""
                 )
             else:
-                hint = f" Runner '{default_runner}' not found in registry."
+                hint = f" Runner '{runner}' not found in registry."
             return False, (
                 f"Tool '{step.tool}' not found on MCP server '{step.mcp}' "
-                f"(runner '{default_runner}').{hint}"
+                f"(runner '{runner}').{hint}"
             )
 
-        # Path 2: CP-direct tool — match by (server_name, tool name)
+        # Path 3: CP-direct tool — match by (server_name, tool name)
         matching = self._tool_registry.list_tools(server_name=step.mcp)
         for tool_def in matching:
             if tool_def.name == step.tool:

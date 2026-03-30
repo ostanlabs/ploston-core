@@ -257,6 +257,8 @@ class TemplateEngine:
             current = context.config
         elif root == "execution_id":
             return context.execution_id
+        elif root == "workflow":
+            current = context.workflow or {}
         else:
             raise KeyError(f"Unknown namespace: {root}")
 

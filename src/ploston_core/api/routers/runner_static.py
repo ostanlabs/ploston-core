@@ -336,6 +336,41 @@ async def runner_websocket(websocket: WebSocket) -> None:
             if method == "runner/availability":
                 # Runner sends {"available": [...], "unavailable": [...]}
                 tools = params.get("available", params.get("tools", []))
+
+                # DEC-160: Hard conflict enforcement — reject runner MCP servers
+                # that are already registered on the CP.
+                tool_registry = getattr(websocket.app.state, "tool_registry", None)
+                if tool_registry and tools:
+                    all_cp_servers = {
+                        t.server_name for t in tool_registry.list_tools() if t.server_name
+                    }
+                    # Extract MCP server names from reported tools (format: mcp__tool)
+                    reported_mcps: set[str] = set()
+                    for tool_entry in tools:
+                        t_name = runner_registry._get_tool_name(tool_entry)
+                        if "__" in t_name:
+                            reported_mcps.add(t_name.split("__")[0])
+
+                    conflicts = reported_mcps & all_cp_servers
+                    if conflicts:
+                        conflict_msg = (
+                            f"Runner '{name}' attempted to register MCP server(s) "
+                            f"{sorted(conflicts)} which are already registered on the CP. "
+                            f"A tool server cannot be registered on both CP and a runner. "
+                            f"Register it on the CP (for tools that don't need local access) "
+                            f"or on the runner (for tools that do), not both."
+                        )
+                        logger.warning(
+                            "Runner registration conflict",
+                            extra={
+                                "runner_name": name,
+                                "conflicting_servers": sorted(conflicts),
+                                "event": "runner_registration_conflict",
+                            },
+                        )
+                        await _send_error(websocket, msg_id, -32001, conflict_msg)
+                        continue  # do not update available_tools
+
                 runner_registry.update_available_tools(runner_id, tools)
 
                 # Process structured unavailable list

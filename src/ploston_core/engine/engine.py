@@ -66,6 +66,8 @@ class WorkflowEngine:
         plugin_registry: "PluginRegistry | None" = None,
         token_estimator: TokenEstimator | None = None,
         runner_registry: Any = None,  # RunnerRegistry (optional)
+        tool_registry: Any = None,  # ToolRegistry (optional, for call_mcp CP-first)
+        max_tool_calls: int = 10,  # from config.python_exec.max_tool_calls
     ):
         """Initialize workflow engine.
 
@@ -79,6 +81,8 @@ class WorkflowEngine:
             plugin_registry: Optional plugin registry for hook execution
             token_estimator: Optional token estimator for savings metrics
             runner_registry: Optional runner registry for tool name resolution
+            tool_registry: Optional tool registry for call_mcp CP-direct resolution
+            max_tool_calls: Max tool calls per code step (sandbox rate limit)
         """
         self._workflow_registry = workflow_registry
         self._tool_invoker = tool_invoker
@@ -89,6 +93,8 @@ class WorkflowEngine:
         self._plugin_registry = plugin_registry
         self._token_estimator = token_estimator
         self._runner_registry = runner_registry
+        self._tool_registry = tool_registry
+        self._max_tool_calls = max_tool_calls
 
     async def execute(
         self,
@@ -191,6 +197,7 @@ class WorkflowEngine:
                 workflow=workflow,
                 inputs=current_inputs,
                 config={},
+                started_at=started_at.isoformat(),
             )
 
             # Execute steps
@@ -438,14 +445,32 @@ class WorkflowEngine:
             hook_result = self._plugin_registry.execute_step_before(step_ctx)
             current_params = hook_result.data.params
 
+        # Evaluate when condition (skip step if falsy)
+        if step.when:
+            template_context = context.get_template_context()
+            when_expr = "{{ " + step.when + " }}"
+            when_result = self._template_engine.render_string(when_expr, template_context)
+            if not when_result:
+                completed_at = datetime.now()
+                duration_ms = int((time.time() - start_time) * 1000)
+                return StepResult(
+                    step_id=step.id,
+                    status=StepStatus.SKIPPED,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    duration_ms=duration_ms,
+                    skip_reason=f"when condition not met: {step.when}",
+                )
+
         # Instrument step execution with telemetry
         async with instrument_step(context.workflow.name, step.id) as telemetry_result:
             try:
                 # Execute based on step type
+                step_debug_log: list[str] = []
                 if step.step_type == StepType.TOOL:
                     output = await self._execute_tool_step(step, context, current_params)
                 else:  # CODE
-                    output = await self._execute_code_step(step, context)
+                    output, step_debug_log = await self._execute_code_step(step, context)
 
                 # Success
                 completed_at = datetime.now()
@@ -478,6 +503,7 @@ class WorkflowEngine:
                     completed_at=completed_at,
                     duration_ms=duration_ms,
                     output=final_output,
+                    debug_log=step_debug_log,
                 )
 
             except Exception as e:
@@ -563,6 +589,15 @@ class WorkflowEngine:
         # Resolve canonical tool name (DEC-157 / T-726)
         invoke_name = self._resolve_invoke_name(step, context.workflow)
 
+        if self._logger:
+            self._logger._log(
+                LogLevel.INFO,
+                "engine",
+                f"[TOOL_STEP] step={step.id} invoking tool_name={invoke_name!r} "
+                f"(original tool={step.tool!r}, mcp={getattr(step, 'mcp', None)!r})",
+                {},
+            )
+
         # Invoke tool
         result = await self._tool_invoker.invoke(
             tool_name=invoke_name,
@@ -575,61 +610,177 @@ class WorkflowEngine:
 
         return result.output
 
+    def _get_effective_runner(self, workflow: WorkflowDefinition) -> str | None:
+        """Resolve effective runner for tool step invocation.
+
+        Priority: workflow defaults.runner > bridge_context.runner_name
+        Used by _resolve_invoke_name() for tool steps only.
+        """
+        if workflow.defaults and workflow.defaults.runner:
+            return workflow.defaults.runner
+        try:
+            from ploston_core.mcp_frontend.http_transport import bridge_context
+
+            ctx = bridge_context.get()
+            if ctx:
+                return getattr(ctx, "runner_name", None)
+        except Exception:
+            pass
+        return None
+
     def _resolve_invoke_name(self, step: Any, workflow: WorkflowDefinition) -> str:
         """Resolve the canonical tool name for invocation.
 
-        Priority: workflow defaults.runner → bridge context runner → bare name.
+        Priority: workflow defaults.runner → bridge context runner → inference → bare name.
         If mcp is not set (legacy/system tools), returns step.tool as-is.
         """
+        if self._logger:
+            self._logger._log(
+                LogLevel.DEBUG,
+                "engine",
+                f"[RESOLVE] step={step.id} tool={step.tool!r} mcp={getattr(step, 'mcp', None)!r}",
+                {},
+            )
+
         if not getattr(step, "mcp", None):
             # Legacy workflow or system tool — bare name
+            if self._logger:
+                self._logger._log(
+                    LogLevel.DEBUG,
+                    "engine",
+                    f"[RESOLVE] step={step.id} → no mcp field, using bare tool name: {step.tool!r}",
+                    {},
+                )
             return step.tool
 
-        # Determine runner
-        runner: str | None = None
-        if workflow.defaults and getattr(workflow.defaults, "runner", None):
-            runner = workflow.defaults.runner
-        else:
-            # Try bridge context for implicit runner
-            try:
-                from ploston_core.mcp_frontend.http_transport import bridge_context
-
-                ctx = bridge_context.get()
-                if ctx:
-                    runner = getattr(ctx, "runner_name", None)
-            except Exception:
-                pass
+        # Determine runner via shared helper
+        runner = self._get_effective_runner(workflow)
+        runner_source: str = "none"
 
         if runner:
-            return f"{runner}__{step.mcp}__{step.tool}"
+            # Determine source for logging
+            if workflow.defaults and workflow.defaults.runner == runner:
+                runner_source = "defaults.runner"
+            else:
+                runner_source = "bridge_context"
+        else:
+            # Step 3: single-match inference from RunnerRegistry
+            if self._runner_registry:
+                matches = [
+                    r
+                    for r in self._runner_registry.list()
+                    if r.status.value == "connected"
+                    and any(
+                        self._runner_registry._get_tool_name(e).startswith(f"{step.mcp}__")
+                        for e in (r.available_tools or [])
+                    )
+                ]
+                if len(matches) == 1:
+                    runner = matches[0].name
+                    runner_source = "inference"
+                elif len(matches) > 1:
+                    names = sorted(r.name for r in matches)
+                    if self._logger:
+                        self._logger._log(
+                            LogLevel.WARN,
+                            "engine",
+                            f"[RESOLVE] step={step.id} ambiguous runners for mcp={step.mcp!r}: {names}",
+                            {},
+                        )
+                    # Fall through to bare tool name; will TOOL_UNAVAILABLE at invoke time
+
+        if self._logger:
+            self._logger._log(
+                LogLevel.INFO,
+                "engine",
+                f"[RESOLVE] step={step.id} runner={runner!r} (source={runner_source})",
+                {},
+            )
+
+        if runner:
+            canonical = f"{runner}__{step.mcp}__{step.tool}"
+            if self._logger:
+                self._logger._log(
+                    LogLevel.INFO,
+                    "engine",
+                    f"[RESOLVE] step={step.id} → canonical name: {canonical!r}",
+                    {},
+                )
+            return canonical
 
         # CP-direct — bare tool name
+        if self._logger:
+            self._logger._log(
+                LogLevel.WARN,
+                "engine",
+                f"[RESOLVE] step={step.id} → no runner resolved, falling back to bare tool name: {step.tool!r}",
+                {},
+            )
         return step.tool
 
     async def _execute_code_step(
         self,
         step: Any,  # StepDefinition
         context: ExecutionContext,
-    ) -> Any:
-        """
-        Execute a code step.
+    ) -> tuple[Any, list[str]]:
+        """Execute a code step.
 
-        Creates SandboxContext from ExecutionContext,
-        passing step_outputs as Dict[str, StepOutput].
+        Creates SandboxContext from ExecutionContext with a properly wrapped
+        ToolCallInterface (rate limiting, recursion prevention, call_mcp support).
 
         Args:
             step: Step definition
             context: Execution context
 
         Returns:
-            Code execution output
+            Tuple of (output, debug_log) where debug_log is from context.log() calls
         """
-        # Create sandbox context
+        # Local imports to avoid circular deps.
+        # SandboxContext is already imported at module level (line 11).
+        from ploston_core.sandbox.types import RunnerContext, ToolCallInterface, WorkflowMeta
+
+        # Populate RunnerContext with raw source values (not pre-resolved)
+        bridge_ctx = None
+        try:
+            from ploston_core.mcp_frontend.http_transport import bridge_context
+
+            bridge_ctx = bridge_context.get()
+        except Exception:
+            pass
+
+        runner_ctx = RunnerContext(
+            runner_name=getattr(bridge_ctx, "runner_name", None) if bridge_ctx else None,
+            defaults_runner=(
+                context.workflow.defaults.runner if context.workflow.defaults else None
+            ),
+            step_id=step.id,
+            execution_id=context.execution_id,
+        )
+
+        tool_interface = ToolCallInterface(
+            tool_caller=self._tool_invoker,
+            max_calls=self._max_tool_calls,
+            logger=self._logger,
+            tool_registry=self._tool_registry,
+            runner_registry=self._runner_registry,
+            runner_context=runner_ctx,
+        )
+
+        # Build workflow metadata for sandbox context
+        workflow_meta = WorkflowMeta(
+            name=getattr(context.workflow, "name", ""),
+            version=getattr(context.workflow, "version", ""),
+            execution_id=context.execution_id,
+            start_time=context.started_at,
+        )
+
         sandbox_context = SandboxContext(
             inputs=context.inputs,
-            steps=context.step_outputs,  # Dict[str, StepOutput]
+            steps=context.step_outputs,
             config=context.config,
-            tools=self._tool_invoker,  # ToolCallerProtocol
+            tools=tool_interface,
+            runner_context=runner_ctx,
+            workflow=workflow_meta,
         )
 
         # Get step config for timeout
@@ -642,14 +793,14 @@ class WorkflowEngine:
             timeout_seconds=step_config.timeout_seconds,
         )
 
-        if not result.success:
-            raise (
-                result.error
-                if result.error
-                else create_error("CODE_EXECUTION_FAILED", step_id=step.id)
-            )
+        # Capture debug_log from sandbox context (only available on success path)
+        debug_log = list(sandbox_context._debug_log)
 
-        return result.output
+        if not result.success:
+            # Use CODE_RUNTIME — CODE_EXECUTION_FAILED is not in ErrorRegistry
+            raise (result.error if result.error else create_error("CODE_RUNTIME", step_id=step.id))
+
+        return result.output, debug_log
 
     def _compute_outputs(
         self,

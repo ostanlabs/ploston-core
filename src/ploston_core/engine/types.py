@@ -43,13 +43,22 @@ class StepResult:
     attempt: int = 1
     max_attempts: int = 1
 
+    # Debug logging (populated from sandbox context.log() calls)
+    debug_log: list[str] = field(default_factory=list)
+
     def to_step_output(self) -> StepOutput:
         """Convert to StepOutput for template/sandbox context."""
+        error_str: str | None = None
+        if self.error is not None:
+            error_str = str(self.error)
         return StepOutput(
             output=self.output,
             success=self.status == StepStatus.COMPLETED,
             duration_ms=self.duration_ms or 0,
             step_id=self.step_id,
+            status=self.status.value,
+            error=error_str,
+            debug_log=list(self.debug_log),
         )
 
 
@@ -146,6 +155,9 @@ class ExecutionContext:
     step_outputs: dict[str, StepOutput] = field(default_factory=dict)
     step_results: dict[str, StepResult] = field(default_factory=dict)
 
+    # Workflow start time (ISO 8601 string, set by execute_workflow)
+    started_at: str = ""
+
     def add_step_result(self, result: StepResult) -> None:
         """Add a step result to the context."""
         self.step_results[result.step_id] = result
@@ -155,11 +167,20 @@ class ExecutionContext:
         """Get context for template rendering."""
         from ploston_core.template.types import TemplateContext
 
+        workflow_meta: dict[str, str] | None = None
+        if self.workflow:
+            workflow_meta = {
+                "name": getattr(self.workflow, "name", ""),
+                "version": getattr(self.workflow, "version", ""),
+                "start_time": self.started_at,
+            }
+
         return TemplateContext(
             inputs=self.inputs,
             steps=self.step_outputs,
             config=self.config,
             execution_id=self.execution_id,
+            workflow=workflow_meta,
         )
 
 
