@@ -55,28 +55,37 @@ class WorkflowRegistry:
         self._watch_task: asyncio.Task[None] | None = None
 
     async def _persist(self, name: str, yaml_content: str) -> None:
-        """Persist API-registered workflow YAML. OSS: disk. Premium: Redis."""
+        """Persist API-registered workflow YAML.
+
+        Always writes to disk so workflows survive container teardown.
+        When Redis is available, also writes there for runtime consistency.
+        """
+        # Always write to disk — this is the durable copy that survives
+        # container restarts and Redis data wipes during bootstrap teardown.
+        workflows_dir = Path(self._config.directory)
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        target = workflows_dir / f"{name}.yaml"
+        target.write_text(yaml_content, encoding="utf-8")
+
+        # Also write to Redis when available for runtime consistency.
         if self._redis_store and self._redis_store.connected:
             await self._redis_store.set_value(f"workflows:{name}", yaml_content)
-        else:
-            workflows_dir = Path(self._config.directory)
-            workflows_dir.mkdir(parents=True, exist_ok=True)
-            target = workflows_dir / f"{name}.yaml"
-            target.write_text(yaml_content, encoding="utf-8")
 
     async def _delete_persisted(self, name: str, source: str) -> None:
         """Remove persisted storage for an API-registered workflow.
 
         File-loaded workflows (source=file) are never touched.
+        Removes from both disk and Redis to stay consistent with dual-write.
         """
         if source != "api":
             return
+        # Remove from disk
+        target = Path(self._config.directory) / f"{name}.yaml"
+        if target.exists():
+            target.unlink()
+        # Remove from Redis
         if self._redis_store and self._redis_store.connected:
             await self._redis_store.delete_value(f"workflows:{name}")
-        else:
-            target = Path(self._config.directory) / f"{name}.yaml"
-            if target.exists():
-                target.unlink()
 
     async def initialize(self) -> int:
         """Initialize registry by loading workflows from directory.
@@ -93,13 +102,20 @@ class WorkflowRegistry:
             )
 
         # Step 1: load from disk (existing logic)
+        # Skip tool validation — tools aren't available yet at startup
+        # (runners/bridges haven't connected). These workflows were already
+        # validated when originally registered via the API.
         count = 0
         workflows_dir = Path(self._config.directory)
         if workflows_dir.exists():
             for yaml_file in workflows_dir.glob("*.yaml"):
                 try:
                     yaml_content = yaml_file.read_text()
-                    self.register_from_yaml(yaml_content, source_path=yaml_file)
+                    self.register_from_yaml(
+                        yaml_content,
+                        source_path=yaml_file,
+                        validate=False,
+                    )
                     count += 1
                 except Exception as e:
                     if self._logger:
@@ -119,13 +135,18 @@ class WorkflowRegistry:
                 )
 
         # Step 2: load from Redis — Premium only. Redis wins on name collision.
+        # Also skip tool validation for the same reason as disk loading.
         if self._redis_store and self._redis_store.connected:
             redis_keys = await self._redis_store.scan_keys("workflows:*")
             for key in redis_keys:
                 yaml_content = await self._redis_store.get_value(key)
                 if yaml_content:
                     try:
-                        self.register_from_yaml(yaml_content, source_path=None)
+                        self.register_from_yaml(
+                            yaml_content,
+                            source_path=None,
+                            validate=False,
+                        )
                         count += 1
                     except Exception as e:
                         if self._logger:
@@ -196,6 +217,7 @@ class WorkflowRegistry:
         yaml_content: str,
         source_path: Path | None = None,
         persist: bool = False,
+        validate: bool = True,
     ) -> ValidationResult:
         """Parse and register workflow from YAML.
 
@@ -204,6 +226,9 @@ class WorkflowRegistry:
             source_path: Optional source file path
             persist: If True, persist the workflow (disk or Redis). Set True
                      only by REST/MCP API callers.
+            validate: If True (default), validate tool references against the
+                      tool registry. Set False when loading persisted workflows
+                      at startup before runners have connected.
 
         Returns:
             ValidationResult
@@ -212,7 +237,7 @@ class WorkflowRegistry:
             AELError(INPUT_INVALID) if parsing or validation fails
         """
         workflow = parse_workflow_yaml(yaml_content, source_path)
-        result = self.register(workflow, validate=True)
+        result = self.register(workflow, validate=validate)
 
         # Update source in entry
         if workflow.name in self._workflows:

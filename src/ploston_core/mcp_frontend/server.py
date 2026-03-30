@@ -644,11 +644,14 @@ class MCPFrontend:
             # Only for direct tool calls (not workflows)
             if self._chain_detector and result.success and not tool_name.startswith("workflow_"):
                 try:
+                    _bctx_chain = bridge_context.get()
+                    _http_bridge_id = _bctx_chain.bridge_id if _bctx_chain else None
                     await self._chain_detector.process_tool_call(
                         tool_name=tool_name,
                         params=arguments,
                         result=result.output,
-                        bridge_id=bridge or None,
+                        bridge_id=bridge or _http_bridge_id or None,
+                        session_id=_http_bridge_id,
                     )
                 except Exception:
                     # Chain detection is non-critical - don't fail the tool call
@@ -865,6 +868,7 @@ class MCPFrontend:
                                 result=chain_output,
                                 runner_id=runner.name,
                                 bridge_id=_bridge_id,
+                                session_id=_bridge_id,
                             )
                         except Exception:
                             pass  # Chain detection is non-critical
@@ -953,6 +957,7 @@ class MCPFrontend:
                                 result=output,
                                 runner_id=runner.name,
                                 bridge_id=_bridge_id,
+                                session_id=_bridge_id,
                             )
                         except Exception:
                             pass  # Chain detection is non-critical

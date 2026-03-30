@@ -288,6 +288,43 @@ class TestStagedConfigWrite:
         assert "server:" in content
         assert "port: 9000" in content
 
+    def test_write_produces_safe_load_compatible_yaml(self, tmp_path):
+        """Test that written YAML with enum values can be parsed by safe_load.
+
+        Regression test: dataclasses.asdict() preserves str(Enum) instances,
+        which yaml.dump serialises with !!python/object/apply tags that
+        yaml.safe_load cannot parse.
+        """
+        import yaml as _yaml
+
+        config_file = tmp_path / "input.yaml"
+        config_file.write_text("""
+mcp:
+  servers:
+    github:
+      command: npx
+      transport: stdio
+runners:
+  laptop:
+    mcp_servers:
+      github:
+        command: npx
+        transport: http
+""")
+        loader = ConfigLoader()
+        loader.load(config_file)
+        staged = StagedConfig(loader)
+        staged.set_target_path(tmp_path / "output.yaml")
+
+        staged.write()
+
+        content = (tmp_path / "output.yaml").read_text()
+        # Must NOT contain Python-specific YAML tags
+        assert "!!python" not in content
+        # Must be parseable by safe_load
+        parsed = _yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+
     def test_write_creates_parent_dirs(self, tmp_path):
         """Test write creates parent directories."""
         loader = ConfigLoader()
