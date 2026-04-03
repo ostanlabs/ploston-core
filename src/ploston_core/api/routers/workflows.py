@@ -112,12 +112,13 @@ async def list_workflows(
 async def create_workflow(
     request: Request,
     yaml_content: Annotated[str, Body(media_type="application/x-yaml")],
+    validate: bool = Query(default=True, description="Validate tool references before registering"),
 ) -> WorkflowCreateResponse:
     """Register a new workflow from YAML."""
     registry = request.app.state.workflow_registry
 
     try:
-        registry.register_from_yaml(yaml_content, persist=True)
+        registry.register_from_yaml(yaml_content, persist=True, validate=validate)
         # Get the registered workflow to return its metadata
         workflow = parse_workflow_yaml(yaml_content)
 
