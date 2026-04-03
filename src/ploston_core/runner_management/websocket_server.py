@@ -108,13 +108,15 @@ class RunnerWebSocketServer:
 
         # Disconnect all runners
         for conn in list(self._connections.values()):
-            await self._disconnect_runner(conn.runner_id)
+            await self._disconnect_runner(conn.runner_id, reason="server shutdown")
 
         logger.info("Runner WebSocket server stopped")
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle a new WebSocket connection."""
         runner_id: str | None = None
+        remote = getattr(websocket, "remote_address", None)
+        logger.info(f"[ws] New WebSocket connection from {remote}")
 
         try:
             async for message in websocket:
@@ -122,15 +124,24 @@ class RunnerWebSocketServer:
                     data = json.loads(message)
                     runner_id = await self._process_message(websocket, data, runner_id)
                 except json.JSONDecodeError:
+                    logger.warning(f"[ws] Parse error from {remote}")
                     await self._send_error(websocket, None, -32700, "Parse error")
                 except Exception as e:
-                    logger.exception(f"Error processing message: {e}")
+                    logger.exception(f"[ws] Error processing message from {remote}: {e}")
                     await self._send_error(websocket, None, -32603, str(e))
-        except ConnectionClosed:
-            pass
+        except ConnectionClosed as e:
+            logger.info(
+                f"[ws] Connection closed for runner={runner_id or 'unregistered'} "
+                f"remote={remote} code={e.rcvd.code if e.rcvd else 'N/A'} "
+                f"reason={e.rcvd.reason if e.rcvd else 'N/A'}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[ws] Unexpected error for runner={runner_id or 'unregistered'} remote={remote}: {e}"
+            )
         finally:
             if runner_id:
-                await self._disconnect_runner(runner_id)
+                await self._disconnect_runner(runner_id, reason="connection closed")
 
     async def _process_message(
         self,
@@ -176,18 +187,27 @@ class RunnerWebSocketServer:
         """Handle runner/register message."""
         token = params.get("token")
         name = params.get("name")
+        remote = getattr(websocket, "remote_address", None)
 
         if not token or not name:
+            logger.warning(f"[ws] Registration rejected: missing token or name (remote={remote})")
             await self._send_error(websocket, msg_id, -32602, "Missing token or name")
             return None
 
         # Validate token
         runner = self._registry.get_by_token(token)
         if not runner:
+            logger.warning(
+                f"[ws] Registration rejected: invalid token for name='{name}' (remote={remote})"
+            )
             await self._send_error(websocket, msg_id, -32001, "Invalid token")
             return None
 
         if runner.name != name:
+            logger.warning(
+                f"[ws] Registration rejected: token/name mismatch "
+                f"(expected='{runner.name}', got='{name}', remote={remote})"
+            )
             await self._send_error(websocket, msg_id, -32001, "Token/name mismatch")
             return None
 
@@ -199,7 +219,7 @@ class RunnerWebSocketServer:
         )
         self._registry.set_connected(runner.id)
 
-        logger.info(f"Runner '{name}' connected (id={runner.id})")
+        logger.info(f"[ws] Runner registered: name='{name}' id={runner.id} remote={remote}")
 
         # Send success response
         await self._send_response(websocket, msg_id, {"status": "ok"})
@@ -275,12 +295,17 @@ class RunnerWebSocketServer:
             else:
                 future.set_result(data.get("result"))
 
-    async def _disconnect_runner(self, runner_id: str) -> None:
+    async def _disconnect_runner(self, runner_id: str, reason: str = "unknown") -> None:
         """Handle runner disconnection."""
         conn = self._connections.pop(runner_id, None)
         if conn:
+            uptime = (datetime.now(UTC) - conn.connected_at).total_seconds()
+            pending = len(conn.pending_requests)
             self._registry.set_disconnected(runner_id)
-            logger.info(f"Runner '{conn.runner_name}' disconnected")
+            logger.info(
+                f"[ws] Runner disconnected: name='{conn.runner_name}' id={runner_id} "
+                f"reason={reason} uptime={uptime:.0f}s pending_requests={pending}"
+            )
 
             # Cancel pending requests
             for future in conn.pending_requests.values():
@@ -292,7 +317,17 @@ class RunnerWebSocketServer:
         conn = self._connections.get(runner_id)
 
         if not runner or not conn:
+            logger.warning(
+                f"[ws] config/push skipped: runner or connection not found "
+                f"(runner_id={runner_id}, runner={'found' if runner else 'missing'}, "
+                f"conn={'found' if conn else 'missing'})"
+            )
             return
+
+        mcp_names = sorted(runner.mcps.keys()) if runner.mcps else []
+        logger.info(
+            f"[ws] config/push to runner='{conn.runner_name}': {len(mcp_names)} MCPs={mcp_names}"
+        )
 
         await self._send_notification(
             conn.websocket,

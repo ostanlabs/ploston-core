@@ -47,6 +47,8 @@ def _make_tool_registry() -> MagicMock:
     """Create a mock ToolRegistry that passes validation."""
     tr = MagicMock()
     tr.get_tool.return_value = MagicMock()  # tool exists
+    # Default: no tool found by name (DEC-169 collision check)
+    tr.get.return_value = None
     # Support new (mcp, tool) resolution: list_tools returns matching tools
     echo_tool = MagicMock()
     echo_tool.name = "echo"
@@ -276,6 +278,7 @@ steps:
         # Tool registry returns nothing — simulates startup before runners connect
         empty_tool_registry = MagicMock()
         empty_tool_registry.get_tool.return_value = None
+        empty_tool_registry.get.return_value = None  # DEC-169 collision check
         empty_tool_registry.list_tools.return_value = []
 
         registry = WorkflowRegistry(empty_tool_registry, config)

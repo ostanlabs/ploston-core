@@ -9,6 +9,7 @@ Implements MCP over HTTP with:
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
@@ -46,6 +47,8 @@ class BridgeContext:
 
 #: Per-request bridge context.  Set in ``_handle_mcp_request``.
 bridge_context: ContextVar[BridgeContext | None] = ContextVar("bridge_context", default=None)
+
+logger = logging.getLogger(__name__)
 
 
 class HTTPTransport:
@@ -98,6 +101,7 @@ class HTTPTransport:
         self._sessions: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._running = False
         self._app: Starlette | None = None
+        self._known_bridges: set[str] = set()  # track seen bridge IDs for first-connect logging
 
     def _create_app(self) -> Starlette:
         """Create Starlette application with routes.
@@ -167,6 +171,20 @@ class HTTPTransport:
             )
             bridge_context.set(ctx)
 
+            # Log first time a bridge connects
+            if _bridge_id not in self._known_bridges:
+                self._known_bridges.add(_bridge_id)
+                logger.info(
+                    f"[http] Bridge connected: id={_bridge_id} "
+                    f"expose={ctx.bridge_expose} runner={ctx.runner_name} "
+                    f"session_start={ctx.session_start}"
+                )
+
+        _method = body.get("method", "unknown") if isinstance(body, dict) else "batch"
+        logger.debug(
+            f"[http] POST /mcp method={_method} bridge={_bridge_id if _bridge_id else 'none'}"
+        )
+
         response = await self._message_handler(body)
 
         if response is None:
@@ -178,9 +196,15 @@ class HTTPTransport:
     async def _handle_sse(self, request: Request) -> EventSourceResponse:
         """Handle GET /mcp/sse for server-sent events."""
         session_id = request.headers.get("X-MCP-Session-ID") or str(uuid.uuid4())
+        _bridge_id = request.headers.get("X-Bridge-ID", "unknown")
 
         if session_id not in self._sessions:
             self._sessions[session_id] = asyncio.Queue()
+
+        logger.info(
+            f"[http] SSE connected: session={session_id} bridge={_bridge_id} "
+            f"total_sse_sessions={len(self._sessions)}"
+        )
 
         async def event_generator():
             """Generate SSE events from session queue."""
@@ -200,6 +224,10 @@ class HTTPTransport:
             finally:
                 # Cleanup session on disconnect
                 self._sessions.pop(session_id, None)
+                logger.info(
+                    f"[http] SSE disconnected: session={session_id} bridge={_bridge_id} "
+                    f"remaining_sse_sessions={len(self._sessions)}"
+                )
 
         return EventSourceResponse(
             event_generator(),
@@ -235,6 +263,12 @@ class HTTPTransport:
             from prometheus_client import REGISTRY, generate_latest
 
             metrics_output = generate_latest(REGISTRY)
+            _metrics_log = logging.getLogger("ploston.chain_detection")
+            # Log at DEBUG to avoid flooding — only useful when troubleshooting
+            _metrics_log.debug(
+                "/metrics scraped: %d bytes returned",
+                len(metrics_output),
+            )
             return Response(
                 content=metrics_output,
                 media_type="text/plain; version=0.0.4; charset=utf-8",
@@ -245,6 +279,10 @@ class HTTPTransport:
                 media_type="text/plain; charset=utf-8",
             )
         except Exception as e:
+            logging.getLogger("ploston.chain_detection").error(
+                "/metrics error: %s",
+                e,
+            )
             return PlainTextResponse(
                 f"# Error generating metrics: {e}\n",
                 media_type="text/plain; charset=utf-8",

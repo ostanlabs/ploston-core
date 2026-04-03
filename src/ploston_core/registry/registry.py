@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,7 @@ class ToolRegistry:
         mcp_manager: MCPClientManager,
         config: ToolsConfig,
         logger: AELLogger | None = None,
+        on_tools_changed: Callable[[], Awaitable[None]] | None = None,
     ):
         """Initialize tool registry.
 
@@ -43,12 +45,14 @@ class ToolRegistry:
             mcp_manager: MCP client manager for fetching tools
             config: Tools configuration
             logger: Optional logger
+            on_tools_changed: Optional async callback fired when the tool list changes
         """
         self._tools: dict[str, ToolDefinition] = {}
         self._mcp_manager = mcp_manager
         self._config = config
         self._logger = logger
         self._metrics: AELMetrics | None = None
+        self._on_tools_changed = on_tools_changed
 
     def set_metrics(self, metrics: AELMetrics) -> None:
         """Set the metrics instance for telemetry.
@@ -83,6 +87,11 @@ class ToolRegistry:
             system_tools=system_count,
             native_tools=native_count,
         )
+
+    async def _fire_tools_changed(self, result: RefreshResult) -> None:
+        """Fire the on_tools_changed callback when tools were actually added/removed/updated."""
+        if self._on_tools_changed and (result.added or result.removed or result.updated):
+            await self._on_tools_changed()
 
     def _get_tool_source_for_server(self, server_name: str) -> ToolSource:
         """Determine the tool source based on server name.
@@ -194,6 +203,10 @@ class ToolRegistry:
 
                 new_tools.add(tool_name)
 
+                # Inject system tags (DEC-170)
+                tool = self._tools[tool_name]
+                tool.tags = self._build_system_tags(tool)
+
         # Mark removed MCP/NATIVE tools as unavailable (don't delete)
         for tool_name in old_tools:
             tool = self._tools[tool_name]
@@ -216,6 +229,9 @@ class ToolRegistry:
 
         # Update telemetry metrics
         self._update_metrics()
+
+        # Notify MCP client that tools list changed
+        await self._fire_tools_changed(result)
 
         return result
 
@@ -291,6 +307,10 @@ class ToolRegistry:
                     )
                     added.append(tool_name)
 
+                # Inject system tags (DEC-170)
+                tool_obj = self._tools[tool_name]
+                tool_obj.tags = self._build_system_tags(tool_obj)
+
             # Mark tools from this server that are no longer present
             for tool_name, tool in self._tools.items():
                 if (
@@ -308,13 +328,18 @@ class ToolRegistry:
         # Update telemetry metrics
         self._update_metrics()
 
-        return RefreshResult(
+        result = RefreshResult(
             total_tools=len(self._tools),
             added=added,
             removed=removed,
             updated=updated,
             errors=errors,
         )
+
+        # Notify MCP client that tools list changed
+        await self._fire_tools_changed(result)
+
+        return result
 
     def get(self, name: str) -> ToolDefinition | None:
         """Get tool by name.
@@ -347,18 +372,40 @@ class ToolRegistry:
             )
         return tool
 
+    def _build_system_tags(self, tool: ToolDefinition) -> set[str]:
+        """Build system tags for a tool based on its source and server.
+
+        Args:
+            tool: Tool definition
+
+        Returns:
+            Set of system tags
+        """
+        tags = {"kind:tool"}
+        if tool.source == ToolSource.MCP:
+            tags.add("source:mcp")
+        elif tool.source == ToolSource.SYSTEM:
+            tags.add("source:system")
+        elif tool.source == ToolSource.NATIVE:
+            tags.add("source:native")
+        if tool.server_name:
+            tags.add(f"server:{tool.server_name}")
+        return tags
+
     def list_tools(
         self,
         source: ToolSource | None = None,
         server_name: str | None = None,
         status: ToolStatus | None = None,
+        tags: set[str] | None = None,
     ) -> list[ToolDefinition]:
         """List tools with optional filtering.
 
         Args:
-            source: Filter by source type
+            source: Filter by source type (legacy, prefer tags)
             server_name: Filter by MCP server
             status: Filter by availability status
+            tags: Filter by tags (match-all semantics — tool must have ALL tags)
 
         Returns:
             List of matching tools
@@ -373,6 +420,9 @@ class ToolRegistry:
 
         if status is not None:
             tools_list = [t for t in tools_list if t.status == status]
+
+        if tags is not None:
+            tools_list = [t for t in tools_list if tags.issubset(t.tags)]
 
         return tools_list
 
@@ -479,7 +529,7 @@ class ToolRegistry:
     def _register_system_tools(self) -> None:
         """Register built-in system tools."""
         if self._config.system_tools.python_exec_enabled:
-            self._tools["python_exec"] = ToolDefinition(
+            tool = ToolDefinition(
                 name="python_exec",
                 description="Execute Python code in secure sandbox",
                 source=ToolSource.SYSTEM,
@@ -501,6 +551,8 @@ class ToolRegistry:
                 status=ToolStatus.AVAILABLE,
                 last_seen=datetime.now(UTC),
             )
+            tool.tags = self._build_system_tags(tool)
+            self._tools["python_exec"] = tool
 
         # Update telemetry metrics
         self._update_metrics()

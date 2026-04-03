@@ -81,7 +81,7 @@ async def list_tools(
             source=_convert_source(t.source),
             server=t.server_name,
             description=t.description,
-            category=t.category,
+            tags=sorted(t.tags),
             status=_convert_status(t.status),
         )
         for t in tools

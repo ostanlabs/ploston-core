@@ -12,6 +12,7 @@ import ast
 import asyncio
 import contextlib
 import io
+import re
 import time
 import types
 from contextlib import redirect_stderr, redirect_stdout
@@ -133,6 +134,12 @@ DANGEROUS_DUNDERS = {
     "__path__",
 }
 
+# Matches format-string patterns that reference dunders, e.g.:
+#   {0.__class__}  {x.__dict__}  {.__bases__}  {foo.__globals__}
+# Used to distinguish dangerous format strings from plain string literals
+# that merely mention a dunder name in prose.
+_FORMAT_DUNDER_RE = re.compile(r"\{[^}]*\.__[a-z]+__")
+
 
 class PythonExecSandbox:
     """Sandboxed Python code execution for AEL workflows.
@@ -217,9 +224,12 @@ class PythonExecSandbox:
                 errors.append(f"Access to '{node.attr}' is not allowed")
 
             # Check string literals for format string attacks
+            # Only flag strings that contain format-string patterns like
+            # {0.__class__} or {x.__dict__} — plain strings that happen
+            # to mention a dunder (e.g. "the __dict__ attribute") are harmless.
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for dunder in DANGEROUS_DUNDERS:
-                    if dunder in node.value:
+                    if dunder in node.value and _FORMAT_DUNDER_RE.search(node.value):
                         errors.append(f"String containing '{dunder}' is not allowed")
 
         return errors
@@ -320,9 +330,11 @@ class PythonExecSandbox:
 
             # Check string literals that might be used in format strings
             # e.g., '{0.__class__}'.format(x) or f'{x.__class__}'
+            # Only flag strings with format-string patterns ({...dunder...}),
+            # not plain strings that happen to mention a dunder name.
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for dunder in DANGEROUS_DUNDERS:
-                    if dunder in node.value:
+                    if dunder in node.value and _FORMAT_DUNDER_RE.search(node.value):
                         raise SecurityError(
                             f"String containing '{dunder}' is not allowed "
                             "(potential format string attack)"

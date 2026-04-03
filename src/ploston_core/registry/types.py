@@ -21,8 +21,8 @@ class ToolDefinition:
     source: ToolSource
 
     # Optional fields (with defaults)
-    category: str | None = None  # Tool category for grouping
     server_name: str | None = None  # MCP server name
+    tags: set[str] = field(default_factory=set)  # Unified tag set (DEC-170)
 
     # Schemas
     input_schema: dict[str, Any] = field(default_factory=dict)

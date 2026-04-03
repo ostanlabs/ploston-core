@@ -30,7 +30,7 @@ class ToolSummary(BaseModel):
     source: ToolSource
     server: str | None = None
     description: str | None = None
-    category: str | None = None
+    tags: list[str] = []
     status: ToolStatus = ToolStatus.AVAILABLE
 
 
