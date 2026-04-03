@@ -24,6 +24,7 @@ from ploston_core.registry import ToolRegistry
 from ploston_core.sandbox import SandboxConfig
 from ploston_core.telemetry import (
     ChainDetector,
+    ChainDetectorConfig,
     OTLPExporterConfig,
     TelemetryConfig,
     get_telemetry,
@@ -138,6 +139,26 @@ class PlostApplication:
         # 1. Config Loader
         self.config_loader = ConfigLoader()
         self.config = self.config_loader.load(self._config_path)
+
+        # 1b. Root stdlib logger — ensure all getLogger() loggers in the CP
+        # process have a handler that writes to stdout so output appears in
+        # `docker logs`.  Respects PLOSTON_LOG_LEVEL env var (set in
+        # docker-compose) and falls back to the config file's logging level.
+        _root = logging.getLogger()
+        if not _root.handlers:
+            _console = logging.StreamHandler(sys.stdout)
+            _console.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)-8s [%(name)s] %(message)s")
+            )
+            _root.addHandler(_console)
+        # Map config level string to stdlib int; default to INFO
+        _level_name = os.environ.get(
+            "PLOSTON_LOG_LEVEL",
+            self.config.logging.level.value
+            if hasattr(self.config.logging.level, "value")
+            else str(self.config.logging.level),
+        ).upper()
+        _root.setLevel(getattr(logging, _level_name, logging.INFO))
 
         # 2. Logger
         log_config = LogConfig(
@@ -377,16 +398,30 @@ class PlostApplication:
             token_estimator = TokenEstimator(meter=telemetry["meter"])
 
         # 11b. Create ChainDetector for pattern detection on direct tool calls (DEC-057)
+        _app_logger = logging.getLogger("ploston.chain_detection")
         chain_detector = None
         telemetry = get_telemetry()
         if telemetry and telemetry.get("meter"):
             redis_client = None
             if self.redis_config_store and self.redis_config_store.connected:
                 redis_client = self.redis_config_store._client  # reuse existing connection
+            _app_logger.info(
+                "Creating ChainDetector: meter=%s, redis=%s, tracer=%s",
+                type(telemetry["meter"]).__name__,
+                "connected" if redis_client else "none",
+                "present" if telemetry.get("tracer") else "none",
+            )
             chain_detector = ChainDetector(
                 redis_client=redis_client,
                 meter=telemetry["meter"],
                 tracer=telemetry.get("tracer"),
+                config=ChainDetectorConfig(),
+            )
+        else:
+            _app_logger.warning(
+                "ChainDetector NOT created: telemetry=%s, meter=%s",
+                "present" if telemetry else "None",
+                "present" if (telemetry and telemetry.get("meter")) else "MISSING",
             )
         self.chain_detector = chain_detector
 
@@ -489,6 +524,7 @@ class PlostApplication:
             self.workflow_registry,
             tool_registry=self.tool_registry,
             runner_registry=self.runner_registry,
+            workflow_engine=self.workflow_engine,
         )
 
         self.mcp_frontend = MCPFrontend(
@@ -505,13 +541,22 @@ class PlostApplication:
             rest_app=rest_app,
             rest_prefix=self._rest_api_prefix,
             runner_registry=self.runner_registry,  # DEC-123: Enable runner tool routing
-            workflow_tools=workflow_tools,
+            workflow_tools_provider=workflow_tools,
             chain_detector=self.chain_detector,  # Tier 0 (DEC-057)
             telemetry_collector=self.telemetry_collector,  # Tier 3 (DEC-152)
         )
 
-        # Wire workflow CRUD → tools/list_changed notification
-        workflow_tools._on_tools_changed = self.mcp_frontend._send_tools_changed_notification
+        _app_logger.info(
+            "MCPFrontend wired: chain_detector=%s",
+            "ACTIVE" if self.chain_detector else "NONE",
+        )
+
+        # Wire tools/list_changed notifications for all tool-list mutation sources
+        _notify = self.mcp_frontend._send_tools_changed_notification  # noqa: SLF001
+        workflow_tools._on_tools_changed = _notify  # noqa: SLF001
+        self.tool_registry._on_tools_changed = _notify  # noqa: SLF001
+        if self.runner_registry:
+            self.runner_registry._on_tools_changed = _notify  # noqa: SLF001
 
         self._initialized = True
 

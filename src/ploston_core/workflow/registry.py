@@ -12,6 +12,23 @@ from .parser import parse_workflow_yaml
 from .types import WorkflowDefinition, WorkflowEntry
 from .validator import WorkflowValidator
 
+# Reserved bare names that would collide with workflow management tools.
+# A workflow named any of these would be permanently shadowed by the
+# management tool at routing step 3 (e.g. workflow_run).
+WORKFLOW_RESERVED_NAMES = frozenset(
+    {
+        "schema",
+        "list",
+        "get",
+        "create",
+        "update",
+        "delete",
+        "validate",
+        "tool_schema",
+        "run",  # DEC-171
+    }
+)
+
 if TYPE_CHECKING:
     from ploston_core.config import WorkflowsConfig
     from ploston_core.config.redis_store import RedisConfigStore
@@ -182,8 +199,28 @@ class WorkflowRegistry:
             ValidationResult (always valid if validate=False)
 
         Raises:
-            AELError(INPUT_INVALID) if validation fails
+            AELError(INPUT_INVALID) if validation fails or name is reserved/collides
         """
+        # DEC-169: Check reserved names (would be shadowed by management tools)
+        if workflow.name in WORKFLOW_RESERVED_NAMES:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"Workflow name '{workflow.name}' is reserved. "
+                    f"Reserved names: {', '.join(sorted(WORKFLOW_RESERVED_NAMES))}"
+                ),
+            )
+
+        # DEC-169: Check collision with CP tools in ToolRegistry
+        if self._tool_registry and self._tool_registry.get(workflow.name) is not None:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"Workflow name '{workflow.name}' collides with an existing "
+                    f"CP tool of the same name. Choose a different name."
+                ),
+            )
+
         if validate:
             result = self._validator.validate(workflow)
             if not result.valid:
@@ -347,7 +384,8 @@ class WorkflowRegistry:
     def get_for_mcp_exposure(self) -> list[dict[str, Any]]:
         """Get workflows formatted as MCP tools.
 
-        Returns list of tool definitions with workflow_ prefix.
+        Returns list of tool definitions using bare names (DEC-169).
+        Includes _ploston_tags for pre-serialization filtering.
 
         Returns:
             List of MCP tool definitions
@@ -383,11 +421,12 @@ class WorkflowRegistry:
             if required:
                 input_schema["required"] = required
 
-            # Create tool definition
+            # Create tool definition — bare name (DEC-169)
             tool = {
-                "name": f"workflow_{workflow.name}",
+                "name": workflow.name,
                 "description": workflow.description or f"Execute {workflow.name} workflow",
                 "inputSchema": input_schema,
+                "_ploston_tags": {"kind:workflow"},
             }
             tools.append(tool)
 

@@ -44,6 +44,8 @@ def _make_config(tmp_path: Path) -> MagicMock:
 def _make_tool_registry() -> MagicMock:
     tr = MagicMock()
     tr.get_tool.return_value = MagicMock()
+    # Default: no tool found by name (DEC-169 collision check)
+    tr.get.return_value = None
     # Support (mcp, tool) resolution
     echo_tool = MagicMock()
     echo_tool.name = "echo"

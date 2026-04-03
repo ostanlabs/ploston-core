@@ -1,22 +1,28 @@
-"""Workflow CRUD tools for MCP exposure.
+"""Workflow management tools for MCP exposure.
 
 Provides flat-named workflow management tools (workflow_schema, workflow_list,
-workflow_get, workflow_create, workflow_update, workflow_delete, workflow_validate)
-that delegate to the WorkflowRegistry.
+workflow_get, workflow_create, workflow_update, workflow_delete, workflow_validate,
+workflow_tool_schema, workflow_run) that delegate to WorkflowRegistry / WorkflowEngine.
 """
 
+from __future__ import annotations
+
+import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ploston_core.errors import create_error
 
 from .schema_generator import generate_workflow_schema
 
+if TYPE_CHECKING:
+    from ploston_core.engine.engine import WorkflowEngine
+
 # ─────────────────────────────────────────────────────────────────
 # Tool Names (static set for routing disambiguation)
 # ─────────────────────────────────────────────────────────────────
 
-WORKFLOW_CRUD_TOOL_NAMES = frozenset(
+WORKFLOW_MGMT_TOOL_NAMES = frozenset(
     {
         "workflow_schema",
         "workflow_list",
@@ -26,8 +32,12 @@ WORKFLOW_CRUD_TOOL_NAMES = frozenset(
         "workflow_delete",
         "workflow_validate",
         "workflow_tool_schema",
+        "workflow_run",
     }
 )
+
+# Backward-compat alias (deprecated)
+WORKFLOW_CRUD_TOOL_NAMES = WORKFLOW_MGMT_TOOL_NAMES
 
 # ─────────────────────────────────────────────────────────────────
 # MCP Tool Schemas
@@ -193,7 +203,30 @@ WORKFLOW_TOOL_SCHEMA_TOOL = {
     },
 }
 
-ALL_WORKFLOW_CRUD_TOOLS = [
+WORKFLOW_RUN_TOOL: dict[str, Any] = {
+    "name": "workflow_run",
+    "description": (
+        "Execute a registered workflow by name with the given inputs. "
+        "Returns workflow outputs on success, or an error on failure."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Name of the workflow to execute.",
+            },
+            "inputs": {
+                "type": "object",
+                "description": "Input parameters for the workflow. Keys must match the workflow's declared inputs.",
+                "additionalProperties": True,
+            },
+        },
+        "required": ["name"],
+    },
+}
+
+ALL_WORKFLOW_MGMT_TOOLS: list[dict[str, Any]] = [
     WORKFLOW_SCHEMA_TOOL,
     WORKFLOW_LIST_TOOL,
     WORKFLOW_GET_TOOL,
@@ -202,7 +235,11 @@ ALL_WORKFLOW_CRUD_TOOLS = [
     WORKFLOW_DELETE_TOOL,
     WORKFLOW_VALIDATE_TOOL,
     WORKFLOW_TOOL_SCHEMA_TOOL,
+    WORKFLOW_RUN_TOOL,
 ]
+
+# Backward-compat alias (deprecated)
+ALL_WORKFLOW_CRUD_TOOLS = ALL_WORKFLOW_MGMT_TOOLS
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -211,7 +248,7 @@ ALL_WORKFLOW_CRUD_TOOLS = [
 
 
 class WorkflowToolsProvider:
-    """Provides workflow CRUD tools for MCP exposure.
+    """Provides workflow management tools for MCP exposure.
 
     Sits alongside WorkflowRegistry, delegates all operations to it.
     Exposed via MCPFrontend in running mode.
@@ -222,6 +259,7 @@ class WorkflowToolsProvider:
         workflow_registry: Any,
         tool_registry: Any | None = None,
         runner_registry: Any | None = None,
+        workflow_engine: WorkflowEngine | None = None,
         on_tools_changed: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         from .registry import WorkflowRegistry
@@ -229,6 +267,7 @@ class WorkflowToolsProvider:
         self._registry: WorkflowRegistry = workflow_registry
         self._tool_registry = tool_registry
         self._runner_registry = runner_registry
+        self._workflow_engine = workflow_engine
         self._on_tools_changed = on_tools_changed
         self._handlers: dict[str, Callable[..., Any]] = {
             "workflow_schema": self._handle_schema,
@@ -239,16 +278,27 @@ class WorkflowToolsProvider:
             "workflow_delete": self._handle_delete,
             "workflow_validate": self._handle_validate,
             "workflow_tool_schema": self._handle_tool_schema,
+            "workflow_run": self._handle_run,
         }
 
     @staticmethod
+    def is_mgmt_tool(name: str) -> bool:
+        """Check if a tool name is a workflow management tool."""
+        return name in WORKFLOW_MGMT_TOOL_NAMES
+
+    @staticmethod
     def is_crud_tool(name: str) -> bool:
-        """Check if a tool name is a workflow CRUD tool (not an execution tool)."""
-        return name in WORKFLOW_CRUD_TOOL_NAMES
+        """Deprecated alias for is_mgmt_tool."""
+        return name in WORKFLOW_MGMT_TOOL_NAMES
 
     def get_for_mcp_exposure(self) -> list[dict[str, Any]]:
-        """Return MCP tool schemas for all CRUD tools."""
-        return list(ALL_WORKFLOW_CRUD_TOOLS)
+        """Return MCP tool schemas for all management tools.
+
+        Attaches _ploston_tags for pre-serialization filtering (DEC-170).
+        """
+        return [
+            {**tool, "_ploston_tags": {"kind:workflow_mgmt"}} for tool in ALL_WORKFLOW_MGMT_TOOLS
+        ]
 
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Route tool call to handler. Returns MCP-format response."""
@@ -559,9 +609,36 @@ class WorkflowToolsProvider:
             "available_tools": available,
         }
 
+    async def _handle_run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle workflow_run tool call.
+
+        Executes a workflow via WorkflowEngine.execute() — same path as
+        direct MCP workflow calls for telemetry consistency (DEC-171).
+        """
+        name = arguments.get("name")
+        if not name:
+            raise create_error("PARAM_INVALID", message="'name' parameter is required")
+
+        if not self._workflow_engine:
+            raise create_error(
+                "INTERNAL",
+                message="workflow_run is unavailable: WorkflowEngine not configured",
+            )
+
+        inputs = arguments.get("inputs") or {}
+        result = await self._workflow_engine.execute(name, inputs)
+
+        from ploston_core.types import ExecutionStatus
+
+        if result.status == ExecutionStatus.COMPLETED:
+            return {"result": result.outputs, "status": "completed"}
+        else:
+            return {
+                "status": "failed",
+                "error": result.error if hasattr(result, "error") else "Workflow execution failed",
+            }
+
 
 def _to_json(data: Any) -> str:
     """Serialize data to JSON string."""
-    import json
-
     return json.dumps(data, default=str)

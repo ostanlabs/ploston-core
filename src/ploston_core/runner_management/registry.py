@@ -15,6 +15,7 @@ import hashlib
 import logging
 import secrets
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -109,12 +110,21 @@ class RunnerRegistry:
     Provides CRUD operations and status tracking for runners.
     """
 
-    def __init__(self) -> None:
-        """Initialize the registry."""
+    def __init__(
+        self,
+        on_tools_changed: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Initialize the registry.
+
+        Args:
+            on_tools_changed: Optional async callback fired when the exposed
+                tool list changes (runner connect/disconnect/tool update).
+        """
         self._runners: dict[str, Runner] = {}  # id -> Runner
         self._name_to_id: dict[str, str] = {}  # name -> id
         self._token_to_id: dict[str, str] = {}  # token_hash -> id
         self._metrics: AELMetrics | None = None
+        self._on_tools_changed = on_tools_changed
         # Pub/sub: bridge SSE subscribers keyed by MCP name
         self._mcp_subscribers: dict[str, list[asyncio.Queue[dict]]] = defaultdict(list)
 
@@ -142,6 +152,15 @@ class RunnerRegistry:
         # Update metrics
         self._metrics.update_connected_runners(connected_count)
         self._metrics.update_runner_tools(total_runner_tools)
+
+    def _fire_tools_changed(self) -> None:
+        """Schedule the on_tools_changed callback on the running event loop."""
+        if self._on_tools_changed:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_tools_changed())
+            except RuntimeError:
+                pass  # No running event loop — skip notification
 
     def create(
         self,
@@ -267,6 +286,7 @@ class RunnerRegistry:
         )
         if result:
             self._update_metrics()
+            self._fire_tools_changed()
         return result
 
     def set_disconnected(self, runner_id: str) -> Runner | None:
@@ -274,6 +294,7 @@ class RunnerRegistry:
         result = self.update(runner_id, status=RunnerStatus.DISCONNECTED)
         if result:
             self._update_metrics()
+            self._fire_tools_changed()
         return result
 
     def update_heartbeat(self, runner_id: str) -> Runner | None:
@@ -295,6 +316,7 @@ class RunnerRegistry:
         result = self.update(runner_id, available_tools=tools)
         if result:
             self._update_metrics()
+            self._fire_tools_changed()
         return result
 
     def update_unavailable_mcps(

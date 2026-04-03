@@ -29,7 +29,6 @@ from ploston_core.telemetry.store.types import (
     ExecutionType,
 )
 from ploston_core.types import ExecutionStatus, LogLevel, MCPTransport
-from ploston_core.types.internal import InternalToolSource
 
 if TYPE_CHECKING:
     from ploston.workflow import WorkflowRegistry
@@ -82,7 +81,7 @@ class MCPFrontend:
         rest_prefix: str = "/api/v1",
         chain_detector: ChainDetector | None = None,
         runner_registry: RunnerRegistry | None = None,
-        workflow_tools: Any | None = None,
+        workflow_tools_provider: Any | None = None,
         telemetry_collector: Any | None = None,
     ):
         """Initialize MCP frontend.
@@ -102,7 +101,7 @@ class MCPFrontend:
             rest_prefix: URL prefix for REST API (default: /api/v1)
             chain_detector: Optional chain detector for detecting tool sequences
             runner_registry: Optional runner registry for routing tools to runners (DEC-123)
-            workflow_tools: Optional WorkflowToolsProvider for workflow CRUD tools
+            workflow_tools_provider: Optional WorkflowToolsProvider for workflow CRUD tools
             telemetry_collector: Optional TelemetryCollector for execution lifecycle (DEC-152)
         """
         self._workflow_engine = workflow_engine
@@ -129,7 +128,7 @@ class MCPFrontend:
         self._runner_registry = runner_registry
 
         # Workflow CRUD tools
-        self._workflow_tools = workflow_tools
+        self._workflow_tools_provider = workflow_tools_provider
 
         # Telemetry collector for execution lifecycle (Tier 3 — DEC-152)
         self._telemetry_collector = telemetry_collector
@@ -314,14 +313,11 @@ class MCPFrontend:
         }
 
     async def _handle_tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tools/list request with mode awareness.
+        """Handle tools/list request with unified tag filtering (DEC-170).
 
-        Includes runner tools with prefix per DEC-123 (e.g., "runner-name:tool").
-
-        Supports optional source filtering via params:
-        - sources: list of sources to include (e.g., ["native", "runner"])
-          Valid values: "mcp", "native", "system", "runner"
-          If not provided, returns all tools.
+        Supports optional filtering via params:
+        - tags: list of tags to filter by (match-all semantics)
+        - sources: legacy list of sources (deprecated, mapped to tags internally)
 
         Args:
             params: List parameters
@@ -329,71 +325,68 @@ class MCPFrontend:
         Returns:
             Tools list response
         """
-        tools = []
+        tools: list[dict[str, Any]] = []
 
-        # Parse source filter from params
-        source_filter = params.get("sources") if params else None
-        include_runner = True
-        include_mcp = True
-        include_native = True
-        include_system = True
-
-        if source_filter:
-            # Convert string sources to internal sources
-            include_runner = "runner" in source_filter
-            include_mcp = "mcp" in source_filter
-            include_native = "native" in source_filter
-            include_system = "system" in source_filter
+        # Parse tag filter from params (DEC-170)
+        tag_filter: set[str] | None = None
+        if params:
+            raw_tags = params.get("tags")
+            if raw_tags:
+                tag_filter = set(raw_tags)
+            else:
+                # Legacy source filter → map to tags
+                source_filter = params.get("sources")
+                if source_filter:
+                    tag_filter = set()
+                    for src in source_filter:
+                        if src in ("mcp", "native", "system"):
+                            tag_filter.add(f"source:{src}")
+                        elif src == "runner":
+                            tag_filter.add("source:runner")
 
         if self._mode_manager.mode == Mode.CONFIGURATION:
             # Configuration mode: only config tools
             if self._config_tool_registry:
                 tools = self._config_tool_registry.get_for_mcp_exposure()
         else:
-            # Running mode: all tools + workflows + configure + runner tools
-            if self._config.expose_tools:
-                # Build list of sources to include
-                sources_to_include = []
-                if include_mcp:
-                    sources_to_include.append(InternalToolSource.MCP)
-                if include_native:
-                    sources_to_include.append(InternalToolSource.NATIVE)
-                if include_system:
-                    sources_to_include.append(InternalToolSource.SYSTEM)
+            # Running mode: aggregate all tool sources, attach _ploston_tags,
+            # then filter and strip before returning.
 
-                # Get tools filtered by source (or all if no filter)
-                filter_sources = sources_to_include if source_filter else None
-                for tool in self._tool_registry.get_for_mcp_exposure(filter_sources):
+            # 1. CP tools from ToolRegistry
+            if self._config.expose_tools:
+                for tool in self._tool_registry.get_for_mcp_exposure():
+                    # Inject _ploston_tags from ToolDefinition
+                    tool_def = self._tool_registry.get(tool["name"])
+                    if tool_def:
+                        tool["_ploston_tags"] = set(tool_def.tags)
                     tools.append(tool)
 
-            # Only include workflows if no source filter (workflows don't have a source)
-            if self._config.expose_workflows and not source_filter:
+            # 2. Workflow execution tools (bare-name)
+            if self._config.expose_workflows:
                 for workflow in self._workflow_registry.get_for_mcp_exposure():
                     tools.append(workflow)
 
-            # Add configure and read-only ploston: tools (only if no source filter)
-            if self._config_tool_registry and not source_filter:
+            # 3. Configure tool
+            if self._config_tool_registry:
                 configure_tool = self._config_tool_registry.get_configure_tool_for_mcp_exposure()
                 if configure_tool:
+                    configure_tool["_ploston_tags"] = {"kind:config"}
                     tools.append(configure_tool)
-            # Add workflow CRUD tools (workflow_schema, workflow_list, etc.)
-            if self._workflow_tools and not source_filter:
-                for tool in self._workflow_tools.get_for_mcp_exposure():
+
+            # 4. Workflow management tools
+            if self._workflow_tools_provider:
+                for tool in self._workflow_tools_provider.get_for_mcp_exposure():
                     tools.append(tool)
 
-            # Add runner tools with prefix (DEC-123)
-            # Format: runner__mcp__toolname (e.g., mac__fs__read_file)
-            # Runner reports tools as mcp__toolname, we add runner__ prefix
-            if self._runner_registry and include_runner:
+            # 5. Runner tools (DEC-123)
+            if self._runner_registry:
                 for runner in self._runner_registry.list():
                     if runner.status.value == "connected" and runner.available_tools:
                         for tool_info in runner.available_tools:
-                            # Tool info can be a string or a dict with name/description
-                            # Tool name from runner is already prefixed: mcp__toolname
                             if isinstance(tool_info, str):
                                 tool_name = tool_info
                                 tool_desc = f"Tool from runner '{runner.name}'"
-                                tool_schema = {}
+                                tool_schema: dict[str, Any] = {}
                             else:
                                 tool_name = tool_info.get("name", str(tool_info))
                                 tool_desc = tool_info.get(
@@ -401,25 +394,36 @@ class MCPFrontend:
                                 )
                                 tool_schema = tool_info.get("inputSchema", {})
 
-                            # Prefix with runner name using __ delimiter
-                            # Result: runner__mcp__toolname
                             prefixed_name = f"{runner.name}__{tool_name}"
                             tools.append(
                                 {
                                     "name": prefixed_name,
                                     "description": tool_desc,
                                     "inputSchema": tool_schema,
+                                    "_ploston_tags": {"source:runner", f"runner:{runner.name}"},
                                 }
                             )
+
+            # Pre-serialization tag filter (DEC-170 §2.6)
+            if tag_filter:
+                tools = [t for t in tools if tag_filter.issubset(t.get("_ploston_tags", set()))]
+
+        # Strip _ploston_tags before MCP serialization
+        for tool in tools:
+            tool.pop("_ploston_tags", None)
 
         return {"tools": tools}
 
     async def _handle_tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tools/call request with mode awareness and runner routing.
+        """Handle tools/call with 6-step unified routing (DEC-169/170).
 
-        Implements prefix-based routing per DEC-123:
-        - "runner__mcp__tool" -> Route to runner via WebSocket
-        - "tool" -> Route to CP (local MCP servers)
+        Routing order:
+        1. Config namespace (ael:*, ploston:*, configure)
+        2. Runner prefix (runner__mcp__tool)
+        3. Management tools (workflow_schema, workflow_list, …, workflow_run)
+        4. CP tool registry (exact name match)
+        5. Workflow registry (bare-name match)
+        6. TOOL_UNAVAILABLE
 
         Args:
             params: Call parameters
@@ -433,19 +437,20 @@ class MCPFrontend:
         if not name:
             raise create_error("PARAM_INVALID", message="Tool name is required")
 
-        # Config tools (ael:* and ploston:* namespace)
+        # ── Step 1: Config namespace ──
         if name.startswith("ael:") or name.startswith("ploston:") or name == "configure":
             return await self._handle_config_tool_call(name, arguments)
 
-        # Check for runner prefix (DEC-123: runner__mcp__tool)
+        # ── Step 2: Runner prefix (DEC-123: runner__mcp__tool) ──
         runner_name, mcp_name, actual_tool = parse_tool_prefix(name)
         if runner_name:
-            # Pass mcp__tool to runner (it knows how to route internally)
             tool_for_runner = f"{mcp_name}__{actual_tool}" if mcp_name else actual_tool
             return await self._execute_runner_tool(runner_name, tool_for_runner, arguments)
 
-        # Workflow calls (CRUD tools + execution)
-        if name.startswith("workflow_"):
+        # ── Step 3: Workflow management tools ──
+        from ploston_core.workflow.tools import WorkflowToolsProvider
+
+        if WorkflowToolsProvider.is_mgmt_tool(name):
             if self._mode_manager.mode == Mode.CONFIGURATION:
                 raise AELError(
                     code="TOOL_UNAVAILABLE",
@@ -454,25 +459,41 @@ class MCPFrontend:
                     tool_name=name,
                     http_status=503,
                 )
-            # Route CRUD tools (workflow_schema, workflow_list, etc.) before execution
-            if self._workflow_tools:
-                from ploston_core.workflow.tools import WorkflowToolsProvider
+            if self._workflow_tools_provider:
+                return await self._workflow_tools_provider.call(name, arguments)
 
-                if WorkflowToolsProvider.is_crud_tool(name):
-                    return await self._workflow_tools.call(name, arguments)
-            workflow_id = name[len("workflow_") :]
-            return await self._execute_workflow(workflow_id, arguments)
+        # ── Step 4: CP tool registry (exact name) ──
+        if self._tool_registry.get(name):
+            if self._mode_manager.mode == Mode.CONFIGURATION:
+                raise AELError(
+                    code="TOOL_UNAVAILABLE",
+                    category=ErrorCategory.TOOL,
+                    message="Tools not available in configuration mode. Call config_done first.",
+                    tool_name=name,
+                    http_status=503,
+                )
+            return await self._execute_tool(name, arguments)
 
-        # Regular tool calls
-        if self._mode_manager.mode == Mode.CONFIGURATION:
-            raise AELError(
-                code="TOOL_UNAVAILABLE",
-                category=ErrorCategory.TOOL,
-                message="Tools not available in configuration mode. Call config_done first.",
-                tool_name=name,
-                http_status=503,
-            )
-        return await self._execute_tool(name, arguments)
+        # ── Step 5: Workflow registry (bare-name) ──
+        if self._workflow_registry.get(name):
+            if self._mode_manager.mode == Mode.CONFIGURATION:
+                raise AELError(
+                    code="TOOL_UNAVAILABLE",
+                    category=ErrorCategory.TOOL,
+                    message="Workflows not available in configuration mode. Call config_done first.",
+                    tool_name=name,
+                    http_status=503,
+                )
+            return await self._execute_workflow(name, arguments)
+
+        # ── Step 6: Not found ──
+        raise AELError(
+            code="TOOL_UNAVAILABLE",
+            category=ErrorCategory.TOOL,
+            message=f"Tool '{name}' not found in any registry.",
+            tool_name=name,
+            http_status=404,
+        )
 
     async def _handle_config_tool_call(
         self, name: str, arguments: dict[str, Any]
@@ -642,20 +663,51 @@ class MCPFrontend:
 
             # Chain detection (T-446 / DEC-057): Process tool call for chain detection
             # Only for direct tool calls (not workflows)
+            _chain_log = logging.getLogger("ploston.chain_detection")
             if self._chain_detector and result.success and not tool_name.startswith("workflow_"):
                 try:
                     _bctx_chain = bridge_context.get()
                     _http_bridge_id = _bctx_chain.bridge_id if _bctx_chain else None
-                    await self._chain_detector.process_tool_call(
+                    # Tier-4 trackers require a non-None session_id to record
+                    # sequence/temporal data.  Fall back to bridge name or "local"
+                    # when no Bridge-ID header is present.
+                    _session = _http_bridge_id or bridge or "local"
+                    _chain_log.debug(
+                        "_execute_tool: invoking chain detection tool=%s session=%s bridge_id=%s",
+                        tool_name,
+                        _session,
+                        bridge or _http_bridge_id,
+                    )
+                    predecessors = await self._chain_detector.process_tool_call(
                         tool_name=tool_name,
                         params=arguments,
                         result=result.output,
                         bridge_id=bridge or _http_bridge_id or None,
-                        session_id=_http_bridge_id,
+                        session_id=_session,
                     )
-                except Exception:
+                    if predecessors:
+                        _chain_log.info(
+                            "_execute_tool: chain links detected tool=%s predecessors=%s",
+                            tool_name,
+                            predecessors,
+                        )
+                except Exception as _chain_err:
                     # Chain detection is non-critical - don't fail the tool call
-                    pass
+                    _chain_log.warning(
+                        "_execute_tool: chain detection error tool=%s: %s",
+                        tool_name,
+                        _chain_err,
+                    )
+            elif not self._chain_detector:
+                _chain_log.debug(
+                    "_execute_tool: chain_detector is None, skipping for tool=%s",
+                    tool_name,
+                )
+            elif not result.success:
+                _chain_log.debug(
+                    "_execute_tool: tool call failed, skipping chain detection for tool=%s",
+                    tool_name,
+                )
 
             # End telemetry record (DEC-152)
             if self._telemetry_collector and execution_id:
@@ -855,6 +907,7 @@ class MCPFrontend:
                                 },
                             )
                     # Chain detection for MCP-format runner results (DEC-057)
+                    _rchain_log = logging.getLogger("ploston.chain_detection")
                     if self._chain_detector and not is_error:
                         try:
                             # Extract text content from MCP content blocks
@@ -862,16 +915,29 @@ class MCPFrontend:
                             for block in result.get("content", []):
                                 if block.get("type") == "text":
                                     chain_output += block.get("text", "")
+                            _rchain_log.debug(
+                                "_execute_runner_tool (MCP-format): invoking chain detection "
+                                "tool=%s runner=%s session=%s bridge=%s",
+                                tool_name,
+                                runner.name,
+                                _bridge_id or runner.name,
+                                _bridge_id,
+                            )
                             await self._chain_detector.process_tool_call(
                                 tool_name=tool_name,
                                 params=arguments,
                                 result=chain_output,
                                 runner_id=runner.name,
                                 bridge_id=_bridge_id,
-                                session_id=_bridge_id,
+                                session_id=_bridge_id or runner.name,
                             )
-                        except Exception:
-                            pass  # Chain detection is non-critical
+                        except Exception as _rce:
+                            _rchain_log.warning(
+                                "_execute_runner_tool: chain detection error (MCP-format) "
+                                "tool=%s: %s",
+                                tool_name,
+                                _rce,
+                            )
                     # End telemetry for MCP-format result (DEC-152)
                     if self._telemetry_collector and execution_id:
                         try:
@@ -951,16 +1017,30 @@ class MCPFrontend:
                     # Chain detection for output-format runner results (DEC-057)
                     if self._chain_detector:
                         try:
+                            _rchain_log2 = logging.getLogger("ploston.chain_detection")
+                            _rchain_log2.debug(
+                                "_execute_runner_tool (output-format): invoking chain "
+                                "detection tool=%s runner=%s session=%s bridge=%s",
+                                tool_name,
+                                runner.name,
+                                _bridge_id or runner.name,
+                                _bridge_id,
+                            )
                             await self._chain_detector.process_tool_call(
                                 tool_name=tool_name,
                                 params=arguments,
                                 result=output,
                                 runner_id=runner.name,
                                 bridge_id=_bridge_id,
-                                session_id=_bridge_id,
+                                session_id=_bridge_id or runner.name,
                             )
-                        except Exception:
-                            pass  # Chain detection is non-critical
+                        except Exception as _rce2:
+                            logging.getLogger("ploston.chain_detection").warning(
+                                "_execute_runner_tool: chain detection error (output-format) "
+                                "tool=%s: %s",
+                                tool_name,
+                                _rce2,
+                            )
                     # End telemetry for successful output result (DEC-152)
                     if self._telemetry_collector and execution_id:
                         try:

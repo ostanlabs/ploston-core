@@ -2,6 +2,7 @@
 
 from .chain_detector import (
     ChainDetector,
+    ChainDetectorConfig,
     ChainLink,
     InMemoryChainCache,
     SequenceTracker,
@@ -45,6 +46,7 @@ __all__ = [
     "DEFAULT_PRICING",
     # Chain Detection
     "ChainDetector",
+    "ChainDetectorConfig",
     "ChainLink",
     "InMemoryChainCache",
     "SequenceTracker",
