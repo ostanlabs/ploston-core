@@ -132,7 +132,7 @@ def create_rest_app(
     setup_error_handlers(app)
 
     # Include routers
-    app.include_router(capabilities_router)  # No prefix - already has /api/v1
+    app.include_router(capabilities_router, prefix=config.prefix)
     app.include_router(config_router, prefix=config.prefix)
     app.include_router(health_router, prefix=config.prefix)
     app.include_router(workflow_router, prefix=config.prefix)

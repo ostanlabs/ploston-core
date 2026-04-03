@@ -8,10 +8,10 @@ from fastapi import APIRouter
 
 from ploston_core.extensions.capabilities import get_capabilities_provider
 
-router = APIRouter(prefix="/api/v1", tags=["capabilities"])
+router = APIRouter(prefix="/capabilities", tags=["capabilities"])
 
 
-@router.get("/capabilities")
+@router.get("")
 async def get_capabilities() -> dict:
     """
     Get server capabilities.
