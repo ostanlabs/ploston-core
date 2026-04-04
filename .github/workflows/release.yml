@@ -11,7 +11,6 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       id-token: write  # For trusted publishing
       contents: read
