@@ -11,6 +11,7 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       id-token: write  # For trusted publishing
       contents: read
@@ -64,8 +65,8 @@ jobs:
             # Check if wheel is now available on PyPI (partial upload succeeded)
             echo "Checking if wheel was partially uploaded..."
             sleep 5  # Give PyPI a moment to index
-            if pip index versions ploston-core 2>/dev/null | grep -q "$VERSION"; then
-              echo "Wheel successfully uploaded to PyPI (source upload may have failed, but wheel is sufficient)"
+            if curl -sf "https://pypi.org/pypi/ploston-core/$VERSION/json" > /dev/null 2>&1; then
+              echo "Version $VERSION confirmed on PyPI (source upload may have failed, but wheel is sufficient)"
               exit 0
             fi
 
