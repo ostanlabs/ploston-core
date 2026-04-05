@@ -56,7 +56,10 @@ def _count_dict_items(d: dict[str, Any], count: int = 0) -> int:
 # Tool schema for MCP exposure
 CONFIG_RESET_SCHEMA = {
     "name": "ploston:config_reset",
-    "description": "Discard all staged changes and reset to base configuration.",
+    "description": (
+        "Discard all staged changes and reset to the last applied configuration. "
+        "Irreversible — staged changes cannot be recovered after reset."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {},

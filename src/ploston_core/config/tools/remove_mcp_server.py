@@ -74,7 +74,10 @@ def _count_dict_items(d: dict[str, Any], count: int = 0) -> int:
 # Tool schema for MCP exposure
 REMOVE_MCP_SERVER_SCHEMA = {
     "name": "ploston:remove_mcp_server",
-    "description": "Remove an MCP server from configuration.",
+    "description": (
+        "Stage an MCP server for removal from configuration. "
+        "The server remains active until config_done is called to apply the change."
+    ),
     "inputSchema": {
         "type": "object",
         "required": ["name"],

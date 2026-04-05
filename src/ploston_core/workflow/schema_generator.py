@@ -133,6 +133,15 @@ def generate_workflow_schema() -> dict[str, Any]:
         if field_name in base.get("required", []):
             base["required"].remove(field_name)
 
+    # T-E: Frame-switch annotation for top-level description field
+    if "description" in base["properties"]:
+        base["properties"]["description"]["description"] = (
+            "Write this as the tool author, not the workflow author. "
+            "This field becomes the MCP tool description that agents see in tools/list — "
+            "state what the workflow does, what it returns, and when to call it over alternatives. "
+            "Treat it as public API documentation."
+        )
+
     # Enrich steps with item schema
     step_schema = _dataclass_to_schema(StepDefinition)
     # Add descriptions for mcp field in step schema
@@ -151,6 +160,12 @@ def generate_workflow_schema() -> dict[str, Any]:
 
     # Enrich inputs with accepted forms documentation
     input_full_schema = _dataclass_to_schema(InputDefinition)
+    # T-F: Frame-switch annotation for input description fields
+    if "description" in input_full_schema.get("properties", {}):
+        input_full_schema["properties"]["description"]["description"] = (
+            "Write this as a parameter doc for a tool call, not an internal variable label. "
+            "Agents reading tools/list use this to know what value to pass."
+        )
     base["properties"]["inputs"] = {
         "type": "array",
         "description": "Workflow input definitions. Supports multiple syntax forms.",
@@ -434,17 +449,27 @@ def generate_workflow_schema() -> dict[str, Any]:
 
 
 def _get_example_workflow() -> str:
-    """Return a concrete example workflow YAML string."""
+    """Return a concrete example workflow YAML string.
+
+    The description and input descriptions model the tool-author frame:
+    they read as MCP tool documentation, not internal workflow notes.
+    """
     return """name: example-workflow
 version: "1.0.0"
-description: Example workflow demonstrating all features
+description: >
+  Fetch items from a URL and return a count filtered by topic.
+  Returns {url, count}. Use when you need a quick tally of items
+  from a remote endpoint without reading individual records.
 
 inputs:
-  - url
+  - url:
+      type: string
+      required: true
+      description: "The HTTP endpoint to fetch data from (e.g. 'https://api.example.com/items')"
   - topic:
       type: string
       default: "events"
-      description: "Target topic"
+      description: "Topic keyword to filter and count items by (e.g. 'events', 'orders')"
 
 defaults:
   timeout: 60

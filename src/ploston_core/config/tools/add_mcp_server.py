@@ -222,7 +222,11 @@ def _count_dict_items(d: dict[str, Any], count: int = 0) -> int:
 # Tool schema for MCP exposure
 ADD_MCP_SERVER_SCHEMA = {
     "name": "ploston:add_mcp_server",
-    "description": "Add a single MCP server to configuration. Returns validation feedback immediately.",
+    "description": (
+        "Stage an MCP server for addition to configuration. "
+        "Changes are not applied until config_done is called. "
+        "Returns validation feedback immediately so you can fix issues before committing."
+    ),
     "inputSchema": {
         "type": "object",
         "required": ["name"],
@@ -257,6 +261,7 @@ ADD_MCP_SERVER_SCHEMA = {
             "timeout": {
                 "type": "integer",
                 "default": 30,
+                "description": "Connection timeout in seconds.",
             },
         },
     },

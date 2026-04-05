@@ -78,7 +78,11 @@ def _flatten_changes(changes: dict[str, Any], prefix: str = "") -> list[dict[str
 # Tool schema for MCP exposure
 CONFIG_DIFF_SCHEMA = {
     "name": "ploston:config_diff",
-    "description": "Show diff between base configuration and staged changes.",
+    "description": (
+        "Show what has been staged but not yet applied. "
+        "Returns a unified diff and structured list of pending changes. "
+        "Call before config_done to verify staged changes look correct."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {},

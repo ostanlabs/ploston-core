@@ -84,7 +84,11 @@ def _count_dict_items(d: dict[str, Any], count: int = 0) -> int:
 # Tool schema for MCP exposure
 DISABLE_NATIVE_TOOL_SCHEMA = {
     "name": "ploston:disable_native_tool",
-    "description": "Disable a native tool by setting enabled=false.",
+    "description": (
+        "Stage a native tool for deactivation. "
+        "The tool remains active until config_done is called. "
+        "Use enable_native_tool to reactivate."
+    ),
     "inputSchema": {
         "type": "object",
         "required": ["tool"],

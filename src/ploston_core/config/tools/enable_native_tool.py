@@ -187,7 +187,13 @@ def _count_dict_items(d: dict[str, Any], count: int = 0) -> int:
 # Tool schema for MCP exposure
 ENABLE_NATIVE_TOOL_SCHEMA = {
     "name": "ploston:enable_native_tool",
-    "description": "Enable and configure a native tool (kafka, firecrawl, ollama, filesystem, network).",
+    "description": (
+        "Stage a Ploston-built native tool for activation. Native tools are built-in "
+        "integrations (kafka, firecrawl, ollama, filesystem, network) that extend Ploston "
+        "without requiring an external MCP server process. "
+        "Changes are staged — call config_done to apply. "
+        "Use get_setup_context to see the configuration schema for each tool."
+    ),
     "inputSchema": {
         "type": "object",
         "required": ["tool"],

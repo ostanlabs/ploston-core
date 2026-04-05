@@ -106,9 +106,13 @@ def _get_current_config(staged_config: StagedConfig) -> dict[str, Any] | None:
 # Tool schema for MCP exposure
 GET_SETUP_CONTEXT_SCHEMA = {
     "name": "ploston:get_setup_context",
-    "description": """Get complete configuration context including Ploston schema, example config,
-import sources for Claude Desktop/Cursor, and validation rules.
-IMPORTANT: Call this first before any other configuration tools.""",
+    "description": (
+        "Get complete configuration context for setting up Ploston. "
+        "Returns the config schema, an example config, and available import sources "
+        "(Claude Desktop, Cursor). "
+        "IMPORTANT: Call this first — it provides the schema and examples required "
+        "to correctly use all other config tools."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {},

@@ -18,6 +18,8 @@ from .schema_generator import generate_workflow_schema
 if TYPE_CHECKING:
     from ploston_core.engine.engine import WorkflowEngine
 
+    from .types import WorkflowDefinition
+
 # ─────────────────────────────────────────────────────────────────
 # Tool Names (static set for routing disambiguation)
 # ─────────────────────────────────────────────────────────────────
@@ -67,7 +69,11 @@ WORKFLOW_SCHEMA_TOOL = {
 
 WORKFLOW_LIST_TOOL = {
     "name": "workflow_list",
-    "description": "List all registered workflows with metadata.",
+    "description": (
+        "List all registered workflows. Returns name, version, description, tags, and "
+        "input names for each. Use for discovery — call workflow_get for the full YAML "
+        "when you need to inspect or edit a specific workflow."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -85,7 +91,10 @@ WORKFLOW_LIST_TOOL = {
 
 WORKFLOW_GET_TOOL = {
     "name": "workflow_get",
-    "description": "Get a workflow's YAML definition and metadata by name.",
+    "description": (
+        "Get a workflow's full YAML definition, version, tags, and step count by name. "
+        "Use workflow_list first to discover available workflow names."
+    ),
     "inputSchema": {
         "type": "object",
         "required": ["name"],
@@ -101,8 +110,11 @@ WORKFLOW_GET_TOOL = {
 WORKFLOW_CREATE_TOOL = {
     "name": "workflow_create",
     "description": (
-        "Register a new workflow from YAML content. "
-        "Use workflow_schema first to learn the YAML format and see a concrete example."
+        "Publish a workflow as an MCP tool. Once registered, the workflow appears in "
+        "tools/list under its bare name — its `description` field becomes what agents "
+        "see when selecting tools, and each input `description` becomes a parameter doc. "
+        "Use workflow_schema first to learn the YAML format. "
+        "Returns a preview of how the tool will appear in tools/list."
     ),
     "inputSchema": {
         "type": "object",
@@ -119,8 +131,11 @@ WORKFLOW_CREATE_TOOL = {
 WORKFLOW_UPDATE_TOOL = {
     "name": "workflow_update",
     "description": (
-        "Update an existing workflow with new YAML content. "
-        "Use workflow_get to retrieve the current definition and workflow_schema for the YAML format reference."
+        "Update a published workflow tool. The workflow's `description` and input "
+        "`description` fields are the public tool interface seen by other agents — "
+        "update them as you would update tool documentation. "
+        "Use workflow_get to retrieve the current definition. "
+        "Returns a preview of how the updated tool will appear in tools/list."
     ),
     "inputSchema": {
         "type": "object",
@@ -207,7 +222,8 @@ WORKFLOW_RUN_TOOL: dict[str, Any] = {
     "name": "workflow_run",
     "description": (
         "Execute a registered workflow by name with the given inputs. "
-        "Returns workflow outputs on success, or an error on failure."
+        "Returns workflow outputs on success, or a structured error on failure. "
+        "Use after workflow_create or workflow_update to verify the workflow behaves correctly."
     ),
     "inputSchema": {
         "type": "object",
@@ -340,6 +356,7 @@ class WorkflowToolsProvider:
             return result
 
         response: dict[str, Any] = {
+            "authoring_note": "Author the workflow. Document the tool.",
             "sections": list(schema.get("properties", {}).keys()),
             "schema": schema,
         }
@@ -471,6 +488,48 @@ class WorkflowToolsProvider:
             "steps_count": len(workflow.steps),
         }
 
+    @staticmethod
+    def _build_tool_preview(workflow: WorkflowDefinition) -> tuple[dict[str, Any], list[str]]:
+        """Build tool-listing preview and description quality warnings.
+
+        Returns:
+            Tuple of (tool_preview dict, list of warning strings).
+        """
+        description = workflow.description or f"Execute {workflow.name} workflow"
+        is_fallback = not workflow.description
+
+        inputs_preview: list[dict[str, Any]] = []
+        if workflow.inputs:
+            for inp in workflow.inputs:
+                inputs_preview.append(
+                    {
+                        "name": inp.name,
+                        "description": inp.description or "(no description)",
+                        "has_description": bool(inp.description),
+                    }
+                )
+
+        warnings: list[str] = []
+        if is_fallback:
+            warnings.append(
+                "description is empty — agents will see the generic fallback "
+                f"'Execute {workflow.name} workflow'. Write description as tool documentation."
+            )
+        if inputs_preview and any(not i["has_description"] for i in inputs_preview):
+            missing = [i["name"] for i in inputs_preview if not i["has_description"]]
+            warnings.append(
+                f"Input(s) {missing} have no description — agents will see '(no description)' "
+                "as the parameter doc."
+            )
+
+        tool_preview = {
+            "note": "Agents will see this tool in tools/list:",
+            "tool_name": workflow.name,
+            "tool_description": description,
+            "parameters": {inp["name"]: inp["description"] for inp in inputs_preview},
+        }
+        return tool_preview, warnings
+
     async def _handle_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_create tool call."""
         yaml_content = arguments.get("yaml_content")
@@ -485,7 +544,15 @@ class WorkflowToolsProvider:
         # register_from_yaml raises AELError(INPUT_INVALID) on validation failure
         self._registry.register_from_yaml(yaml_content, persist=True)
         await self._notify_tools_changed()
-        return {"name": workflow.name, "version": workflow.version, "status": "created"}
+
+        tool_preview, warnings = self._build_tool_preview(workflow)
+        return {
+            "name": workflow.name,
+            "version": workflow.version,
+            "status": "created",
+            "tool_preview": tool_preview,
+            "warnings": warnings,
+        }
 
     async def _handle_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_update tool call."""
@@ -514,7 +581,14 @@ class WorkflowToolsProvider:
         self._registry.register_from_yaml(yaml_content, persist=True)
         await self._notify_tools_changed()
 
-        return {"name": workflow.name, "version": workflow.version, "status": "updated"}
+        tool_preview, warnings = self._build_tool_preview(workflow)
+        return {
+            "name": workflow.name,
+            "version": workflow.version,
+            "status": "updated",
+            "tool_preview": tool_preview,
+            "warnings": warnings,
+        }
 
     async def _handle_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_delete tool call."""
@@ -535,10 +609,45 @@ class WorkflowToolsProvider:
             raise create_error("PARAM_INVALID", message="'yaml_content' parameter is required")
 
         result = self._registry.validate_yaml(yaml_content)
+
+        # Description quality check (warnings only — never affects valid)
+        desc_warnings: list[dict[str, str]] = []
+        try:
+            from .parser import parse_workflow_yaml
+
+            wf = parse_workflow_yaml(yaml_content)
+            fallback = f"Execute {wf.name} workflow"
+            if not wf.description or wf.description.strip() == fallback:
+                desc_warnings.append(
+                    {
+                        "path": "description",
+                        "message": (
+                            "description is empty or generic — agents will see a fallback string in "
+                            "tools/list. Write it as tool documentation: purpose, return value, when to use."
+                        ),
+                    }
+                )
+            if wf.inputs:
+                for inp in wf.inputs:
+                    if not inp.description:
+                        desc_warnings.append(
+                            {
+                                "path": f"inputs[{inp.name}].description",
+                                "message": (
+                                    f"Input '{inp.name}' has no description — agents will see no "
+                                    "parameter doc for this field in tools/list."
+                                ),
+                            }
+                        )
+        except Exception:
+            desc_warnings = []
+
         return {
             "valid": result.valid,
             "errors": [{"path": e.path, "message": e.message} for e in result.errors],
-            "warnings": [{"path": w.path, "message": w.message} for w in result.warnings],
+            "warnings": (
+                [{"path": w.path, "message": w.message} for w in result.warnings] + desc_warnings
+            ),
         }
 
     async def _handle_tool_schema(self, arguments: dict[str, Any]) -> dict[str, Any]:
