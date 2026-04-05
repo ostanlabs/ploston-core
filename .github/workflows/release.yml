@@ -1,9 +1,16 @@
-name: Release
+name: Release (DISABLED — use meta-repo release.yml)
 
+# Release is now triggered exclusively from the meta-repo:
+#   agent-execution-layer/.github/workflows/release.yml (workflow_dispatch)
+# This file is retained as documentation of the previous release job structure.
+# Do NOT add a tag trigger back — it bypasses integration gates.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      _disabled:
+        description: 'This workflow is disabled. Use meta-repo release.yml instead.'
+        required: false
+        type: string
 
 env:
   UV_SYSTEM_PYTHON: 1
