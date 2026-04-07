@@ -29,6 +29,7 @@ WORKFLOW_MGMT_TOOL_NAMES = frozenset(
         "workflow_schema",
         "workflow_list",
         "workflow_get",
+        "workflow_get_definition",
         "workflow_create",
         "workflow_update",
         "workflow_delete",
@@ -94,6 +95,26 @@ WORKFLOW_GET_TOOL = {
     "description": (
         "Get a workflow's full YAML definition, version, tags, and step count by name. "
         "Use workflow_list first to discover available workflow names."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Workflow name.",
+            }
+        },
+    },
+}
+
+WORKFLOW_GET_DEFINITION_TOOL = {
+    "name": "workflow_get_definition",
+    "description": (
+        "Get a workflow's complete definition. Returns 'yaml_content' that can be passed "
+        "directly to workflow_create to re-create the workflow, plus a structured "
+        "breakdown (inputs, steps, outputs, defaults, packages) for inspection. "
+        "Use this for exporting, backing up, or cloning workflows."
     ),
     "inputSchema": {
         "type": "object",
@@ -246,6 +267,7 @@ ALL_WORKFLOW_MGMT_TOOLS: list[dict[str, Any]] = [
     WORKFLOW_SCHEMA_TOOL,
     WORKFLOW_LIST_TOOL,
     WORKFLOW_GET_TOOL,
+    WORKFLOW_GET_DEFINITION_TOOL,
     WORKFLOW_CREATE_TOOL,
     WORKFLOW_UPDATE_TOOL,
     WORKFLOW_DELETE_TOOL,
@@ -289,6 +311,7 @@ class WorkflowToolsProvider:
             "workflow_schema": self._handle_schema,
             "workflow_list": self._handle_list,
             "workflow_get": self._handle_get,
+            "workflow_get_definition": self._handle_get_definition,
             "workflow_create": self._handle_create,
             "workflow_update": self._handle_update,
             "workflow_delete": self._handle_delete,
@@ -487,6 +510,111 @@ class WorkflowToolsProvider:
             "inputs": [inp.name for inp in workflow.inputs] if workflow.inputs else [],
             "steps_count": len(workflow.steps),
         }
+
+    async def _handle_get_definition(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle workflow_get_definition tool call.
+
+        Returns ``yaml_content`` (pass directly to ``workflow_create``) plus a
+        structured breakdown for inspection.
+        """
+        name = arguments.get("name")
+        if not name:
+            raise create_error("PARAM_INVALID", message="'name' parameter is required")
+
+        workflow = self._registry.get(name)
+        if not workflow:
+            raise create_error("WORKFLOW_NOT_FOUND", workflow_name=name)
+
+        # Primary payload — directly consumable by workflow_create
+        definition: dict[str, Any] = {
+            "yaml_content": workflow.yaml_content
+            or f"name: {workflow.name}\nversion: {workflow.version}",
+        }
+
+        # Structured breakdown for agent/human inspection
+        definition["name"] = workflow.name
+        definition["version"] = workflow.version
+        definition["description"] = workflow.description
+        definition["tags"] = workflow.tags or []
+
+        # Packages
+        if workflow.packages:
+            definition["packages"] = {
+                "profile": workflow.packages.profile,
+                "additional": workflow.packages.additional,
+            }
+
+        # Defaults
+        if workflow.defaults:
+            defaults: dict[str, Any] = {"timeout": workflow.defaults.timeout}
+            if workflow.defaults.on_error:
+                defaults["on_error"] = workflow.defaults.on_error.value
+            if workflow.defaults.retry:
+                defaults["retry"] = {
+                    "max_attempts": workflow.defaults.retry.max_attempts,
+                    "backoff": workflow.defaults.retry.backoff.value,
+                    "delay_seconds": workflow.defaults.retry.delay_seconds,
+                }
+            if workflow.defaults.runner:
+                defaults["runner"] = workflow.defaults.runner
+            definition["defaults"] = defaults
+
+        # Inputs (full detail)
+        definition["inputs"] = [
+            {
+                "name": inp.name,
+                "type": inp.type,
+                "required": inp.required,
+                "default": inp.default,
+                "description": inp.description,
+                **({"enum": inp.enum} if inp.enum else {}),
+                **({"pattern": inp.pattern} if inp.pattern else {}),
+                **({"minimum": inp.minimum} if inp.minimum is not None else {}),
+                **({"maximum": inp.maximum} if inp.maximum is not None else {}),
+            }
+            for inp in workflow.inputs
+        ]
+
+        # Steps (full detail)
+        definition["steps"] = [
+            {
+                "id": step.id,
+                **({"tool": step.tool} if step.tool else {}),
+                **({"code": step.code} if step.code else {}),
+                **({"mcp": step.mcp} if step.mcp else {}),
+                **({"params": step.params} if step.params else {}),
+                **({"depends_on": step.depends_on} if step.depends_on else {}),
+                **({"when": step.when} if step.when else {}),
+                **({"on_error": step.on_error.value} if step.on_error else {}),
+                **({"timeout": step.timeout} if step.timeout else {}),
+                **({"on_missing_tool": step.on_missing_tool.value} if step.on_missing_tool else {}),
+                **(
+                    {
+                        "retry": {
+                            "max_attempts": step.retry.max_attempts,
+                            "backoff": step.retry.backoff.value,
+                            "delay_seconds": step.retry.delay_seconds,
+                        }
+                    }
+                    if step.retry
+                    else {}
+                ),
+            }
+            for step in workflow.steps
+        ]
+
+        # Outputs
+        definition["outputs"] = [
+            {
+                "name": out.name,
+                **({"from_path": out.from_path} if out.from_path else {}),
+                **({"value": out.value} if out.value else {}),
+                **({"description": out.description} if out.description else {}),
+            }
+            for out in workflow.outputs
+        ]
+
+        return definition
 
     @staticmethod
     def _build_tool_preview(workflow: WorkflowDefinition) -> tuple[dict[str, Any], list[str]]:

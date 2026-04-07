@@ -226,3 +226,133 @@ class TestToolSchemaNoRegistries:
         raw = await provider.call("workflow_tool_schema", {"mcp": "system", "tool": "python_exec"})
         result = _parse_mcp_result(raw)
         assert result.get("found") is False
+
+
+class TestWorkflowGetDefinition:
+    """Tests for workflow_get_definition tool."""
+
+    @pytest.fixture
+    def mock_workflow(self):
+        """Create a mock workflow with full details."""
+        from ploston_core.types import OnError
+
+        workflow = MagicMock()
+        workflow.name = "test-wf"
+        workflow.version = "1.0"
+        workflow.description = "A test workflow"
+        workflow.tags = ["test", "ci"]
+        workflow.yaml_content = "name: test-wf\nversion: '1.0'"
+
+        # Packages
+        workflow.packages = MagicMock()
+        workflow.packages.profile = "standard"
+        workflow.packages.additional = ["requests"]
+
+        # Defaults
+        workflow.defaults = MagicMock()
+        workflow.defaults.timeout = 30
+        workflow.defaults.on_error = OnError.FAIL
+        workflow.defaults.retry = None
+        workflow.defaults.runner = None
+
+        # Inputs
+        inp = MagicMock()
+        inp.name = "url"
+        inp.type = "string"
+        inp.required = True
+        inp.default = None
+        inp.description = "URL to fetch"
+        inp.enum = None
+        inp.pattern = None
+        inp.minimum = None
+        inp.maximum = None
+        workflow.inputs = [inp]
+
+        # Steps
+        step1 = MagicMock()
+        step1.id = "fetch"
+        step1.tool = "http_get"
+        step1.code = None
+        step1.mcp = "http"
+        step1.params = {"url": "{{ inputs.url }}"}
+        step1.depends_on = None
+        step1.when = None
+        step1.on_error = None
+        step1.timeout = 60
+        step1.on_missing_tool = None
+        step1.retry = None
+        workflow.steps = [step1]
+
+        # Outputs
+        out = MagicMock()
+        out.name = "body"
+        out.from_path = "steps.fetch.output"
+        out.value = None
+        out.description = "Response body"
+        workflow.outputs = [out]
+
+        return workflow
+
+    @pytest.mark.asyncio
+    async def test_returns_full_definition(self, mock_workflow_registry, mock_workflow):
+        """workflow_get_definition returns structured definition with steps."""
+        mock_workflow_registry.get.return_value = mock_workflow
+
+        provider = WorkflowToolsProvider(
+            workflow_registry=mock_workflow_registry,
+        )
+        raw = await provider.call("workflow_get_definition", {"name": "test-wf"})
+        result = _parse_mcp_result(raw)
+
+        assert result["name"] == "test-wf"
+        assert result["version"] == "1.0"
+        assert result["description"] == "A test workflow"
+        assert result["tags"] == ["test", "ci"]
+
+        # Check packages
+        assert result["packages"]["profile"] == "standard"
+        assert result["packages"]["additional"] == ["requests"]
+
+        # Check inputs
+        assert len(result["inputs"]) == 1
+        assert result["inputs"][0]["name"] == "url"
+        assert result["inputs"][0]["type"] == "string"
+        assert result["inputs"][0]["description"] == "URL to fetch"
+
+        # Check steps
+        assert len(result["steps"]) == 1
+        step = result["steps"][0]
+        assert step["id"] == "fetch"
+        assert step["tool"] == "http_get"
+        assert step["mcp"] == "http"
+        assert step["params"] == {"url": "{{ inputs.url }}"}
+        assert step["timeout"] == 60
+        assert "code" not in step  # None values stripped
+
+        # Check outputs
+        assert len(result["outputs"]) == 1
+        assert result["outputs"][0]["name"] == "body"
+        assert result["outputs"][0]["from_path"] == "steps.fetch.output"
+
+        # yaml_content included — directly consumable by workflow_create
+        assert result["yaml_content"] == "name: test-wf\nversion: '1.0'"
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, mock_workflow_registry):
+        """workflow_get_definition raises error for unknown workflow."""
+        mock_workflow_registry.get.return_value = None
+
+        provider = WorkflowToolsProvider(
+            workflow_registry=mock_workflow_registry,
+        )
+        with pytest.raises(Exception):
+            await provider.call("workflow_get_definition", {"name": "nope"})
+
+    @pytest.mark.asyncio
+    async def test_missing_name_param(self, mock_workflow_registry):
+        """workflow_get_definition raises error when name is missing."""
+        provider = WorkflowToolsProvider(
+            workflow_registry=mock_workflow_registry,
+        )
+        with pytest.raises(Exception):
+            await provider.call("workflow_get_definition", {})

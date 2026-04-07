@@ -244,10 +244,35 @@ class PersistentRunnerRegistry(RunnerRegistry):
             logger.error(f"Failed to update config file: {e}")
             return False
 
+    @staticmethod
+    def _convert_mcp_servers_to_mcps(mcp_servers: dict) -> dict[str, dict]:
+        """Convert mcp_servers config format to mcps dict format.
+
+        Args:
+            mcp_servers: Dict of MCP server definitions (dataclass or dict)
+
+        Returns:
+            Dict of MCP name -> MCP config dict
+        """
+        mcps: dict[str, dict] = {}
+        for mcp_name, mcp_def in mcp_servers.items():
+            # mcp_def could be a dataclass or dict
+            if hasattr(mcp_def, "__dict__"):
+                # It's a dataclass, convert to dict
+                mcps[mcp_name] = {
+                    k: v
+                    for k, v in mcp_def.__dict__.items()
+                    if v is not None and v != {} and v != []
+                }
+            else:
+                mcps[mcp_name] = mcp_def
+        return mcps
+
     async def sync_from_config(self, runners_config: dict[str, dict]) -> dict[str, dict]:
         """Sync runners from config file definition.
 
         Creates runners defined in config that don't exist yet.
+        Updates MCP configs on runners that already exist.
         Does NOT delete runners that are not in config (that's a separate operation).
 
         Args:
@@ -255,48 +280,42 @@ class PersistentRunnerRegistry(RunnerRegistry):
                            Each definition has 'mcp_servers' key and optional 'token' key
 
         Returns:
-            Dict of runner name -> {created: bool, token: str | None}
-            Token is only returned for newly created runners
+            Dict of runner name -> {created: bool, updated: bool, token: str | None}
+            Token is only returned for newly created runners.
+            'updated' is True when an existing runner's mcps were changed.
         """
         results: dict[str, dict] = {}
 
         for name, definition in runners_config.items():
+            mcps = self._convert_mcp_servers_to_mcps(definition.get("mcp_servers", {}))
+
             # Check if runner already exists
             existing = self.get_by_name(name)
             if existing:
-                results[name] = {"created": False, "token": None}
-                logger.debug(f"Runner '{name}' already exists, skipping")
+                # Update mcps if they changed
+                if existing.mcps != mcps:
+                    existing.mcps = mcps
+                    await self._persist_runner(existing)
+                    results[name] = {"created": False, "updated": True, "token": None}
+                    logger.info(f"Updated MCPs for runner '{name}'")
+                else:
+                    results[name] = {"created": False, "updated": False, "token": None}
+                    logger.debug(f"Runner '{name}' already exists, MCPs unchanged")
                 continue
 
             # Get token from config if provided (from CLI's init --import)
             config_token = definition.get("token")
-
-            # Convert mcp_servers to mcps format expected by registry
-            # Config uses RunnerMCPServerDefinition, registry uses dict
-            mcps = {}
-            mcp_servers = definition.get("mcp_servers", {})
-            for mcp_name, mcp_def in mcp_servers.items():
-                # mcp_def could be a dataclass or dict
-                if hasattr(mcp_def, "__dict__"):
-                    # It's a dataclass, convert to dict
-                    mcps[mcp_name] = {
-                        k: v
-                        for k, v in mcp_def.__dict__.items()
-                        if v is not None and v != {} and v != []
-                    }
-                else:
-                    mcps[mcp_name] = mcp_def
 
             # Create the runner with the token from config (if provided)
             try:
                 runner, token = await self.create_async(
                     name, mcps=mcps if mcps else None, token=config_token
                 )
-                results[name] = {"created": True, "token": token}
+                results[name] = {"created": True, "updated": False, "token": token}
                 logger.info(f"Created runner '{name}' from config")
             except ValueError as e:
                 logger.error(f"Failed to create runner '{name}': {e}")
-                results[name] = {"created": False, "token": None, "error": str(e)}
+                results[name] = {"created": False, "updated": False, "token": None, "error": str(e)}
 
         return results
 

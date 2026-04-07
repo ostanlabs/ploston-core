@@ -231,6 +231,76 @@ def is_runner_connected(runner_id: str) -> bool:
     return runner_id in _runner_connections
 
 
+async def push_config_to_connected_runners(
+    runner_registry: Any,
+    runner_names: list[str] | None = None,
+    ael_config: Any = None,
+) -> dict[str, str]:
+    """Push updated MCP config to connected runners.
+
+    For each connected runner whose config may have changed, re-reads
+    the runner.mcps from the registry (which includes the latest Redis
+    state) and sends a config/push notification over the WebSocket.
+
+    Args:
+        runner_registry: RunnerRegistry (or PersistentRunnerRegistry) instance.
+        runner_names: Optional list of runner names to push to.
+                      If None, pushes to ALL connected runners.
+        ael_config: Optional AELConfig for pre-configured MCP merging.
+
+    Returns:
+        Dict of runner_name -> status ("pushed" | "not_connected" | error string).
+    """
+    results: dict[str, str] = {}
+
+    for runner_id, conn in list(_runner_connections.items()):
+        runner = runner_registry.get(runner_id)
+        if not runner:
+            continue
+
+        # Skip if we were given a specific list and this runner isn't in it
+        if runner_names is not None and runner.name not in runner_names:
+            continue
+
+        # Build MCPs to push: config-based + API-provided (API takes precedence)
+        mcps_to_push: dict[str, dict] = {}
+
+        # 1. Get pre-configured MCPs from ael_config.runners
+        if ael_config and hasattr(ael_config, "runners"):
+            runner_def = ael_config.runners.get(runner.name)
+            if runner_def and runner_def.mcp_servers:
+                for mcp_name, mcp_def in runner_def.mcp_servers.items():
+                    mcps_to_push[mcp_name] = {
+                        "command": mcp_def.command,
+                        "args": mcp_def.args,
+                        "url": mcp_def.url,
+                        "env": mcp_def.env,
+                        "timeout": mcp_def.timeout,
+                    }
+
+        # 2. Merge with API-provided MCPs (these take precedence)
+        if runner.mcps:
+            mcps_to_push.update(runner.mcps)
+
+        try:
+            await _send_notification(
+                conn.websocket,
+                "config/push",
+                {"mcps": mcps_to_push},
+            )
+            mcp_names = sorted(mcps_to_push.keys())
+            logger.info(
+                f"[config-push] Pushed config to runner '{runner.name}': "
+                f"{len(mcp_names)} MCPs={mcp_names}"
+            )
+            results[runner.name] = "pushed"
+        except Exception as e:
+            logger.error(f"[config-push] Failed to push config to runner '{runner.name}': {e}")
+            results[runner.name] = f"error: {e}"
+
+    return results
+
+
 @runner_static_router.websocket("/ws")
 async def runner_websocket(websocket: WebSocket) -> None:
     """WebSocket endpoint for runner connections.

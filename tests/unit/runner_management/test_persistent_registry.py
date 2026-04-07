@@ -208,3 +208,108 @@ class TestDeleteAsync:
 
         assert result is False
         mock_config_store.delete_config.assert_not_called()
+
+
+class TestSyncFromConfig:
+    """Tests for sync_from_config — create and update paths."""
+
+    @pytest.mark.asyncio
+    async def test_creates_new_runner(self, registry, mock_config_store):
+        """sync_from_config creates a runner that doesn't exist yet."""
+        config = {
+            "my-runner": {
+                "token": "tok-abc",
+                "mcp_servers": {"github": {"command": "docker", "args": ["run", "github-mcp"]}},
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["my-runner"]["created"] is True
+        assert results["my-runner"]["updated"] is False
+        assert results["my-runner"]["token"] is not None
+        runner = registry.get_by_name("my-runner")
+        assert runner is not None
+        assert "github" in runner.mcps
+
+    @pytest.mark.asyncio
+    async def test_skips_unchanged_runner(self, registry, mock_config_store):
+        """sync_from_config skips update when mcps are identical."""
+        mcps = {"github": {"command": "docker"}}
+        await registry.create_async("existing", mcps=mcps)
+        mock_config_store.publish_config.reset_mock()
+
+        config = {
+            "existing": {
+                "mcp_servers": {"github": {"command": "docker"}},
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["created"] is False
+        assert results["existing"]["updated"] is False
+        # No Redis write since nothing changed
+        mock_config_store.publish_config.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_updates_existing_runner_mcps(self, registry, mock_config_store):
+        """sync_from_config updates mcps when they differ."""
+        old_mcps = {"github": {"command": "docker", "env": {"TOOLSETS": "all"}}}
+        await registry.create_async("existing", mcps=old_mcps)
+        mock_config_store.publish_config.reset_mock()
+
+        new_mcps = {"github": {"command": "docker", "env": {"TOOLSETS": "repos,context"}}}
+        config = {
+            "existing": {
+                "mcp_servers": new_mcps,
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["created"] is False
+        assert results["existing"]["updated"] is True
+        runner = registry.get_by_name("existing")
+        assert runner.mcps == new_mcps
+        # Verify persisted to Redis
+        mock_config_store.publish_config.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_updates_when_server_added(self, registry, mock_config_store):
+        """sync_from_config detects a newly added MCP server."""
+        old_mcps = {"github": {"command": "docker"}}
+        await registry.create_async("existing", mcps=old_mcps)
+        mock_config_store.publish_config.reset_mock()
+
+        new_mcps = {
+            "github": {"command": "docker"},
+            "filesystem": {"command": "npx", "args": ["@mcp/filesystem"]},
+        }
+        config = {"existing": {"mcp_servers": new_mcps}}
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["updated"] is True
+        runner = registry.get_by_name("existing")
+        assert "filesystem" in runner.mcps
+
+
+class TestConvertMcpServersToMcps:
+    """Tests for the static helper _convert_mcp_servers_to_mcps."""
+
+    def test_converts_dict(self):
+        mcp_servers = {"github": {"command": "docker", "args": ["run"]}}
+        result = PersistentRunnerRegistry._convert_mcp_servers_to_mcps(mcp_servers)
+        assert result == {"github": {"command": "docker", "args": ["run"]}}
+
+    def test_converts_dataclass(self):
+        class FakeMcpDef:
+            def __init__(self):
+                self.command = "npx"
+                self.args = ["@mcp/fetch"]
+                self.env = {}
+                self.url = None
+
+        result = PersistentRunnerRegistry._convert_mcp_servers_to_mcps({"fetch": FakeMcpDef()})
+        assert result["fetch"]["command"] == "npx"
+        assert result["fetch"]["args"] == ["@mcp/fetch"]
+        # Empty/None values should be stripped
+        assert "env" not in result["fetch"]
+        assert "url" not in result["fetch"]

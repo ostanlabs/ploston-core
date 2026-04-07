@@ -99,8 +99,11 @@ async def handle_config_done(
         try:
             runner_results = await runner_registry.sync_from_config(runners_config)
             created_count = sum(1 for r in runner_results.values() if r.get("created"))
+            updated_count = sum(1 for r in runner_results.values() if r.get("updated"))
             if created_count > 0:
                 logger.info(f"Created {created_count} runner(s) from config")
+            if updated_count > 0:
+                logger.info(f"Updated {updated_count} runner(s) from config")
         except Exception as e:
             logger.error(f"Failed to sync runners from config: {e}")
             errors.append(
@@ -110,6 +113,26 @@ async def handle_config_done(
                     "suggestion": "Check runner configuration",
                 }
             )
+
+    # Step 3.6: Push updated config to connected runners
+    # Any runner that was created or updated should receive its new MCP config
+    # over the WebSocket so it can restart/spawn MCP servers without reconnecting.
+    changed_runners = [
+        name for name, info in runner_results.items() if info.get("created") or info.get("updated")
+    ]
+    if runner_registry and changed_runners:
+        try:
+            from ploston_core.api.routers.runner_static import push_config_to_connected_runners
+
+            push_results = await push_config_to_connected_runners(
+                runner_registry=runner_registry,
+                runner_names=changed_runners,
+            )
+            for rname, status in push_results.items():
+                logger.info(f"Config push to runner '{rname}': {status}")
+        except Exception as e:
+            # Non-fatal: config was written, runner just didn't get the push
+            logger.warning(f"Failed to push config to connected runners: {e}")
 
     # Step 4: Write config to file
     target_path = write_location or "./ael-config.yaml"

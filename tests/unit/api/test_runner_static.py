@@ -239,3 +239,112 @@ class TestRunnerConfigModels:
         """Test AELConfig with no runners configured."""
         config = AELConfig()
         assert config.runners == {}
+
+
+class TestPushConfigToConnectedRunners:
+    """Tests for push_config_to_connected_runners."""
+
+    @pytest.mark.asyncio
+    async def test_push_to_connected_runner(self) -> None:
+        """Push sends config/push notification to connected runner."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from ploston_core.api.routers.runner_static import push_config_to_connected_runners
+
+        # Create a mock runner registry
+        mock_runner = MagicMock()
+        mock_runner.id = "r-1"
+        mock_runner.name = "local"
+        mock_runner.mcps = {"github": {"command": "docker"}}
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_runner
+
+        # Create a mock connection
+        mock_ws = AsyncMock()
+        mock_conn = MagicMock()
+        mock_conn.websocket = mock_ws
+
+        with (
+            patch(
+                "ploston_core.api.routers.runner_static._runner_connections",
+                {"r-1": mock_conn},
+            ),
+            patch(
+                "ploston_core.api.routers.runner_static._send_notification",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            results = await push_config_to_connected_runners(mock_registry, ["local"])
+
+        assert results["local"] == "pushed"
+        mock_send.assert_called_once()
+        call_args = mock_send.call_args
+        assert call_args[0][1] == "config/push"
+        assert "github" in call_args[0][2]["mcps"]
+
+    @pytest.mark.asyncio
+    async def test_push_skips_non_matching_runner(self) -> None:
+        """Push skips runners not in the runner_names list."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from ploston_core.api.routers.runner_static import push_config_to_connected_runners
+
+        mock_runner = MagicMock()
+        mock_runner.id = "r-1"
+        mock_runner.name = "other-runner"
+        mock_runner.mcps = {}
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_runner
+
+        mock_conn = MagicMock()
+        mock_conn.websocket = AsyncMock()
+
+        with (
+            patch(
+                "ploston_core.api.routers.runner_static._runner_connections",
+                {"r-1": mock_conn},
+            ),
+            patch(
+                "ploston_core.api.routers.runner_static._send_notification",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            results = await push_config_to_connected_runners(mock_registry, ["local"])
+
+        assert results == {}
+        mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_push_all_when_names_none(self) -> None:
+        """Push to ALL runners when runner_names is None."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from ploston_core.api.routers.runner_static import push_config_to_connected_runners
+
+        mock_runner = MagicMock()
+        mock_runner.id = "r-1"
+        mock_runner.name = "local"
+        mock_runner.mcps = {"fs": {"command": "npx"}}
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_runner
+
+        mock_conn = MagicMock()
+        mock_conn.websocket = AsyncMock()
+
+        with (
+            patch(
+                "ploston_core.api.routers.runner_static._runner_connections",
+                {"r-1": mock_conn},
+            ),
+            patch(
+                "ploston_core.api.routers.runner_static._send_notification",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            results = await push_config_to_connected_runners(mock_registry, None)
+
+        assert results["local"] == "pushed"
+        mock_send.assert_called_once()
