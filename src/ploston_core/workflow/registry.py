@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from ploston_core.logging import AELLogger
     from ploston_core.registry import ToolRegistry
     from ploston_core.runner_management.registry import RunnerRegistry
+    from ploston_core.telemetry.metrics import AELMetrics
 
 
 class WorkflowRegistry:
@@ -70,6 +71,20 @@ class WorkflowRegistry:
         self._validator = WorkflowValidator(tool_registry, runner_registry=runner_registry)
         self._watching = False
         self._watch_task: asyncio.Task[None] | None = None
+        self._metrics: AELMetrics | None = None
+
+    def set_metrics(self, metrics: "AELMetrics") -> None:
+        """Set the metrics instance for telemetry.
+
+        Args:
+            metrics: AELMetrics instance
+        """
+        self._metrics = metrics
+
+    def _update_metrics(self) -> None:
+        """Update telemetry metrics based on current workflow count."""
+        if self._metrics:
+            self._metrics.update_registered_workflows(len(self._workflows))
 
     async def _persist(self, name: str, yaml_content: str) -> None:
         """Persist API-registered workflow YAML.
@@ -182,6 +197,7 @@ class WorkflowRegistry:
                 {"count": count},
             )
 
+        self._update_metrics()
         return count
 
     def register(
@@ -247,6 +263,7 @@ class WorkflowRegistry:
                 {"name": workflow.name},
             )
 
+        self._update_metrics()
         return result
 
     def register_from_yaml(
@@ -312,6 +329,7 @@ class WorkflowRegistry:
                 loop.create_task(self._delete_persisted(name, entry.source))
             except RuntimeError:
                 asyncio.run(self._delete_persisted(name, entry.source))
+            self._update_metrics()
             return True
         return False
 

@@ -102,6 +102,7 @@ class PlostMetrics:
         self._current_runner_tools = 0
         self._current_native_tools = 0
         self._current_connected_runners = 0
+        self._current_registered_workflows = 0
 
     def _setup_counters(self) -> None:
         """Set up counter metrics."""
@@ -412,13 +413,19 @@ class PlostMetrics:
             self.tools_by_source.add(runner_delta, {"source": "runner"})
         self._current_runner_tools = runner_tools
 
-    def set_registered_workflows_count(self, count: int) -> None:
-        """Set the number of registered workflows.
+    def update_registered_workflows(self, count: int) -> None:
+        """Update the number of registered workflows (calculates delta).
+
+        This method tracks the current value and only adds the delta
+        to the UpDownCounter, ensuring accurate gauge-like behavior.
 
         Args:
-            count: Number of registered workflows
+            count: New count of registered workflows
         """
-        self.registered_workflows.add(count)
+        delta = count - self._current_registered_workflows
+        if delta != 0:
+            self.registered_workflows.add(delta)
+        self._current_registered_workflows = count
 
     def record_chain_link(self, from_tool: str, to_tool: str) -> None:
         """Record a chain link between two tool calls.

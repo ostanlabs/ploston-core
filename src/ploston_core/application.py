@@ -354,6 +354,8 @@ class PlostApplication:
             redis_store=self.redis_config_store,
             runner_registry=self.runner_registry,
         )
+        if telemetry and telemetry.get("metrics"):
+            self.workflow_registry.set_metrics(telemetry["metrics"])
         await self.workflow_registry.initialize()
 
         # 8. Sandbox Factory
