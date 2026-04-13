@@ -164,3 +164,59 @@ class TestInMemoryExecutionStore:
         await store.save(_create_execution("exec-1"))
         logs = await store.get_logs("exec-1")
         assert logs == []
+
+
+# ── DEC-145: execution_adapter topology field passthrough ──
+
+
+class TestExecutionAdapterTopologyFields:
+    """Test that to_execution_detail passes through runner_id and bridge_session_id."""
+
+    def test_to_execution_detail_with_topology_fields(self) -> None:
+        """Test adapter maps runner_id and bridge_session_id from ExecutionRecord."""
+        from ploston_core.api.routers.execution_adapter import to_execution_detail
+        from ploston_core.telemetry.store.types import (
+            ExecutionRecord,
+            ExecutionType,
+        )
+        from ploston_core.telemetry.store.types import (
+            ExecutionStatus as TelemetryExecutionStatus,
+        )
+
+        now = datetime.now(UTC)
+        record = ExecutionRecord(
+            execution_id="exec-adapter",
+            execution_type=ExecutionType.DIRECT,
+            tool_name="obsidian-mcp__list_files",
+            status=TelemetryExecutionStatus.COMPLETED,
+            started_at=now,
+            source="runner",
+            runner_id="my-runner",
+            bridge_session_id="bridge-abc-123",
+        )
+        detail = to_execution_detail(record)
+        assert detail.runner_id == "my-runner"
+        assert detail.bridge_session_id == "bridge-abc-123"
+
+    def test_to_execution_detail_null_topology_fields(self) -> None:
+        """Test adapter maps None runner_id and bridge_session_id."""
+        from ploston_core.api.routers.execution_adapter import to_execution_detail
+        from ploston_core.telemetry.store.types import (
+            ExecutionRecord,
+            ExecutionType,
+        )
+        from ploston_core.telemetry.store.types import (
+            ExecutionStatus as TelemetryExecutionStatus,
+        )
+
+        now = datetime.now(UTC)
+        record = ExecutionRecord(
+            execution_id="exec-no-topo",
+            execution_type=ExecutionType.WORKFLOW,
+            workflow_id="wf-1",
+            status=TelemetryExecutionStatus.COMPLETED,
+            started_at=now,
+        )
+        detail = to_execution_detail(record)
+        assert detail.runner_id is None
+        assert detail.bridge_session_id is None

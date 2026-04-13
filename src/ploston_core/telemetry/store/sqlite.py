@@ -126,6 +126,13 @@ class SQLiteTelemetryStore(TelemetryStore):
             CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
         """
         )
+        # DEC-145: add columns if missing (safe for existing DBs)
+        for col_def in ["runner_id TEXT", "bridge_session_id TEXT"]:
+            try:
+                self._conn.execute(f"ALTER TABLE executions ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
         self._conn.commit()
 
     async def save_execution(self, record: ExecutionRecord) -> None:
@@ -146,8 +153,8 @@ class SQLiteTelemetryStore(TelemetryStore):
                 execution_id, execution_type, workflow_id, workflow_version,
                 tool_name, status, started_at, completed_at, duration_ms,
                 inputs, outputs, error, metrics, source, caller_id,
-                tenant_id, session_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, session_id, runner_id, bridge_session_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 record.execution_id,
@@ -167,6 +174,8 @@ class SQLiteTelemetryStore(TelemetryStore):
                 record.caller_id,
                 record.tenant_id,
                 record.session_id,
+                record.runner_id,
+                record.bridge_session_id,
             ),
         )
 
@@ -536,6 +545,8 @@ class SQLiteTelemetryStore(TelemetryStore):
             caller_id=row["caller_id"],
             tenant_id=row["tenant_id"],
             session_id=row["session_id"],
+            runner_id=row["runner_id"],
+            bridge_session_id=row["bridge_session_id"],
         )
 
     def _row_to_step(self, row: sqlite3.Row) -> StepRecord:

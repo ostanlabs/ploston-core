@@ -151,3 +151,17 @@ class TestExecutionRecord:
         assert record.status == ExecutionStatus.PENDING
         assert record.steps == []
         assert record.source == "mcp"
+        assert record.runner_id is None
+        assert record.bridge_session_id is None
+
+    def test_execution_record_with_topology_fields(self) -> None:
+        """Test ExecutionRecord with runner_id and bridge_session_id (DEC-145)."""
+        record = ExecutionRecord(
+            execution_id="exec-456",
+            execution_type=ExecutionType.DIRECT,
+            tool_name="obsidian-mcp__list_files",
+            runner_id="my-runner",
+            bridge_session_id="bridge-abc-123",
+        )
+        assert record.runner_id == "my-runner"
+        assert record.bridge_session_id == "bridge-abc-123"

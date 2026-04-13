@@ -43,6 +43,8 @@ def to_execution_detail(record: ExecutionRecord) -> ExecutionDetail:
         outputs=record.outputs,
         error=_to_error_detail(record.error),
         steps=[_to_step_summary(s) for s in record.steps],
+        runner_id=record.runner_id,  # DEC-145
+        bridge_session_id=record.bridge_session_id,  # DEC-145
     )
 
 

@@ -56,12 +56,17 @@ class _WorkflowSourceLogger:
         self._inner = inner
         self._execution_id: str | None = None
         self._step_id: str | None = None
+        self._bridge_session_id: str | None = None  # DEC-145
 
     def set_execution_id(self, execution_id: str) -> None:
         self._execution_id = execution_id
 
     def set_step_id(self, step_id: str | None) -> None:
         self._step_id = step_id
+
+    def set_bridge_session_id(self, bridge_session_id: str | None) -> None:
+        """DEC-145: inject bridge_session_id into every log record."""
+        self._bridge_session_id = bridge_session_id
 
     def _log(
         self,
@@ -76,6 +81,8 @@ class _WorkflowSourceLogger:
             ctx.setdefault("execution_id", self._execution_id)
         if self._step_id:
             ctx.setdefault("step_id", self._step_id)
+        if self._bridge_session_id:
+            ctx.setdefault("bridge_session_id", self._bridge_session_id)
         self._inner._log(level, component, message, ctx)
 
     # Forward attribute access so callers that read other logger properties
@@ -145,6 +152,7 @@ class WorkflowEngine:
         workflow_id: str,
         inputs: dict[str, Any],
         timeout_seconds: int | None = None,
+        bridge_session_id: str | None = None,  # DEC-145
     ) -> ExecutionResult:
         """
         Execute a workflow.
@@ -153,6 +161,7 @@ class WorkflowEngine:
             workflow_id: Name of workflow to execute
             inputs: Workflow inputs
             timeout_seconds: Optional timeout override (seconds)
+            bridge_session_id: Bridge process that initiated execution (DEC-145)
 
         Returns:
             ExecutionResult with outputs or error
@@ -168,16 +177,19 @@ class WorkflowEngine:
         # Execute with timeout if specified
         if timeout_seconds:
             return await with_timeout(
-                self.execute_workflow(workflow, inputs),
+                self.execute_workflow(workflow, inputs, bridge_session_id=bridge_session_id),
                 timeout_seconds,
             )
         else:
-            return await self.execute_workflow(workflow, inputs)
+            return await self.execute_workflow(
+                workflow, inputs, bridge_session_id=bridge_session_id
+            )
 
     async def execute_workflow(
         self,
         workflow: WorkflowDefinition,
         inputs: dict[str, Any],
+        bridge_session_id: str | None = None,  # DEC-145
     ) -> ExecutionResult:
         """
         Execute a workflow definition directly.
@@ -187,6 +199,7 @@ class WorkflowEngine:
         Args:
             workflow: Workflow definition
             inputs: Workflow inputs
+            bridge_session_id: Bridge process that initiated execution (DEC-145)
 
         Returns:
             ExecutionResult
@@ -197,6 +210,7 @@ class WorkflowEngine:
         if self._logger:
             self._logger.set_execution_id(execution_id)
             self._logger.set_step_id(None)
+            self._logger.set_bridge_session_id(bridge_session_id)  # DEC-145
             self._logger._log(
                 LogLevel.INFO,
                 "engine",

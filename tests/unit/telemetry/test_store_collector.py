@@ -115,6 +115,40 @@ class TestTelemetryCollector:
         assert record.steps[0].status == StepStatus.COMPLETED
 
     @pytest.mark.asyncio
+    async def test_start_execution_with_topology_fields(
+        self, collector: TelemetryCollector, store: MemoryTelemetryStore
+    ) -> None:
+        """Test start_execution captures runner_id and bridge_session_id (DEC-145)."""
+        exec_id = await collector.start_execution(
+            execution_type=ExecutionType.DIRECT,
+            tool_name="obsidian-mcp__list_files",
+            source="runner",
+            caller_id="my-runner",
+            runner_id="my-runner",
+            bridge_session_id="bridge-abc-123",
+        )
+
+        record = await store.get_execution(exec_id)
+        assert record is not None
+        assert record.runner_id == "my-runner"
+        assert record.bridge_session_id == "bridge-abc-123"
+
+    @pytest.mark.asyncio
+    async def test_start_execution_topology_fields_default_none(
+        self, collector: TelemetryCollector, store: MemoryTelemetryStore
+    ) -> None:
+        """Test start_execution defaults runner_id and bridge_session_id to None (DEC-145)."""
+        exec_id = await collector.start_execution(
+            execution_type=ExecutionType.WORKFLOW,
+            workflow_id="wf-1",
+        )
+
+        record = await store.get_execution(exec_id)
+        assert record is not None
+        assert record.runner_id is None
+        assert record.bridge_session_id is None
+
+    @pytest.mark.asyncio
     async def test_tool_call_lifecycle(
         self, collector: TelemetryCollector, store: MemoryTelemetryStore
     ) -> None:

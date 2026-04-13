@@ -6,6 +6,7 @@ from ploston_core.api.models import (
     ErrorDetail,
     ErrorResponse,
     ExecuteRequest,
+    ExecutionDetail,
     ExecutionStatus,
     HealthCheck,
     HealthStatus,
@@ -179,3 +180,39 @@ class TestToolModels:
         )
         assert response.tool_name == "read_file"
         assert response.duration_ms == 50
+
+
+class TestExecutionDetailTopologyFields:
+    """Tests for ExecutionDetail runner_id and bridge_session_id (DEC-145)."""
+
+    def test_execution_detail_topology_fields(self) -> None:
+        """Test ExecutionDetail includes runner_id and bridge_session_id."""
+        now = datetime.now(UTC)
+        detail = ExecutionDetail(
+            execution_id="exec-1",
+            workflow_id="wf-1",
+            status=ExecutionStatus.COMPLETED,
+            started_at=now,
+            inputs={},
+            outputs={},
+            steps=[],
+            runner_id="my-runner",
+            bridge_session_id="bridge-abc",
+        )
+        assert detail.runner_id == "my-runner"
+        assert detail.bridge_session_id == "bridge-abc"
+
+    def test_execution_detail_topology_fields_default_none(self) -> None:
+        """Test ExecutionDetail defaults runner_id and bridge_session_id to None."""
+        now = datetime.now(UTC)
+        detail = ExecutionDetail(
+            execution_id="exec-1",
+            workflow_id="wf-1",
+            status=ExecutionStatus.COMPLETED,
+            started_at=now,
+            inputs={},
+            outputs={},
+            steps=[],
+        )
+        assert detail.runner_id is None
+        assert detail.bridge_session_id is None

@@ -172,6 +172,10 @@ class ExecutionRecord:
     tenant_id: str | None = None  # Premium
     session_id: str | None = None  # Premium: for pattern mining
 
+    # DEC-145: distributed topology attribution
+    runner_id: str | None = None  # runner that handled tool calls (nullable)
+    bridge_session_id: str | None = None  # bridge process that initiated execution (nullable)
+
     # Metrics
     metrics: ExecutionMetrics = field(default_factory=ExecutionMetrics)
 

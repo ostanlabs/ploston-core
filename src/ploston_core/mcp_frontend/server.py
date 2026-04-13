@@ -555,7 +555,13 @@ class MCPFrontend:
         Returns:
             MCP response
         """
-        result = await self._workflow_engine.execute(workflow_id, inputs)
+        # DEC-145: capture bridge session from ContextVar set by HTTPTransport (F-061)
+        _bctx = bridge_context.get(None)
+        bridge_session_id = _bctx.bridge_id if _bctx else None
+
+        result = await self._workflow_engine.execute(
+            workflow_id, inputs, bridge_session_id=bridge_session_id
+        )
 
         if result.status == ExecutionStatus.COMPLETED:
             return {
@@ -604,6 +610,7 @@ class MCPFrontend:
                     tool_name=tool_name,
                     source="mcp",
                     session_id=_bctx.bridge_id if _bctx else None,
+                    bridge_session_id=_bctx.bridge_id if _bctx else None,  # DEC-145
                 )
                 ctx_token = direct_execution_id.set(execution_id)
             except Exception:
@@ -830,6 +837,8 @@ class MCPFrontend:
                     source="runner",
                     caller_id=runner.name,
                     session_id=_bridge_id,
+                    runner_id=runner.name,  # DEC-145
+                    bridge_session_id=_bridge_id,  # DEC-145
                 )
                 ctx_token = direct_execution_id.set(execution_id)
             except Exception:

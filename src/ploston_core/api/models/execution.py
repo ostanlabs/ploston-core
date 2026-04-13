@@ -62,6 +62,8 @@ class ExecutionDetail(BaseModel):
     outputs: dict[str, Any] = {}
     error: ErrorDetail | None = None
     steps: list[StepSummary] = []
+    runner_id: str | None = None  # DEC-145
+    bridge_session_id: str | None = None  # DEC-145
 
 
 class ExecutionListResponse(BaseModel):

@@ -139,3 +139,41 @@ class TestCodeStepCallMcpIntegration:
         params = call_args.kwargs.get("params", call_args[1].get("params", {}))
         tool_iface = params["context"].tools
         assert tool_iface._max_calls == 5  # From engine's max_tool_calls=5
+
+
+# ── DEC-145: _WorkflowSourceLogger bridge_session_id injection ──
+
+
+class TestWorkflowSourceLoggerBridgeSessionId:
+    """Test _WorkflowSourceLogger injects bridge_session_id into log records."""
+
+    def test_bridge_session_id_injected(self) -> None:
+        """Test that bridge_session_id is injected into log context."""
+
+        from ploston_core.engine.engine import _WorkflowSourceLogger
+
+        inner = MagicMock()
+        logger = _WorkflowSourceLogger(inner)
+        logger.set_execution_id("exec-1")
+        logger.set_bridge_session_id("bridge-abc")
+
+        logger._log(MagicMock(), "engine", "test message", {"foo": "bar"})
+
+        inner._log.assert_called_once()
+        ctx = inner._log.call_args[0][3]
+        assert ctx["bridge_session_id"] == "bridge-abc"
+        assert ctx["execution_id"] == "exec-1"
+        assert ctx["foo"] == "bar"
+
+    def test_bridge_session_id_not_injected_when_none(self) -> None:
+        """Test that bridge_session_id is NOT injected when None."""
+        from ploston_core.engine.engine import _WorkflowSourceLogger
+
+        inner = MagicMock()
+        logger = _WorkflowSourceLogger(inner)
+        logger.set_execution_id("exec-1")
+
+        logger._log(MagicMock(), "engine", "test message", {})
+
+        ctx = inner._log.call_args[0][3]
+        assert "bridge_session_id" not in ctx

@@ -100,6 +100,39 @@ class TestSQLiteTelemetryStore:
         assert len(result.steps[0].tool_calls) == 1
 
     @pytest.mark.asyncio
+    async def test_save_and_get_topology_fields(self, store: SQLiteTelemetryStore) -> None:
+        """Test round-trip of runner_id and bridge_session_id (DEC-145)."""
+        now = datetime.now(UTC)
+        record = ExecutionRecord(
+            execution_id="exec-topo",
+            execution_type=ExecutionType.DIRECT,
+            tool_name="obsidian-mcp__list_files",
+            status=ExecutionStatus.COMPLETED,
+            started_at=now,
+            source="runner",
+            runner_id="my-runner",
+            bridge_session_id="bridge-abc-123",
+        )
+        await store.save_execution(record)
+        result = await store.get_execution("exec-topo")
+
+        assert result is not None
+        assert result.runner_id == "my-runner"
+        assert result.bridge_session_id == "bridge-abc-123"
+
+    @pytest.mark.asyncio
+    async def test_save_and_get_topology_fields_null(
+        self, store: SQLiteTelemetryStore, sample_record: ExecutionRecord
+    ) -> None:
+        """Test that runner_id and bridge_session_id default to None on round-trip (DEC-145)."""
+        await store.save_execution(sample_record)
+        result = await store.get_execution("exec-123")
+
+        assert result is not None
+        assert result.runner_id is None
+        assert result.bridge_session_id is None
+
+    @pytest.mark.asyncio
     async def test_get_nonexistent(self, store: SQLiteTelemetryStore) -> None:
         """Test getting a nonexistent record."""
         result = await store.get_execution("nonexistent")

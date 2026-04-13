@@ -61,6 +61,8 @@ class TelemetryCollector:
         source: str = "mcp",
         caller_id: str | None = None,
         session_id: str | None = None,
+        runner_id: str | None = None,  # DEC-145
+        bridge_session_id: str | None = None,  # DEC-145
     ) -> str:
         """Start tracking a new execution.
 
@@ -73,6 +75,8 @@ class TelemetryCollector:
             source: Source of execution (mcp, rest, cli)
             caller_id: Caller identifier
             session_id: Session identifier
+            runner_id: Runner that handled tool calls
+            bridge_session_id: Bridge process that initiated execution
 
         Returns:
             Execution ID
@@ -92,6 +96,8 @@ class TelemetryCollector:
             source=source,
             caller_id=caller_id,
             session_id=session_id,
+            runner_id=runner_id,
+            bridge_session_id=bridge_session_id,
         )
 
         self._active_executions[execution_id] = record
