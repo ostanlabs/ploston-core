@@ -67,6 +67,7 @@ test = [
     "schemathesis>=3.25.0",
     "requests>=2.33.0",             # S-263: CVE-2026-25645 (insecure tmp file reuse)
     "httpx>=0.27.0",
+    "werkzeug>=3.1.6",              # S-263: CVE-2026-27199 (safe_join Windows device names); transitive via schemathesis
 ]
 # Security testing
 security-test = [
