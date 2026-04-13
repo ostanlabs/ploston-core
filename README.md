@@ -8,7 +8,7 @@ Core engine for Ploston - Deterministic Agent Execution Layer.
 
 ## Overview
 
-`ploston-core` contains the shared engine components that both OSS and Enterprise packages depend on. It provides:
+`ploston-core` contains the shared engine components that the server and CLI packages depend on. It provides:
 
 | Module | Description |
 |--------|-------------|
@@ -111,8 +111,12 @@ uv run pytest tests/unit/ -v --cov=ploston_core --cov-report=term-missing
 |---------|-------------|
 | [`ploston`](https://github.com/ostanlabs/ploston) | OSS distribution (core + CLI) |
 | [`ploston-cli`](https://github.com/ostanlabs/ploston-cli) | Command-line interface |
-| [`ploston-enterprise`](https://github.com/ostanlabs/ploston-enterprise) | Enterprise features |
 
 ## License
 
 Apache-2.0 - see [LICENSE](LICENSE) for details.
+
+## Disclaimer
+
+This project is developed independently in a personal capacity and is not affiliated with, endorsed by, or connected to any employer.
+No proprietary or confidential information from any employer has been used in this project.
