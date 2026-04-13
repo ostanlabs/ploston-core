@@ -41,12 +41,19 @@ dependencies = [
     "bcrypt>=5.0.0",
     "anthropic>=0.40.0",  # T-687: sandbox LLM synthesis support
     "pypdf>=4.0.0",  # T-686: sandbox PDF parsing support
+    # S-263: explicit floors to pull patched transitive versions into the resolver
+    "cryptography>=46.0.7",         # CVE-2026-39892 / CVE-2026-26007 / CVE-2026-34073
+    "authlib>=1.6.9",               # CVE-2026-27962 / CVE-2026-28498 / CVE-2026-28490 / CVE-2026-28802
+    "pyjwt>=2.12.0",                # CVE-2026-32597
+    "protobuf>=6.33.5",             # CVE-2026-0994
+    "python-multipart>=0.0.26",     # CVE-2026-40347 / CVE-2026-24486
+    "pygments>=2.20.0",             # CVE-2026-4539
 ]
 
 [project.optional-dependencies]
 # Development dependencies
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",                # S-263: CVE-2025-71176 (insecure /tmp/pytest-of-{user})
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.0.0",
@@ -58,7 +65,7 @@ dev = [
 test = [
     "hypothesis>=6.100.0",
     "schemathesis>=3.25.0",
-    "requests>=2.31.0",
+    "requests>=2.33.0",             # S-263: CVE-2026-25645 (insecure tmp file reuse)
     "httpx>=0.27.0",
 ]
 # Security testing
