@@ -115,12 +115,18 @@ class PythonExecConfig:
 
     timeout: int = 30
     max_tool_calls: int = 10
-    # Keep in sync with SAFE_IMPORTS in sandbox.py and SandboxConfig in types.py
+    # Canonical sandbox import allowlist — PRODUCTION GATE.
+    # application.py wires SandboxConfig(allowed_imports=self.config.python_exec.default_imports),
+    # which is forwarded via SandboxFactory to PythonExecSandbox. Because
+    # allowed_imports is always non-None in production, SAFE_IMPORTS in sandbox.py
+    # is NOT consulted for workflow runs — this list is the live gate.
+    # Must stay in sync with SAFE_IMPORTS (sandbox.py) and SandboxConfig defaults (types.py).
     default_imports: list[str] = field(
         default_factory=lambda: [
             "json",
             "math",
             "datetime",
+            "_strptime",  # S-272 T-865: required by datetime.strptime() (lazy import)
             "time",
             "random",
             "itertools",
@@ -134,6 +140,10 @@ class PythonExecConfig:
             "copy",
             "uuid",
             "hashlib",
+            "io",  # T-688: needed for io.BytesIO in PDF parsing
+            # Third-party — S-225
+            "anthropic",  # T-687: LLM synthesis steps
+            "pypdf",  # T-686: PDF parsing steps
         ]
     )
     packages: PythonExecPackagesConfig = field(default_factory=PythonExecPackagesConfig)

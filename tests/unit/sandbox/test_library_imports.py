@@ -1,5 +1,9 @@
-"""Tests for S-225: sandbox library import whitelist (T-686, T-687, T-688)."""
+"""Tests for S-225: sandbox library import whitelist (T-686, T-687, T-688).
 
+Also covers S-272 T-865: _strptime whitelist + three-way drift guard.
+"""
+
+from ploston_core.config.models import PythonExecConfig
 from ploston_core.sandbox import SandboxConfig
 from ploston_core.sandbox.sandbox import SAFE_IMPORTS
 
@@ -73,3 +77,38 @@ class TestSandboxConfigDefaults:
         config = SandboxConfig(allowed_imports=["json"])
         assert "anthropic" not in config.allowed_imports
         assert "pypdf" not in config.allowed_imports
+
+
+class TestStrptimeAndDriftGuards:
+    """S-272 T-865: _strptime whitelist + three-way drift guard."""
+
+    # SP-01
+    def test_sp01_strptime_in_production_gate(self) -> None:
+        """_strptime must be in PythonExecConfig.default_imports (PRODUCTION GATE)."""
+        cfg = PythonExecConfig()
+        assert "_strptime" in cfg.default_imports
+
+    # SP-02
+    def test_sp02_strptime_in_safe_imports(self) -> None:
+        """_strptime must be in SAFE_IMPORTS for drift parity."""
+        assert "_strptime" in SAFE_IMPORTS
+
+    # SP-02b
+    def test_sp02_strptime_in_sandbox_config_defaults(self) -> None:
+        """_strptime must be in SandboxConfig defaults for drift parity."""
+        assert "_strptime" in SandboxConfig().allowed_imports
+
+    # SP-03
+    def test_sp03_three_way_drift_guard(self) -> None:
+        """PythonExecConfig.default_imports, SAFE_IMPORTS, and SandboxConfig
+        defaults must all contain the same module set.
+        """
+        prod = set(PythonExecConfig().default_imports)
+        safe = set(SAFE_IMPORTS)
+        sbx = set(SandboxConfig().allowed_imports)
+        assert prod == safe == sbx, (
+            f"Import allowlists drifted:\n"
+            f"  prod-only: {prod - safe - sbx}\n"
+            f"  safe-only: {safe - prod - sbx}\n"
+            f"  sbx-only:  {sbx - prod - safe}"
+        )

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ploston_core.engine.normalize import normalize_mcp_response
 from ploston_core.errors import create_error
 from ploston_core.types import LogLevel, StepOutput
 
@@ -21,12 +22,14 @@ class SandboxConfig:
     def __post_init__(self) -> None:
         """Initialize default allowed imports if not provided."""
         if self.allowed_imports is None:
-            # Keep in sync with SAFE_IMPORTS in sandbox.py
+            # Sync-required with PythonExecConfig.default_imports (config/models.py —
+            # PRODUCTION GATE) and SAFE_IMPORTS (sandbox.py).
             self.allowed_imports = [
                 # standard library
                 "json",
                 "math",
                 "datetime",
+                "_strptime",  # S-272 T-865: required by datetime.strptime() (lazy import)
                 "time",
                 "random",
                 "itertools",
@@ -269,7 +272,7 @@ class ToolCallInterface:
                 },
             )
 
-        return result
+        return normalize_mcp_response(result)
 
     async def call_mcp(
         self,
@@ -351,7 +354,7 @@ class ToolCallInterface:
                                 "execution_id": self._execution_id,
                             },
                         )
-                    return await self._caller.call(tool, params)
+                    return normalize_mcp_response(await self._caller.call(tool, params))
 
         # Step 2: Resolve runner
         # Priority: explicit arg (F-072) > defaults_runner > runner_name > inference
@@ -403,7 +406,7 @@ class ToolCallInterface:
                         "execution_id": self._execution_id,
                     },
                 )
-            return await self._caller.call(canonical, params)
+            return normalize_mcp_response(await self._caller.call(canonical, params))
 
         raise create_error(
             "TOOL_UNAVAILABLE",

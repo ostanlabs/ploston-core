@@ -26,6 +26,7 @@ from ploston_core.types import (
 )
 from ploston_core.workflow import WorkflowDefinition
 
+from .normalize import normalize_mcp_response
 from .types import (
     ExecutionContext,
     ExecutionResult,
@@ -674,7 +675,7 @@ class WorkflowEngine:
         if not result.success:
             raise result.error if result.error else create_error("TOOL_FAILED", tool_name=step.tool)
 
-        return result.output
+        return normalize_mcp_response(result.output)
 
     def _get_effective_runner(self, workflow: WorkflowDefinition) -> str | None:
         """Resolve effective runner for tool step invocation.

@@ -118,6 +118,7 @@ class ExecutionResult:
                     "duration_ms": s.duration_ms,
                     "output": s.output,
                     "error": str(s.error) if s.error else None,
+                    "debug_log": s.debug_log if s.debug_log else None,
                 }
                 for s in self.steps
             ],
@@ -128,11 +129,40 @@ class ExecutionResult:
         }
 
     def to_mcp_response(self) -> dict[str, Any]:
-        """Format for MCP tools/call response."""
+        """Format for MCP tools/call response (S-271, Rev 3).
+
+        Top-level key is 'result' — matches the pre-existing
+        WorkflowToolsProvider._handle_run contract, so downstream consumers
+        reading response['result'] continue to work.
+
+        The 'execution' object surfaces per-step telemetry (status,
+        duration_ms, debug_log, error, skip_reason) that was captured by
+        the engine but previously dropped at the response boundary.
+        """
+        execution: dict[str, Any] = {
+            "duration_ms": self.duration_ms,
+            "steps": {},
+        }
+        steps: dict[str, Any] = execution["steps"]
+        for s in self.steps:
+            step_data: dict[str, Any] = {
+                "status": s.status.value,
+                "duration_ms": s.duration_ms,
+            }
+            if s.debug_log:
+                step_data["debug_log"] = list(s.debug_log)
+            if s.error:
+                step_data["error"] = str(s.error)
+            if s.skip_reason:
+                step_data["skip_reason"] = s.skip_reason
+            steps[s.step_id] = step_data
+
         return {
             "execution_id": self.execution_id,
+            "workflow_version": self.workflow_version,
             "status": self.status.value,
-            "outputs": self.outputs,
+            "result": self.outputs,
+            "execution": execution,
             "error": str(self.error) if self.error else None,
         }
 

@@ -383,6 +383,35 @@ def generate_workflow_schema() -> dict[str, Any]:
             "dir(x)        # NameError — dir is in forbidden_builtins",
             "getattr(x, k) # NameError — getattr is in forbidden_builtins; use x.key notation instead",
         ],
+        # S-272 T-862: authoring guidance surfaced on workflow_schema so agents
+        # pick the right APIs the first time.
+        "import_notes": {
+            "general": ("Both 'import X' and 'from X import Y' work for all allowed modules."),
+            "datetime": {
+                "strptime": (
+                    "datetime.strptime() works (uses _strptime internally, allowed in sandbox)"
+                ),
+                "fromisoformat": (
+                    "datetime.fromisoformat(ts.replace('Z', '+00:00')) — recommended for ISO 8601"
+                ),
+            },
+        },
+        "common_patterns": {
+            "parse_iso_timestamp": (
+                "import datetime\ndt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))"
+            ),
+            "duration_between_timestamps": (
+                "import datetime\n"
+                "start = datetime.datetime.fromisoformat(started.replace('Z', '+00:00'))\n"
+                "end = datetime.datetime.fromisoformat(ended.replace('Z', '+00:00'))\n"
+                "duration_s = int((end - start).total_seconds())"
+            ),
+            "safe_json_extract": (
+                "data = context.steps['step_id'].output\n"
+                "# output is already normalized — access keys directly\n"
+                "items = data.get('items', []) if isinstance(data, dict) else []"
+            ),
+        },
     }
 
     # Document tool step resolution rules for agents authoring workflows

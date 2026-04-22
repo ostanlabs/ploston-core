@@ -63,6 +63,7 @@ SAFE_IMPORTS = {
     "json",
     "math",
     "datetime",
+    "_strptime",  # S-272 T-865: required by datetime.strptime() (lazy import)
     "time",
     "random",
     "itertools",
@@ -81,6 +82,8 @@ SAFE_IMPORTS = {
     "anthropic",  # T-687: LLM synthesis steps
     "pypdf",  # T-686: PDF parsing steps
 }
+# Sync-required with PythonExecConfig.default_imports (config/models.py — PRODUCTION GATE)
+# and SandboxConfig defaults (sandbox/types.py).
 
 DANGEROUS_BUILTINS = {
     "eval",

@@ -778,6 +778,16 @@ class WorkflowToolsProvider:
             ),
         }
 
+    # S-272 T-863: shared hint surfaced by workflow_tool_schema on all branches.
+    # MCP tool definitions only carry input schemas, so agents need an explicit
+    # pointer to inspect the actual response shape at runtime.
+    _TOOL_SCHEMA_RESPONSE_HINT = (
+        "Output schemas are not available from MCP tool definitions. "
+        "Use workflow_run with context.log() to inspect actual response shapes. "
+        "Tool step outputs are automatically normalized — transport envelopes "
+        "(status/result/content wrappers, content-block arrays) are stripped."
+    )
+
     async def _handle_tool_schema(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_tool_schema tool call.
 
@@ -792,6 +802,8 @@ class WorkflowToolsProvider:
         if not tool:
             raise create_error("PARAM_INVALID", message="'tool' parameter is required")
 
+        response_hint = self._TOOL_SCHEMA_RESPONSE_HINT
+
         # Step 1: CP-direct -- ToolRegistry lookup by server_name
         # Covers mcp: system (python_exec), mcp: github (CP-registered), etc.
         if self._tool_registry:
@@ -805,6 +817,7 @@ class WorkflowToolsProvider:
                         "description": tool_def.description,
                         "input_schema": tool_def.input_schema or {},
                         "source": "cp",
+                        "response_hint": response_hint,
                     }
 
         # Step 2: Runner-hosted -- RunnerRegistry lookup
@@ -821,6 +834,7 @@ class WorkflowToolsProvider:
                                 "description": None,
                                 "input_schema": {},
                                 "source": "runner",
+                                "response_hint": response_hint,
                             }
                     elif isinstance(entry, dict):
                         if entry.get("name") == canonical:
@@ -831,6 +845,7 @@ class WorkflowToolsProvider:
                                 "description": entry.get("description"),
                                 "input_schema": entry.get("inputSchema") or {},
                                 "source": "runner",
+                                "response_hint": response_hint,
                             }
 
         # Not found -- return structured error with hint
@@ -844,6 +859,7 @@ class WorkflowToolsProvider:
                 "Use workflow_schema to see available tools."
             ),
             "available_tools": available,
+            "response_hint": response_hint,
         }
 
     async def _handle_run(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -865,15 +881,11 @@ class WorkflowToolsProvider:
         inputs = arguments.get("inputs") or {}
         result = await self._workflow_engine.execute(name, inputs)
 
-        from ploston_core.types import ExecutionStatus
-
-        if result.status == ExecutionStatus.COMPLETED:
-            return {"result": result.outputs, "status": "completed"}
-        else:
-            return {
-                "status": "failed",
-                "error": result.error if hasattr(result, "error") else "Workflow execution failed",
-            }
+        # S-271 / T-864: emit the centralized MCP response shape so step-level
+        # telemetry (debug_log, duration_ms, per-step status) is surfaced to
+        # the workflow_run caller. Top-level "result" key preserves the prior
+        # contract; "execution" and "workflow_version" are additive.
+        return result.to_mcp_response()
 
 
 def _to_json(data: Any) -> str:
