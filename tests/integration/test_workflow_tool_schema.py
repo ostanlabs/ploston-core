@@ -128,7 +128,9 @@ class TestAuthoringLoop:
         assert tool_result["source"] == "cp"
         assert "code" in tool_result["input_schema"].get("required", [])
 
-        # Step 3: workflow_create — create a workflow that uses python_exec
+        # Step 3: workflow_create — create a workflow that uses python_exec.
+        # The supplied name contains a dash, which workflow_create must
+        # sanitize to an underscore before registration.
         yaml_content = """
 name: test-loop
 version: "1.0"
@@ -143,8 +145,10 @@ steps:
         create_result = _parse(
             await provider.call("workflow_create", {"yaml_content": yaml_content})
         )
-        assert create_result["name"] == "test-loop"
+        assert create_result["name"] == "test_loop"
         assert create_result["status"] == "created"
+        assert create_result["name_sanitized"]["original"] == "test-loop"
+        assert create_result["name_sanitized"]["registered_as"] == "test_loop"
 
         # Step 4: workflow_validate — confirm the YAML is valid
         validate_result = _parse(

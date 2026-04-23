@@ -356,3 +356,99 @@ class TestWorkflowGetDefinition:
         )
         with pytest.raises(Exception):
             await provider.call("workflow_get_definition", {})
+
+
+class TestWorkflowNameSanitization:
+    """workflow_create / workflow_update replace dashes with underscores."""
+
+    _YAML_WITH_DASHES = (
+        "# header comment\n"
+        "name: my-cool-workflow\n"
+        "version: '1.0.0'\n"
+        "description: A sanitization test\n"
+        "steps:\n"
+        "  - id: step-one\n"
+        "    tool: echo\n"
+        "    mcp: system\n"
+        "    params:\n"
+        "      name: should-not-change\n"
+    )
+
+    @pytest.mark.asyncio
+    async def test_create_replaces_dashes_with_underscores(self, mock_workflow_registry):
+        """workflow_create rewrites dashes in the workflow name before registering."""
+        provider = WorkflowToolsProvider(workflow_registry=mock_workflow_registry)
+
+        raw = await provider.call(
+            "workflow_create",
+            {"yaml_content": self._YAML_WITH_DASHES},
+        )
+        result = _parse_mcp_result(raw)
+
+        assert result["name"] == "my_cool_workflow"
+        assert result["status"] == "created"
+        assert result["name_sanitized"] == {
+            "original": "my-cool-workflow",
+            "registered_as": "my_cool_workflow",
+            "reason": "dashes replaced with underscores",
+        }
+
+        # register_from_yaml must receive YAML whose top-level name field was
+        # rewritten — otherwise the persisted file and in-memory registry
+        # would drift after a reload.
+        mock_workflow_registry.register_from_yaml.assert_called_once()
+        call_kwargs = mock_workflow_registry.register_from_yaml.call_args
+        passed_yaml = (
+            call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs["yaml_content"]
+        )
+        assert "name: my_cool_workflow" in passed_yaml
+        assert "name: my-cool-workflow" not in passed_yaml
+        # Nested name fields must be untouched.
+        assert "name: should-not-change" in passed_yaml
+        assert "id: step-one" in passed_yaml
+
+    @pytest.mark.asyncio
+    async def test_create_no_sanitization_field_when_already_clean(self, mock_workflow_registry):
+        """Names without dashes pass through untouched and omit name_sanitized."""
+        provider = WorkflowToolsProvider(workflow_registry=mock_workflow_registry)
+        clean_yaml = (
+            "name: already_clean\n"
+            "version: '1.0.0'\n"
+            "steps:\n"
+            "  - id: step1\n"
+            "    tool: echo\n"
+            "    mcp: system\n"
+        )
+
+        raw = await provider.call("workflow_create", {"yaml_content": clean_yaml})
+        result = _parse_mcp_result(raw)
+
+        assert result["name"] == "already_clean"
+        assert "name_sanitized" not in result
+
+    @pytest.mark.asyncio
+    async def test_update_sanitizes_lookup_name_and_yaml(self, mock_workflow_registry):
+        """workflow_update sanitizes both the `name` param and the YAML body."""
+        existing = MagicMock()
+        existing.name = "my_cool_workflow"
+        mock_workflow_registry.get.return_value = existing
+
+        provider = WorkflowToolsProvider(workflow_registry=mock_workflow_registry)
+
+        raw = await provider.call(
+            "workflow_update",
+            {"name": "my-cool-workflow", "yaml_content": self._YAML_WITH_DASHES},
+        )
+        result = _parse_mcp_result(raw)
+
+        # Registry lookup must have happened under the sanitized key.
+        mock_workflow_registry.get.assert_called_once_with("my_cool_workflow")
+        mock_workflow_registry.unregister.assert_called_once_with("my_cool_workflow")
+        mock_workflow_registry.register_from_yaml.assert_called_once()
+        passed_yaml = mock_workflow_registry.register_from_yaml.call_args.args[0]
+        assert "name: my_cool_workflow" in passed_yaml
+
+        assert result["name"] == "my_cool_workflow"
+        assert result["status"] == "updated"
+        assert result["name_sanitized"]["original"] == "my-cool-workflow"
+        assert result["name_sanitized"]["registered_as"] == "my_cool_workflow"

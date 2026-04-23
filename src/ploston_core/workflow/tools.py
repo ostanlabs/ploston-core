@@ -8,12 +8,46 @@ workflow_tool_schema, workflow_run) that delegate to WorkflowRegistry / Workflow
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from ploston_core.errors import create_error
 
 from .schema_generator import generate_workflow_schema
+
+# Matches the top-level `name: <value>` field in a workflow YAML.
+# Anchored to start-of-line (MULTILINE) to avoid rewriting `name:` fields
+# that appear inside inputs/outputs/steps.
+_WORKFLOW_NAME_FIELD_RE = re.compile(
+    r"^(?P<prefix>name:\s*)(?P<quote>['\"]?)(?P<value>[^\s'\"#]+)(?P=quote)",
+    re.MULTILINE,
+)
+
+
+def _sanitize_workflow_name(raw_name: str) -> str:
+    """Replace dashes with underscores in a workflow name.
+
+    Dashes are rejected in workflow names because the bare name becomes an
+    MCP tool identifier and is commonly referenced from code steps and
+    templates where underscore-separated identifiers are expected.
+    """
+    return raw_name.replace("-", "_")
+
+
+def _rewrite_workflow_name_in_yaml(yaml_content: str, new_name: str) -> str:
+    """Rewrite only the top-level ``name:`` value in a workflow YAML.
+
+    Preserves comments, quoting style, and the rest of the document. Only
+    the first top-level ``name:`` line is rewritten — nested ``name:`` fields
+    (inputs, outputs, steps) are left untouched by the anchored regex.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        return f"{match.group('prefix')}{match.group('quote')}{new_name}{match.group('quote')}"
+
+    return _WORKFLOW_NAME_FIELD_RE.sub(_sub, yaml_content, count=1)
+
 
 if TYPE_CHECKING:
     from ploston_core.engine.engine import WorkflowEngine
@@ -135,7 +169,10 @@ WORKFLOW_CREATE_TOOL = {
         "tools/list under its bare name — its `description` field becomes what agents "
         "see when selecting tools, and each input `description` becomes a parameter doc. "
         "Use workflow_schema first to learn the YAML format. "
-        "Returns a preview of how the tool will appear in tools/list."
+        "Returns a preview of how the tool will appear in tools/list. "
+        "Note: dashes ('-') in the workflow name are automatically replaced with "
+        "underscores ('_'). If a rename occurred, the response includes a "
+        "`name_sanitized` field with the original name for reference."
     ),
     "inputSchema": {
         "type": "object",
@@ -143,7 +180,11 @@ WORKFLOW_CREATE_TOOL = {
         "properties": {
             "yaml_content": {
                 "type": "string",
-                "description": "Workflow definition in YAML format. Call workflow_schema to see the expected structure.",
+                "description": (
+                    "Workflow definition in YAML format. Call workflow_schema to see the "
+                    "expected structure. Workflow names must not contain dashes — any "
+                    "dashes are silently replaced with underscores before registration."
+                ),
             }
         },
     },
@@ -156,7 +197,10 @@ WORKFLOW_UPDATE_TOOL = {
         "`description` fields are the public tool interface seen by other agents — "
         "update them as you would update tool documentation. "
         "Use workflow_get to retrieve the current definition. "
-        "Returns a preview of how the updated tool will appear in tools/list."
+        "Returns a preview of how the updated tool will appear in tools/list. "
+        "Note: dashes ('-') in the workflow name are automatically replaced with "
+        "underscores ('_') — both the `name` parameter and the name inside "
+        "`yaml_content` are sanitized the same way."
     ),
     "inputSchema": {
         "type": "object",
@@ -164,11 +208,18 @@ WORKFLOW_UPDATE_TOOL = {
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Name of the workflow to update.",
+                "description": (
+                    "Name of the workflow to update. Dashes are replaced with "
+                    "underscores before lookup."
+                ),
             },
             "yaml_content": {
                 "type": "string",
-                "description": "Updated workflow definition in YAML format. Call workflow_schema to see the expected structure.",
+                "description": (
+                    "Updated workflow definition in YAML format. Call workflow_schema to "
+                    "see the expected structure. Workflow names must not contain dashes — "
+                    "any dashes are silently replaced with underscores."
+                ),
             },
         },
     },
@@ -669,18 +720,35 @@ class WorkflowToolsProvider:
         # Parse first to get name/version for the response
         workflow = parse_workflow_yaml(yaml_content)
 
+        # Sanitize: workflow names must not contain dashes. Rewrite both the
+        # parsed object and the YAML text so the persisted file matches what
+        # the registry stores in memory.
+        original_name = workflow.name
+        sanitized_name = _sanitize_workflow_name(original_name)
+        name_was_sanitized = sanitized_name != original_name
+        if name_was_sanitized:
+            yaml_content = _rewrite_workflow_name_in_yaml(yaml_content, sanitized_name)
+            workflow.name = sanitized_name
+
         # register_from_yaml raises AELError(INPUT_INVALID) on validation failure
         self._registry.register_from_yaml(yaml_content, persist=True)
         await self._notify_tools_changed()
 
         tool_preview, warnings = self._build_tool_preview(workflow)
-        return {
+        response: dict[str, Any] = {
             "name": workflow.name,
             "version": workflow.version,
             "status": "created",
             "tool_preview": tool_preview,
             "warnings": warnings,
         }
+        if name_was_sanitized:
+            response["name_sanitized"] = {
+                "original": original_name,
+                "registered_as": sanitized_name,
+                "reason": "dashes replaced with underscores",
+            }
+        return response
 
     async def _handle_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_update tool call."""
@@ -691,6 +759,11 @@ class WorkflowToolsProvider:
         if not yaml_content:
             raise create_error("PARAM_INVALID", message="'yaml_content' parameter is required")
 
+        # Sanitize the lookup name first — workflows are always stored under
+        # the dashless form, so a caller passing "my-flow" must resolve to
+        # the "my_flow" entry.
+        name = _sanitize_workflow_name(name)
+
         existing = self._registry.get(name)
         if not existing:
             raise create_error("WORKFLOW_NOT_FOUND", workflow_name=name)
@@ -698,6 +771,17 @@ class WorkflowToolsProvider:
         from .parser import parse_workflow_yaml
 
         workflow = parse_workflow_yaml(yaml_content)
+
+        # Sanitize the name inside the YAML body too — dashes are never
+        # allowed to reach the registry, so the YAML's `name:` field is
+        # rewritten before comparison and registration.
+        original_yaml_name = workflow.name
+        sanitized_yaml_name = _sanitize_workflow_name(original_yaml_name)
+        yaml_name_was_sanitized = sanitized_yaml_name != original_yaml_name
+        if yaml_name_was_sanitized:
+            yaml_content = _rewrite_workflow_name_in_yaml(yaml_content, sanitized_yaml_name)
+            workflow.name = sanitized_yaml_name
+
         if workflow.name != name:
             raise create_error(
                 "INPUT_INVALID",
@@ -710,13 +794,20 @@ class WorkflowToolsProvider:
         await self._notify_tools_changed()
 
         tool_preview, warnings = self._build_tool_preview(workflow)
-        return {
+        response: dict[str, Any] = {
             "name": workflow.name,
             "version": workflow.version,
             "status": "updated",
             "tool_preview": tool_preview,
             "warnings": warnings,
         }
+        if yaml_name_was_sanitized:
+            response["name_sanitized"] = {
+                "original": original_yaml_name,
+                "registered_as": sanitized_yaml_name,
+                "reason": "dashes replaced with underscores",
+            }
+        return response
 
     async def _handle_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_delete tool call."""
