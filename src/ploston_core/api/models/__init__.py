@@ -30,6 +30,7 @@ from .runner import (
     RunnerTokenResponse,
 )
 from .tool import (
+    MCPServerStatusResponse,
     RefreshServerResult,
     ToolCallRequest,
     ToolCallResponse,
@@ -86,6 +87,7 @@ __all__ = [
     "ToolCallResponse",
     "RefreshServerResult",
     "ToolRefreshResponse",
+    "MCPServerStatusResponse",
     # Runner
     "RunnerStatusEnum",
     "RunnerSummary",

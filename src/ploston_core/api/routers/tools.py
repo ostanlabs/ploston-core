@@ -130,19 +130,30 @@ async def list_tools(
 
 
 @tool_router.post("/refresh", response_model=ToolRefreshResponse)
-async def refresh_tools(request: Request) -> ToolRefreshResponse:
-    """Refresh tool schemas from all sources."""
+async def refresh_tools(
+    request: Request,
+    server: str | None = None,
+) -> ToolRefreshResponse:
+    """Refresh tool schemas from all sources, or a single server when ``server`` is set."""
     registry = request.app.state.tool_registry
 
     try:
-        result = await registry.refresh()
+        if server is not None:
+            result = await registry.refresh_server(server)
+        else:
+            result = await registry.refresh()
 
         servers: dict[str, RefreshServerResult] = {}
         for server_name, error in result.errors.items():
             servers[server_name] = RefreshServerResult(status="error", error=error)
 
         # Mark successful servers
-        for tool in registry.list_tools():
+        scoped_tools = (
+            [t for t in registry.list_tools() if t.server_name == server]
+            if server is not None
+            else registry.list_tools()
+        )
+        for tool in scoped_tools:
             if tool.server_name and tool.server_name not in servers:
                 if tool.server_name not in servers:
                     servers[tool.server_name] = RefreshServerResult(status="ok", tools=0)

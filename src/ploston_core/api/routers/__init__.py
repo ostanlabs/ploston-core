@@ -4,6 +4,7 @@ from .capabilities import router as capabilities_router
 from .config import config_router
 from .executions import execution_router
 from .health import health_router
+from .mcp_servers import mcp_servers_router
 from .runner_static import (
     is_runner_connected,
     runner_static_router,
@@ -22,6 +23,7 @@ __all__ = [
     "tool_router",
     "runner_router",
     "runner_static_router",
+    "mcp_servers_router",
     "send_tool_call_to_runner",
     "is_runner_connected",
 ]

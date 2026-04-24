@@ -79,3 +79,13 @@ class ToolRefreshResponse(BaseModel):
 
     refreshed: int
     servers: dict[str, RefreshServerResult]
+
+
+class MCPServerStatusResponse(BaseModel):
+    """Runtime status for a single CP-hosted MCP server."""
+
+    name: str
+    status: str  # connected | disconnected | error | connecting
+    tool_count: int
+    last_connected_at: str | None = None
+    error: str | None = None

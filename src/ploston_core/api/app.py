@@ -17,6 +17,7 @@ from ploston_core.api.routers import (
     config_router,
     execution_router,
     health_router,
+    mcp_servers_router,
     runner_router,
     runner_static_router,
     tool_router,
@@ -139,6 +140,7 @@ def create_rest_app(
     app.include_router(execution_router, prefix=config.prefix)
     app.include_router(tool_router, prefix=config.prefix)
     app.include_router(runner_router, prefix=config.prefix)
+    app.include_router(mcp_servers_router, prefix=config.prefix)
 
     # Runner static endpoints (no prefix - /runner/*)
     app.include_router(runner_static_router)
