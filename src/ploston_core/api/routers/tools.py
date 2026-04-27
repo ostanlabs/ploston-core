@@ -1,5 +1,7 @@
 """Tool router."""
 
+from typing import Any
+
 from fastapi import APIRouter, Body, HTTPException, Path, Request
 
 from ploston_core.api.models import (
@@ -83,6 +85,12 @@ async def list_tools(
             description=t.description,
             tags=sorted(t.tags),
             status=_convert_status(t.status),
+            input_schema=t.input_schema or {},
+            output_schema=t.output_schema,
+            has_learned_output_schema=(
+                t.output_schema is None
+                and registry.get_suggested_schema(t.name, min_confidence=0.0) is not None
+            ),
         )
         for t in tools
     ]
@@ -95,7 +103,12 @@ async def list_tools(
                 # Only include tools from connected runners
                 if runner.status.value == "connected" and runner.available_tools:
                     for tool_info in runner.available_tools:
-                        # Tool info can be a string or a dict with name/description
+                        # Tool info can be a string or a dict with
+                        # name/description/inputSchema/outputSchema. Runners
+                        # mirror the upstream MCP shape, so the JSON Schema
+                        # keys are camelCase (``inputSchema``).
+                        tool_input_schema: dict[str, Any] = {}
+                        tool_output_schema: dict[str, Any] | None = None
                         if isinstance(tool_info, str):
                             tool_name = tool_info
                             tool_desc = f"Tool from runner '{runner.name}'"
@@ -104,6 +117,8 @@ async def list_tools(
                             tool_desc = tool_info.get(
                                 "description", f"Tool from runner '{runner.name}'"
                             )
+                            tool_input_schema = tool_info.get("inputSchema") or {}
+                            tool_output_schema = tool_info.get("outputSchema")
 
                         # Apply search filter to runner tools too
                         if search:
@@ -114,15 +129,27 @@ async def list_tools(
                             ):
                                 continue
 
-                        # Runner tools from connected runners are always available
+                        # Runner tools from connected runners are always available.
+                        # F-088: surface learned schemas for runner-hosted tools
+                        # too. The schema store keys observations by the bare
+                        # ``(<mcp>, <tool>)`` pair derived from the canonical
+                        # name; ``get_suggested_schema`` decodes that on our
+                        # behalf when ``server_name`` is omitted.
+                        runner_has_learned = (
+                            tool_output_schema is None
+                            and registry.get_suggested_schema(tool_name, min_confidence=0.0)
+                            is not None
+                        )
                         summaries.append(
                             ToolSummary(
                                 name=tool_name,
                                 source=ToolSource.RUNNER,
                                 server=runner.name,
                                 description=tool_desc,
-                                category=None,
                                 status=ToolStatus.AVAILABLE,
+                                input_schema=tool_input_schema,
+                                output_schema=tool_output_schema,
+                                has_learned_output_schema=runner_has_learned,
                             )
                         )
 
@@ -169,21 +196,69 @@ async def get_tool(
     request: Request,
     tool_name: str = Path(...),
 ) -> ToolDetail:
-    """Get tool schema."""
+    """Get tool schema.
+
+    Resolves CP-tracked tools first; falls back to the runner registry so
+    runner-hosted tools (which never enter ``ToolRegistry``) can still
+    surface their input/output schemas and any learned schema F-088 has
+    accumulated.
+    """
     registry = request.app.state.tool_registry
     tool = registry.get(tool_name)
 
-    if not tool:
-        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+    if tool is not None:
+        return ToolDetail(
+            name=tool.name,
+            source=_convert_source(tool.source),
+            server=tool.server_name,
+            description=tool.description,
+            input_schema=tool.input_schema,
+            output_schema=tool.output_schema,
+            suggested_output_schema=registry.get_suggested_schema(tool.name, min_confidence=0.0),
+        )
 
-    return ToolDetail(
-        name=tool.name,
-        source=_convert_source(tool.source),
-        server=tool.server_name,
-        description=tool.description,
-        input_schema=tool.input_schema,
-        output_schema=tool.output_schema,
-    )
+    runner_match = _find_runner_tool(request, tool_name)
+    if runner_match is not None:
+        runner_name, info = runner_match
+        if isinstance(info, str):
+            description = f"Tool from runner '{runner_name}'"
+            input_schema: dict[str, Any] = {}
+            output_schema: dict[str, Any] | None = None
+        else:
+            description = info.get("description") or f"Tool from runner '{runner_name}'"
+            input_schema = info.get("inputSchema") or {}
+            output_schema = info.get("outputSchema")
+        return ToolDetail(
+            name=tool_name,
+            source=ToolSource.RUNNER,
+            server=runner_name,
+            description=description,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            suggested_output_schema=registry.get_suggested_schema(tool_name, min_confidence=0.0),
+        )
+
+    raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+
+def _find_runner_tool(request: Request, tool_name: str) -> tuple[str, str | dict[str, Any]] | None:
+    """Locate ``tool_name`` on any connected runner; return ``(runner_name, info)``.
+
+    Mirrors the matching logic in ``list_tools`` so detail/list stay
+    consistent. Returns ``None`` when no connected runner advertises the
+    tool.
+    """
+    runner_registry = getattr(request.app.state, "runner_registry", None)
+    if runner_registry is None:
+        return None
+    for runner in runner_registry.list():
+        if runner.status.value != "connected" or not runner.available_tools:
+            continue
+        for entry in runner.available_tools:
+            entry_name = entry if isinstance(entry, str) else entry.get("name")
+            if entry_name == tool_name:
+                return runner.name, entry
+    return None
 
 
 @tool_router.post("/{tool_name}/call", response_model=ToolCallResponse)

@@ -33,11 +33,19 @@ class ToolDefinition:
     last_seen: datetime | None = None
     error: str | None = None
 
-    def to_mcp_tool(self) -> dict[str, Any]:
+    def to_mcp_tool(
+        self,
+        suggested_output_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Convert to MCP tool format for exposure.
 
+        Args:
+            suggested_output_schema: Optional learned schema (F-088 T-896) to
+                inject as ``outputSchema`` when the tool has no MCP-declared
+                schema. MCP-declared schemas always take precedence.
+
         Returns:
-            MCP tool dict with name, description, and schemas
+            MCP tool dict with name, description, and schemas.
         """
         tool: dict[str, Any] = {
             "name": self.name,
@@ -46,6 +54,14 @@ class ToolDefinition:
         }
         if self.output_schema:
             tool["outputSchema"] = self.output_schema
+        elif suggested_output_schema:
+            # Tag injected schemas so tooling (e.g. the inspector) can tell
+            # them apart from server-declared ones. Shallow-copy to avoid
+            # mutating the caller's dict; the ``x-`` prefix is MCP's
+            # convention for extension fields and is ignored by agents.
+            injected = dict(suggested_output_schema)
+            injected.setdefault("x-schema_source", "learned")
+            tool["outputSchema"] = injected
         return tool
 
 

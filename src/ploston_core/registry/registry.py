@@ -16,6 +16,7 @@ from ploston_core.types.internal import InternalToolSource
 from .types import RefreshResult, ToolDefinition, ToolRouter
 
 if TYPE_CHECKING:
+    from ploston_core.schema import ToolOutputSchemaStore
     from ploston_core.telemetry.metrics import AELMetrics
 
 
@@ -53,6 +54,9 @@ class ToolRegistry:
         self._logger = logger
         self._metrics: AELMetrics | None = None
         self._on_tools_changed = on_tools_changed
+        # F-088 T-897: learned-schema injection into tools/list exposure.
+        self._schema_store: ToolOutputSchemaStore | None = None
+        self._schema_injection_confidence: float = 0.8
 
     def set_metrics(self, metrics: AELMetrics) -> None:
         """Set the metrics instance for telemetry.
@@ -61,6 +65,20 @@ class ToolRegistry:
             metrics: AELMetrics instance
         """
         self._metrics = metrics
+
+    def set_schema_store(
+        self,
+        store: ToolOutputSchemaStore | None,
+        min_confidence: float = 0.8,
+    ) -> None:
+        """Wire a schema store for learned output-schema injection (F-088 T-897).
+
+        Args:
+            store: ``ToolOutputSchemaStore`` or ``None`` to disable injection.
+            min_confidence: Learned schemas below this confidence are skipped.
+        """
+        self._schema_store = store
+        self._schema_injection_confidence = min_confidence
 
     def _update_metrics(self) -> None:
         """Update telemetry metrics based on current tool counts."""
@@ -473,7 +491,138 @@ class ToolRegistry:
             # Compare by value since ToolSource and InternalToolSource are different enums
             source_values = {s.value for s in sources}
             tools = [t for t in tools if t.source.value in source_values]
-        return [tool.to_mcp_tool() for tool in tools]
+        return [
+            tool.to_mcp_tool(suggested_output_schema=self._lookup_suggested_schema(tool))
+            for tool in tools
+        ]
+
+    def _resolve_store_key_candidates(
+        self,
+        tool_name: str,
+        server_name: str | None,
+    ) -> list[tuple[str, str]]:
+        """Enumerate ``(server, tool)`` shapes the schema store may have under.
+
+        ``ToolOutputSchemaStore`` indexes observations by the
+        ``(server_name, tool_name_bare)`` pair derived in
+        ``ToolInvoker._observe_output_safe`` -- specifically by splitting the
+        canonical invocation name on the *first* ``__``. This helper returns
+        every plausible key the registry might need to try given the inputs
+        it actually has, so a single lookup site works for:
+
+        - CP-direct MCP tools where ``tool.name`` is bare and
+          ``tool.server_name`` is set.
+        - CP-direct MCP tools where ``tool.name`` is already prefixed with
+          ``<server>__`` (defensive; not currently emitted but cheap to
+          tolerate).
+        - Runner-hosted tools surfaced through the REST layer where
+          ``tool.server_name`` is ``None`` (the runner registry holds them,
+          not ``ToolRegistry``) and ``tool_name`` is the canonical
+          ``<mcp>__<tool>`` form.
+
+        Order matters: callers stop at the first hit.
+        """
+        candidates: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def _add(server: str | None, tool: str) -> None:
+            if not server or not tool:
+                return
+            key = (server, tool)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(key)
+
+        if "__" in tool_name:
+            mcp_prefix, bare = tool_name.split("__", 1)
+            _add(mcp_prefix, bare)
+
+        if server_name is not None:
+            if tool_name.startswith(f"{server_name}__"):
+                _add(server_name, tool_name[len(server_name) + 2 :])
+            else:
+                _add(server_name, tool_name)
+
+        return candidates
+
+    def _lookup_suggested_schema(
+        self,
+        tool: ToolDefinition,
+        *,
+        min_confidence: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve a learned schema for an in-registry ``ToolDefinition``.
+
+        Returns ``None`` when no store is wired, the tool already carries an
+        MCP-declared schema, no learned schema exists, or the schema is below
+        the effective confidence floor. See ``get_suggested_schema`` for the
+        public surface that also handles tools not tracked in this registry.
+        """
+        if self._schema_store is None or tool.output_schema:
+            return None
+        return self._lookup_in_store(tool.name, tool.server_name, min_confidence=min_confidence)
+
+    def _lookup_in_store(
+        self,
+        tool_name: str,
+        server_name: str | None,
+        *,
+        min_confidence: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Walk the store for any matching ``(server, tool)`` shape.
+
+        Centralises the floor application and pattern-matrix used by both
+        :meth:`_lookup_suggested_schema` and :meth:`get_suggested_schema`.
+        """
+        if self._schema_store is None:
+            return None
+        floor = self._schema_injection_confidence if min_confidence is None else min_confidence
+        for server, bare in self._resolve_store_key_candidates(tool_name, server_name):
+            entry = self._schema_store.get(server, bare)
+            if entry is None or entry.confidence < floor:
+                continue
+            from ploston_core.schema.formatters import format_inferred_schema
+
+            return format_inferred_schema(entry)
+        return None
+
+    def get_suggested_schema(
+        self,
+        tool_name: str,
+        *,
+        server_name: str | None = None,
+        min_confidence: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the learned output schema for ``tool_name`` if any.
+
+        Public wrapper used by the REST layer (inspector). Accepts an
+        optional ``server_name`` hint so callers can resolve schemas for
+        tools that don't live in this registry (e.g. runner-hosted tools
+        surfaced through the runner registry). When omitted, the registry's
+        own record for ``tool_name`` is consulted, falling back to splitting
+        the canonical ``<mcp>__<tool>`` shape.
+
+        ``min_confidence`` overrides the configured floor on a per-call
+        basis; defaults to ``None`` (use the configured value). The
+        Inspector REST endpoint passes ``0.0`` so operators can see learned
+        schemas before they cross the agent-facing injection threshold.
+
+        Returns ``None`` when no schema store is wired, the registry's
+        declared schema already covers the tool, no learned schema exists,
+        or its confidence is below the effective floor.
+        """
+        if self._schema_store is None:
+            return None
+        tool = self._tools.get(tool_name)
+        effective_server: str | None
+        if tool is not None:
+            if tool.output_schema:
+                return None
+            effective_server = server_name or tool.server_name
+        else:
+            effective_server = server_name
+        return self._lookup_in_store(tool_name, effective_server, min_confidence=min_confidence)
 
     def get_router(self, tool_name: str) -> ToolRouter | None:
         """Get routing info for a tool.

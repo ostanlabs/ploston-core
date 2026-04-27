@@ -441,17 +441,41 @@ def generate_workflow_schema() -> dict[str, Any]:
             '    repo: "{{ inputs.repo }}"'
         ),
         "note": (
-            "Call workflow_schema to see the live 'available_tools' list — "
-            "it shows every tool grouped by MCP server and runner."
+            "Call workflow_list_tools to see tools grouped by MCP server, "
+            "then workflow_tool_schema for each tool's input schema."
         ),
     }
 
     base["authoring_tools"] = {
         "description": (
             "MCP tools for iterative workflow authoring. "
-            "Recommended flow: workflow_schema → author YAML → workflow_validate → workflow_create → workflow_list"
+            "Recommended flow: workflow_schema → workflow_list_tools → "
+            "workflow_tool_schema → author YAML → workflow_validate → "
+            "workflow_create → workflow_list"
         ),
         "tools": [
+            {
+                "name": "workflow_list_tools",
+                "description": (
+                    "List tools available for workflow steps, grouped by MCP server. "
+                    "Call after workflow_schema to discover tools, or re-call after "
+                    "Ploston config changes to see updated listings."
+                ),
+            },
+            {
+                "name": "workflow_tool_schema",
+                "description": (
+                    "Get the parameter schema for one or more tools (batch via 'tools'). "
+                    "Call after workflow_list_tools to inspect schemas."
+                ),
+            },
+            {
+                "name": "workflow_call_tool",
+                "description": (
+                    "Call a connected MCP tool directly and see its normalized response. "
+                    "Use to test tools and inspect output shapes before adding a step."
+                ),
+            },
             {
                 "name": "workflow_validate",
                 "description": (
@@ -461,14 +485,23 @@ def generate_workflow_schema() -> dict[str, Any]:
                 ),
             },
             {
+                "name": "workflow_patch",
+                "description": (
+                    "Apply targeted str_replace edits to code step bodies of "
+                    "a registered workflow without resubmitting the full YAML. "
+                    "Use after workflow_create to iterate on a code step in "
+                    "place; bumps the workflow version on each call."
+                ),
+            },
+            {
                 "name": "workflow_list",
                 "description": "List all registered workflows. Confirm registration after workflow_create.",
             },
             {
                 "name": "workflow_schema",
                 "description": (
-                    "Return this schema document. Re-call after Ploston config changes "
-                    "to get an updated available_tools list."
+                    "Return this schema document. Call workflow_list_tools to see "
+                    "tools available for workflow steps."
                 ),
             },
         ],

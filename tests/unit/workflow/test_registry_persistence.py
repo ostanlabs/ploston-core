@@ -306,3 +306,130 @@ class TestYamlContentPreserved:
         wf = registry.get("test-workflow")
         assert wf is not None
         assert wf.yaml_content == SAMPLE_YAML
+
+
+class TestOnToolsChanged:
+    """Workflow registry must fire on_tools_changed for register/unregister/initialize.
+
+    Workflows surface as MCP tools; mutations from any code path must announce
+    notifications/tools/list_changed via this hook so the inspector cache and
+    any connected MCP client stay in sync.
+    """
+
+    def test_register_fires_callback(self, tmp_path: Path):
+        config = _make_config(tmp_path)
+        cb = AsyncMock()
+        registry = WorkflowRegistry(_make_tool_registry(), config, on_tools_changed=cb)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                registry.register_from_yaml(SAMPLE_YAML)
+                await asyncio.sleep(0.05)
+
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        cb.assert_awaited()
+
+    def test_unregister_fires_callback(self, tmp_path: Path):
+        config = _make_config(tmp_path)
+        cb = AsyncMock()
+        registry = WorkflowRegistry(_make_tool_registry(), config, on_tools_changed=cb)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                registry.register_from_yaml(SAMPLE_YAML)
+                await asyncio.sleep(0.01)
+                cb.reset_mock()
+                assert registry.unregister("test-workflow") is True
+                await asyncio.sleep(0.05)
+
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        cb.assert_awaited()
+
+    def test_unregister_unknown_does_not_fire(self, tmp_path: Path):
+        config = _make_config(tmp_path)
+        cb = AsyncMock()
+        registry = WorkflowRegistry(_make_tool_registry(), config, on_tools_changed=cb)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                assert registry.unregister("does-not-exist") is False
+                await asyncio.sleep(0.01)
+
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        cb.assert_not_awaited()
+
+    def test_initialize_fires_when_workflows_loaded(self, tmp_path: Path):
+        config = _make_config(tmp_path)
+        Path(config.directory).mkdir(parents=True, exist_ok=True)
+        (Path(config.directory) / "test-workflow.yaml").write_text(SAMPLE_YAML)
+
+        cb = AsyncMock()
+        registry = WorkflowRegistry(_make_tool_registry(), config, on_tools_changed=cb)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                count = await registry.initialize()
+                await asyncio.sleep(0.05)
+                return count
+
+            count = loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        assert count == 1
+        cb.assert_awaited()
+
+    def test_initialize_does_not_fire_when_empty(self, tmp_path: Path):
+        config = _make_config(tmp_path)
+        Path(config.directory).mkdir(parents=True, exist_ok=True)
+
+        cb = AsyncMock()
+        registry = WorkflowRegistry(_make_tool_registry(), config, on_tools_changed=cb)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                count = await registry.initialize()
+                await asyncio.sleep(0.01)
+                return count
+
+            count = loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        assert count == 0
+        cb.assert_not_awaited()
+
+    def test_no_callback_is_safe(self, tmp_path: Path):
+        """Registry without on_tools_changed must not raise on mutations."""
+        config = _make_config(tmp_path)
+        registry = WorkflowRegistry(_make_tool_registry(), config)
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _run():
+                registry.register_from_yaml(SAMPLE_YAML)
+                assert registry.unregister("test-workflow") is True
+
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()

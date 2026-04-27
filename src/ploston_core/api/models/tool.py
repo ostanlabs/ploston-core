@@ -24,7 +24,15 @@ class ToolStatus(str, Enum):
 
 
 class ToolSummary(BaseModel):
-    """Tool summary for list response."""
+    """Tool summary for list response.
+
+    ``input_schema`` and ``output_schema`` are carried on the summary so the
+    inspector (and any other client) can render them without a per-tool
+    detail round-trip. For runner-hosted tools they come straight from the
+    runner's ``available_tools`` payload; for CP-direct/native/system tools
+    they come from the registry. Runner entries listed as bare strings have
+    no schema and surface ``{}`` / ``None``.
+    """
 
     name: str
     source: ToolSource
@@ -32,6 +40,12 @@ class ToolSummary(BaseModel):
     description: str | None = None
     tags: list[str] = []
     status: ToolStatus = ToolStatus.AVAILABLE
+    input_schema: dict[str, Any] = {}
+    output_schema: dict[str, Any] | None = None
+    # F-088 inspector hint: true when a learned output schema is available
+    # above the configured confidence threshold. Lets the SPA badge + filter
+    # without having to fetch every ToolDetail.
+    has_learned_output_schema: bool = False
 
 
 class ToolDetail(BaseModel):
@@ -43,6 +57,10 @@ class ToolDetail(BaseModel):
     description: str | None = None
     input_schema: dict[str, Any]
     output_schema: dict[str, Any] | None = None
+    # F-088: learned output schema, populated when the tool has no declared
+    # schema and the store holds a confident inference. Mirrors the
+    # ``suggested_output_schema`` field emitted by ``workflow_tool_schema``.
+    suggested_output_schema: dict[str, Any] | None = None
 
 
 class ToolListResponse(BaseModel):

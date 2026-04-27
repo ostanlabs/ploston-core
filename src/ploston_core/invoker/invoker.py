@@ -1,5 +1,6 @@
 """Tool invoker implementation."""
 
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from ploston_core.logging import AELLogger
     from ploston_core.mcp import MCPClientManager
     from ploston_core.registry import ToolRegistry
+    from ploston_core.schema import ToolOutputSchemaStore
 
     from .factory import SandboxFactory
     from .runner_dispatcher import RunnerDispatcher
@@ -66,6 +68,16 @@ class ToolInvoker(ToolCallerProtocol):
         self._logger = logger
         self._error_factory = error_factory
         self._runner_dispatcher = runner_dispatcher
+        # F-088 · T-887: optional fire-and-forget schema observation hook.
+        self._schema_store: ToolOutputSchemaStore | None = None
+
+    def set_schema_store(self, store: "ToolOutputSchemaStore | None") -> None:
+        """Attach a ToolOutputSchemaStore to observe successful outputs.
+
+        Wired from ``Application`` after construction (F-088 · T-888).
+        ``None`` disables observation.
+        """
+        self._schema_store = store
 
     # ─────────────────────────────────────────────────────────────
     # ToolCallerProtocol implementation
@@ -197,12 +209,14 @@ class ToolInvoker(ToolCallerProtocol):
                     )
                     duration_ms = int((time.time() - start) * 1000)
                     record_tool_result(telemetry_result, success=True)
-                    return ToolCallResult(
+                    result = ToolCallResult(
                         success=True,
                         output=output,
                         duration_ms=duration_ms,
                         tool_name=tool_name,
                     )
+                    self._observe_output_safe(result)
+                    return result
                 except Exception as e:
                     duration_ms = int((time.time() - start) * 1000)
                     record_tool_result(
@@ -287,6 +301,7 @@ class ToolInvoker(ToolCallerProtocol):
                 success=result.success,
                 error_code=type(result.error).__name__ if result.error else None,
             )
+            self._observe_output_safe(result)
             return result
 
     async def _invoke_mcp(
@@ -436,3 +451,43 @@ class ToolInvoker(ToolCallerProtocol):
             tool_name="python_exec",
             error=error,
         )
+
+    # ─────────────────────────────────────────────────────────────
+    # F-088 · T-887: Fire-and-forget schema observation hook
+    # ─────────────────────────────────────────────────────────────
+
+    def _observe_output_safe(self, result: ToolCallResult) -> None:
+        """Observe a successful tool result without affecting latency.
+
+        Self-resolves (server_name, canonical_tool_name) from
+        ``result.tool_name`` via the same canonicalisation used for metrics,
+        so runner-prefixed tools are stored under their ``server__tool`` key.
+
+        All failures are swallowed -- this is a learning hook, not a
+        critical path.
+        """
+        if self._schema_store is None:
+            return
+        if not result.success or result.output is None:
+            return
+        try:
+            canonical, _ = normalize_tool_name_for_metrics(result.tool_name)
+            if "__" in canonical:
+                server_name, tool_name = canonical.split("__", 1)
+            else:
+                # Native tools with no server component (e.g. python_exec).
+                server_name, tool_name = "unknown", canonical
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._schema_store.observe(
+                    tool_name=tool_name,
+                    server_name=server_name,
+                    output=result.output,
+                )
+            )
+        except RuntimeError:
+            # Not running inside a loop (rare: synchronous test contexts).
+            pass
+        except Exception:
+            # Never propagate observation failures.
+            pass

@@ -1,6 +1,7 @@
 """Workflow Registry implementation."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,7 @@ class WorkflowRegistry:
         logger: "AELLogger | None" = None,
         redis_store: "RedisConfigStore | None" = None,
         runner_registry: "RunnerRegistry | None" = None,
+        on_tools_changed: Callable[[], Awaitable[None]] | None = None,
     ):
         """Initialize workflow registry.
 
@@ -61,6 +63,10 @@ class WorkflowRegistry:
             logger: Optional logger
             redis_store: Optional Redis config store for Premium persistence
             runner_registry: Optional runner registry for runner-hosted tool validation
+            on_tools_changed: Optional async callback fired when the workflow
+                set changes (register/unregister/initialize). Workflows surface
+                as MCP tools, so mutations must trigger
+                notifications/tools/list_changed via this hook.
         """
         self._workflows: dict[str, WorkflowEntry] = {}
         self._tool_registry = tool_registry
@@ -72,6 +78,16 @@ class WorkflowRegistry:
         self._watching = False
         self._watch_task: asyncio.Task[None] | None = None
         self._metrics: AELMetrics | None = None
+        self._on_tools_changed = on_tools_changed
+
+    def _fire_tools_changed(self) -> None:
+        """Schedule the on_tools_changed callback on the running event loop."""
+        if self._on_tools_changed:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_tools_changed())
+            except RuntimeError:
+                pass  # No running event loop — skip notification
 
     def set_metrics(self, metrics: "AELMetrics") -> None:
         """Set the metrics instance for telemetry.
@@ -198,6 +214,8 @@ class WorkflowRegistry:
             )
 
         self._update_metrics()
+        if count > 0:
+            self._fire_tools_changed()
         return count
 
     def register(
@@ -264,6 +282,7 @@ class WorkflowRegistry:
             )
 
         self._update_metrics()
+        self._fire_tools_changed()
         return result
 
     def register_from_yaml(
@@ -330,6 +349,7 @@ class WorkflowRegistry:
             except RuntimeError:
                 asyncio.run(self._delete_persisted(name, entry.source))
             self._update_metrics()
+            self._fire_tools_changed()
             return True
         return False
 
