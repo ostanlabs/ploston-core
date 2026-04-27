@@ -115,10 +115,16 @@ class TestAuthoringLoop:
 
     @pytest.mark.asyncio
     async def test_full_authoring_loop(self, provider):
-        # Step 1: workflow_schema — discover available tools
+        # Step 1a: workflow_schema — static YAML reference (S-280: no longer
+        # carries available_tools; discovery moves to workflow_list_tools).
         schema_result = _parse(await provider.call("workflow_schema", {}))
-        assert "available_tools" in schema_result
-        servers = {g["mcp_server"] for g in schema_result["available_tools"]}
+        assert "available_tools" not in schema_result
+        assert "sections" in schema_result
+        assert "schema" in schema_result
+
+        # Step 1b: workflow_list_tools — discover available tools
+        list_result = _parse(await provider.call("workflow_list_tools", {}))
+        servers = {g["mcp_server"] for g in list_result["tools"]}
         assert "system" in servers
 
         # Step 2: workflow_tool_schema — get python_exec schema
@@ -173,3 +179,93 @@ class TestToolExposure:
         result = _parse(raw)
         assert result["source"] == "cp"
         assert "input_schema" in result
+
+
+class TestValidateAwait:
+    """S-286 / T-905: workflow_validate surfaces missing-await warnings."""
+
+    @pytest.mark.asyncio
+    async def test_validate_returns_await_warning(self, provider):
+        yaml_content = """
+name: missing_await
+version: "1.0"
+description: "Workflow with a missing await on context.tools.call_mcp"
+steps:
+  - id: bad
+    code: |
+      x = context.tools.call_mcp("github", "list_repos", {})
+      result = {"x": x}
+"""
+        raw = await provider.call("workflow_validate", {"yaml_content": yaml_content})
+        result = _parse(raw)
+        assert result["valid"] is True
+        await_warnings = [w for w in result["warnings"] if w.get("path") == "steps[bad].code"]
+        assert len(await_warnings) == 1
+        assert "await" in await_warnings[0]["message"]
+        assert await_warnings[0]["line"] == 1
+
+
+class TestPatchIntegration:
+    """S-287 / T-908: workflow_create → workflow_patch round-trip preserves
+    code structure and re-registers the patched workflow.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_then_patch_then_run(self, provider, workflow_registry):
+        from ploston_core.workflow.parser import parse_workflow_yaml
+
+        yaml_content = """
+name: dx_int_patch
+version: "1.0"
+description: "Integration test workflow for workflow_patch"
+steps:
+  - id: greet
+    code: |
+      who = context.inputs.get("name", "world") or "world"
+      result = {"greeting": "Hi, " + str(who) + "!"}
+"""
+        # Stage 1: create the workflow through MCP.
+        create_resp = _parse(await provider.call("workflow_create", {"yaml_content": yaml_content}))
+        assert create_resp["status"] == "created"
+        assert create_resp["name"] == "dx_int_patch"
+
+        # Stage 2: wire the registry so subsequent ``workflow_patch`` resolves
+        # the just-created workflow with its YAML body. The shared fixture
+        # auto-mocks ``get`` to a MagicMock; we override it here so the patch
+        # handler sees a parsed WorkflowDefinition with yaml_content set.
+        existing = parse_workflow_yaml(yaml_content)
+        existing.yaml_content = yaml_content
+        workflow_registry.get.return_value = existing
+        workflow_registry.unregister.return_value = True
+
+        # Stage 3: patch the code through MCP.
+        patch_resp_raw = await provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_int_patch",
+                "version": "1.1.0",
+                "patches": [{"step_id": "greet", "old": "Hi, ", "new": "Hello, "}],
+            },
+        )
+        patch_resp = _parse(patch_resp_raw)
+        assert patch_resp["status"] == "patched"
+        assert patch_resp["version"] == "1.1.0"
+        assert patch_resp["patches_applied"] == 1
+        assert "structuredContent" in patch_resp_raw
+
+        # Stage 4: verify the YAML re-registered with the registry contains
+        # the patched code while preserving the block scalar style and
+        # surrounding structure (i.e. ruamel.yaml round-trip integrity).
+        last_register_call = workflow_registry.register_from_yaml.call_args
+        patched_yaml = last_register_call[0][0]
+        assert "Hello, " in patched_yaml
+        assert "Hi, " not in patched_yaml
+        assert "code: |" in patched_yaml
+
+        # Stage 5: confirm the patched YAML re-parses into a valid workflow
+        # with the new version, simulating an end-to-end run-readiness check.
+        patched_wf = parse_workflow_yaml(patched_yaml)
+        assert patched_wf.name == "dx_int_patch"
+        assert patched_wf.version == "1.1.0"
+        assert patched_wf.steps[0].id == "greet"
+        assert "Hello, " in (patched_wf.steps[0].code or "")

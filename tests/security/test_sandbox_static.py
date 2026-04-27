@@ -289,3 +289,80 @@ result = x + data["value"]
 
         assert result.success, f"Expected success, got error: {result.error}"
         assert result.result == 15
+
+
+@pytest.mark.security
+class TestCoroutineWarningDetection:
+    """Spike (T-906): investigate runtime detection of unawaited coroutines.
+
+    Documents what the sandbox does today when a step forgets ``await`` on
+    ``tools.call(...)`` / ``tools.call_mcp(...)``. The static check
+    (Proposal 2 / S-286) already catches this at validation time; these
+    tests determine whether runtime detection adds material value.
+
+    Findings are written into the spike report; tests assert only on
+    documented current behaviour so they remain stable as a regression
+    floor for any future implementation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unawaited_call_returns_coroutine_object(self):
+        """Without ``await``, ``tools.call(...)`` flows a coroutine through
+        the result, not the tool's actual return value."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ploston_core.sandbox.types import ToolCallInterface
+
+        mock_caller = MagicMock()
+        mock_caller.call = AsyncMock(return_value={"data": [1, 2, 3]})
+        tool_interface = ToolCallInterface(tool_caller=mock_caller, max_calls=10)
+
+        sandbox = PythonExecSandbox(timeout=5)
+        # Note: missing ``await`` on purpose. ``repr`` of a coroutine object
+        # is ``<coroutine object ToolCallInterface.call at 0x...>``.
+        code = 'x = tools.call("my_tool", {"key": "v"})\nresult = repr(x)'
+        result = await sandbox.execute(code, {"tools": tool_interface})
+
+        assert result.success, f"Expected success, got error: {result.error}"
+        # Document: silent failure mode — the bug surfaces only via the
+        # repr of the returned value, not via an exception inside the step.
+        assert "coroutine" in result.result.lower()
+
+    @pytest.mark.asyncio
+    async def test_unawaited_call_mcp_returns_coroutine_object(self):
+        """Same silent-failure mode for ``tools.call_mcp(...)``."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ploston_core.sandbox.types import ToolCallInterface
+
+        mock_caller = MagicMock()
+        mock_caller.call = AsyncMock(return_value={"data": [1, 2, 3]})
+        tool_interface = ToolCallInterface(tool_caller=mock_caller, max_calls=10)
+
+        sandbox = PythonExecSandbox(timeout=5)
+        code = 'x = tools.call_mcp("github", "list", {})\nresult = repr(x)'
+        result = await sandbox.execute(code, {"tools": tool_interface})
+
+        assert result.success, f"Expected success, got error: {result.error}"
+        assert "coroutine" in result.result.lower()
+
+    @pytest.mark.asyncio
+    async def test_unawaited_call_does_not_invoke_tool_caller(self):
+        """An unawaited coroutine never executes the tool caller body —
+        so today's sandbox cannot even count this as a tool call."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ploston_core.sandbox.types import ToolCallInterface
+
+        mock_caller = MagicMock()
+        mock_caller.call = AsyncMock(return_value={"data": [1, 2, 3]})
+        tool_interface = ToolCallInterface(tool_caller=mock_caller, max_calls=10)
+
+        sandbox = PythonExecSandbox(timeout=5)
+        code = 'x = tools.call("my_tool", {"key": "v"})\nresult = "done"'
+        result = await sandbox.execute(code, {"tools": tool_interface})
+
+        assert result.success
+        # The underlying caller is never invoked because the coroutine is
+        # constructed but never driven.
+        mock_caller.call.assert_not_called()

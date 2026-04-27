@@ -118,6 +118,8 @@ class PlostApplication:
         self.telemetry_store: TelemetryStore | None = None
         self.chain_detector: ChainDetector | None = None
         self.telemetry_collector: TelemetryCollector | None = None
+        # F-088 · T-888: Tool output schema learning store.
+        self.schema_store: Any | None = None
 
     async def initialize(self) -> None:
         """Initialize all components.
@@ -390,6 +392,35 @@ class PlostApplication:
             runner_dispatcher=runner_dispatcher,
         )
 
+        # 10b. Tool output schema learning store (F-088 · T-888).
+        # Fire-and-forget observation hook: records structural schemas from
+        # successful tool outputs, persists to ~/.ploston/schemas/, and
+        # surfaces them back through workflow_tool_schema. Best-effort --
+        # failures never block tool invocation.
+        try:
+            from ploston_core.schema import (
+                FileSchemaBackend,
+                ToolOutputSchemaStore,
+            )
+
+            self.schema_store = ToolOutputSchemaStore(
+                backend=FileSchemaBackend(),
+                logger=self.logger,
+            )
+            await self.schema_store.initialize()
+            self.tool_invoker.set_schema_store(self.schema_store)
+            # F-088 T-900: feed learned schemas back through tools/list.
+            self.tool_registry.set_schema_store(
+                self.schema_store,
+                min_confidence=self.config.tools.schema_injection_confidence,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.getLogger("ploston.schema").warning(
+                "Schema store initialization failed; continuing without output schema learning: %s",
+                exc,
+            )
+            self.schema_store = None
+
         # 11. Workflow Engine
         # Create token estimator for savings metrics if telemetry is enabled
         token_estimator = None
@@ -527,6 +558,8 @@ class PlostApplication:
             tool_registry=self.tool_registry,
             runner_registry=self.runner_registry,
             workflow_engine=self.workflow_engine,
+            tool_invoker=self.tool_invoker,
+            schema_store=self.schema_store,  # F-088 · T-890
         )
 
         self.mcp_frontend = MCPFrontend(
@@ -557,6 +590,9 @@ class PlostApplication:
         _notify = self.mcp_frontend._send_tools_changed_notification  # noqa: SLF001
         workflow_tools._on_tools_changed = _notify  # noqa: SLF001
         self.tool_registry._on_tools_changed = _notify  # noqa: SLF001
+        # Workflows surface as MCP tools, so registry mutations from any path
+        # (MCP tool, REST API, disk reload) must announce tools/list_changed.
+        self.workflow_registry._on_tools_changed = _notify  # noqa: SLF001
         if self.runner_registry:
             self.runner_registry._on_tools_changed = _notify  # noqa: SLF001
 

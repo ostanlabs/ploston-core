@@ -82,6 +82,15 @@ class ToolsConfig:
 
     mcp_servers: dict[str, MCPServerDefinition] = field(default_factory=dict)
     system_tools: SystemToolsConfig = field(default_factory=SystemToolsConfig)
+    # F-088 T-898: minimum learned-schema confidence for ``tools/list`` injection.
+    schema_injection_confidence: float = 0.8
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.schema_injection_confidence <= 1.0:
+            raise ValueError(
+                "schema_injection_confidence must be in [0.0, 1.0]; "
+                f"got {self.schema_injection_confidence!r}"
+            )
 
 
 @dataclass

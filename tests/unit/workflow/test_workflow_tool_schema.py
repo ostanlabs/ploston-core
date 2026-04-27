@@ -111,11 +111,17 @@ class TestToolSchemaRegistration:
         assert "workflow_tool_schema" in WORKFLOW_CRUD_TOOL_NAMES
 
     def test_tool_schema_definition_exists(self):
-        """U-33: WORKFLOW_TOOL_SCHEMA_TOOL has correct shape."""
+        """U-33: WORKFLOW_TOOL_SCHEMA_TOOL has correct shape.
+
+        S-279 (DEC-185): 'mcp' and 'tool' are optional at the top level so
+        that batch mode via 'tools' is schema-valid. Mode selection + required
+        fields are enforced in the handler rather than the JSON schema.
+        """
         assert WORKFLOW_TOOL_SCHEMA_TOOL["name"] == "workflow_tool_schema"
         schema = WORKFLOW_TOOL_SCHEMA_TOOL["inputSchema"]
-        assert "mcp" in schema["required"]
-        assert "tool" in schema["required"]
+        props = schema["properties"]
+        assert {"mcp", "tool", "tools"}.issubset(props.keys())
+        assert props["tools"]["type"] == "array"
 
 
 class TestToolSchemaResolution:
@@ -165,12 +171,18 @@ class TestToolSchemaResolution:
 
     @pytest.mark.asyncio
     async def test_not_found_returns_hint(self, provider):
-        """U-38: Unknown tool returns structured not-found with hint."""
+        """U-38: Unknown tool returns structured not-found with discovery hint.
+
+        S-280 (DEC-185): the embedded ``available_tools`` list was removed in
+        favor of a pointer to workflow_list_tools.
+        """
         raw = await provider.call("workflow_tool_schema", {"mcp": "nonexistent", "tool": "nope"})
         result = _parse_mcp_result(raw)
         assert result.get("found") is False
         assert "error" in result
-        assert "available_tools" in result
+        assert "available_tools" not in result
+        assert "hint" in result
+        assert "workflow_list_tools" in result["hint"]
 
     @pytest.mark.asyncio
     async def test_missing_mcp_param(self, provider):
