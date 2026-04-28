@@ -99,6 +99,14 @@ class WorkflowsConfig:
 
     directory: str = "./workflows"
     watch: bool = True
+    # S-291 P3: TTL (seconds) for failed-validation drafts held in the
+    # in-memory DraftStore. Drafts older than this are evicted on next
+    # access. Default: 30 minutes.
+    draft_ttl_seconds: int = 1800
+    # S-292 P4: hard cap on the number of operations a single
+    # ``workflow_patch`` call may apply. Guards against accidental
+    # large-batch edits and oversized request bodies.
+    max_patches_per_call: int = 10
 
 
 @dataclass

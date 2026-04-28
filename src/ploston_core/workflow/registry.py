@@ -1,7 +1,10 @@
 """Workflow Registry implementation."""
 
 import asyncio
+import secrets
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -79,6 +82,20 @@ class WorkflowRegistry:
         self._watch_task: asyncio.Task[None] | None = None
         self._metrics: AELMetrics | None = None
         self._on_tools_changed = on_tools_changed
+        # S-291 P3: in-memory draft store for failed-validation workflows.
+        # TTL is sourced from ``WorkflowsConfig.draft_ttl_seconds`` (default
+        # 1800s). The attribute lookup uses ``getattr`` so callers passing
+        # an older mock config still work; non-int values (e.g. a MagicMock
+        # attribute auto-generated in tests) fall back to the default.
+        ttl = getattr(config, "draft_ttl_seconds", 1800)
+        if not isinstance(ttl, int) or ttl <= 0:
+            ttl = 1800
+        self._draft_store = DraftStore(ttl_seconds=ttl)
+
+    @property
+    def draft_store(self) -> "DraftStore":
+        """Expose the draft store (used by ``WorkflowToolsProvider``)."""
+        return self._draft_store
 
     def _fire_tools_changed(self) -> None:
         """Schedule the on_tools_changed callback on the running event loop."""
@@ -324,6 +341,85 @@ class WorkflowRegistry:
                 asyncio.run(self._persist(workflow.name, yaml_content))
 
         return result
+
+    def register_validated(
+        self,
+        workflow: WorkflowDefinition,
+        yaml_content: str,
+        persist: bool = True,
+    ) -> WorkflowEntry:
+        """Register a pre-validated workflow definition.
+
+        S-291 P3: Splits the validation/registration coupling that previously
+        lived inside ``register_from_yaml``. The caller is expected to have
+        already produced a successful ``ValidationResult`` via
+        ``validate_yaml`` (or equivalent) — this method skips
+        ``WorkflowValidator.validate`` entirely and only enforces the
+        registry-level invariants (reserved names, CP tool collisions,
+        in-memory write, persistence).
+
+        Args:
+            workflow: Pre-validated workflow definition.
+            yaml_content: Original YAML text to persist.
+            persist: If True (default), persist the workflow asynchronously.
+
+        Returns:
+            The newly created ``WorkflowEntry``.
+
+        Raises:
+            AELError(INPUT_INVALID) if the name is reserved or collides with
+                an existing CP tool. Validation errors are NOT raised here —
+                the caller is responsible for those before invoking this.
+        """
+        if workflow.name in WORKFLOW_RESERVED_NAMES:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"Workflow name '{workflow.name}' is reserved. "
+                    f"Reserved names: {', '.join(sorted(WORKFLOW_RESERVED_NAMES))}"
+                ),
+            )
+
+        if self._tool_registry and self._tool_registry.get(workflow.name) is not None:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"Workflow name '{workflow.name}' collides with an existing "
+                    f"CP tool of the same name. Choose a different name."
+                ),
+            )
+
+        # The yaml_content lives on WorkflowDefinition itself — the parser
+        # populates it for round-trip patch/get flows. Caller may have
+        # produced ``workflow`` from ``parse_workflow_yaml(yaml_content)``
+        # already, but rewriting it here keeps the contract explicit.
+        workflow.yaml_content = yaml_content
+
+        entry = WorkflowEntry(
+            workflow=workflow,
+            registered_at=datetime.now(UTC).isoformat(),
+            source="api",
+        )
+        self._workflows[workflow.name] = entry
+
+        if self._logger:
+            self._logger._log(
+                LogLevel.INFO,
+                "workflow",
+                "Workflow registered (validated)",
+                {"name": workflow.name},
+            )
+
+        if persist:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._persist(workflow.name, yaml_content))
+            except RuntimeError:
+                asyncio.run(self._persist(workflow.name, yaml_content))
+
+        self._update_metrics()
+        self._fire_tools_changed()
+        return entry
 
     def unregister(self, name: str) -> bool:
         """Unregister a workflow.
@@ -610,3 +706,110 @@ class WorkflowRegistry:
                     "Failed to reload workflow",
                     {"file": str(path), "error": str(e)},
                 )
+
+
+@dataclass
+class DraftEntry:
+    """A failed-validation workflow held for follow-up patching.
+
+    S-291 P3: When ``workflow_create`` validation fails (and ``dry_run`` is
+    not set), the YAML and structured validation result are stashed under a
+    ``draft_id`` so a subsequent ``workflow_patch`` (or re-create) can
+    address the errors without retransmitting the full YAML.
+    """
+
+    draft_id: str
+    yaml_content: str
+    name: str
+    version: str
+    validation: ValidationResult
+    created_at: float = field(default_factory=time.monotonic)
+
+
+class DraftStore:
+    """In-memory TTL store for failed-validation workflow drafts.
+
+    Drafts older than ``ttl_seconds`` are evicted lazily on every access.
+    The store is intentionally simple: process-local, no persistence, no
+    background sweeper. Capacity is bounded by ``max_size`` — once the cap
+    is hit the oldest entry is dropped before the new one is inserted.
+    """
+
+    def __init__(self, ttl_seconds: int = 1800, max_size: int = 256) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError(f"DraftStore ttl_seconds must be positive, got {ttl_seconds}")
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+        self._drafts: dict[str, DraftEntry] = {}
+
+    @property
+    def ttl_seconds(self) -> int:
+        return self._ttl
+
+    def _now(self) -> float:
+        # Indirection to make tests able to monkeypatch the clock.
+        return time.monotonic()
+
+    def _evict_expired(self) -> None:
+        now = self._now()
+        stale = [
+            draft_id
+            for draft_id, entry in self._drafts.items()
+            if now - entry.created_at > self._ttl
+        ]
+        for draft_id in stale:
+            self._drafts.pop(draft_id, None)
+
+    def put(
+        self,
+        yaml_content: str,
+        name: str,
+        version: str,
+        validation: ValidationResult,
+    ) -> str:
+        """Store a draft and return its ``draft_id``.
+
+        ``draft_id`` is a short URL-safe random token prefixed with
+        ``draft-`` for visual recognition by agents reading tool output.
+        """
+        self._evict_expired()
+        if len(self._drafts) >= self._max_size:
+            # Drop the oldest entry to make room.
+            oldest = min(self._drafts.items(), key=lambda kv: kv[1].created_at)
+            self._drafts.pop(oldest[0], None)
+
+        draft_id = f"draft-{secrets.token_urlsafe(8)}"
+        self._drafts[draft_id] = DraftEntry(
+            draft_id=draft_id,
+            yaml_content=yaml_content,
+            name=name,
+            version=version,
+            validation=validation,
+        )
+        return draft_id
+
+    def get(self, draft_id: str) -> DraftEntry | None:
+        self._evict_expired()
+        return self._drafts.get(draft_id)
+
+    def pop(self, draft_id: str) -> DraftEntry | None:
+        self._evict_expired()
+        return self._drafts.pop(draft_id, None)
+
+    def replace_yaml(self, draft_id: str, yaml_content: str) -> DraftEntry | None:
+        """Replace the YAML body of an existing draft in place.
+
+        Used by ``workflow_patch`` when the patch target is a draft —
+        successful patches mutate the draft's YAML so subsequent calls see
+        the latest state. ``created_at`` is left untouched (TTL still
+        anchored to original draft creation).
+        """
+        entry = self.get(draft_id)
+        if entry is None:
+            return None
+        entry.yaml_content = yaml_content
+        return entry
+
+    def __len__(self) -> int:
+        self._evict_expired()
+        return len(self._drafts)

@@ -388,8 +388,12 @@ class PythonExecSandbox:
         # Add safe __import__
         safe_builtins["__import__"] = self._create_safe_import()
 
-        # Create globals with safe builtins and context
-        return {"__builtins__": safe_builtins, **context}
+        # S-289 P1: inject ToolError so code steps can `except ToolError:` without
+        # an explicit import (the sandbox blocks ploston_core imports). The name
+        # is injected after **context so caller-supplied keys can never shadow it.
+        from ploston_core.sandbox.types import ToolError
+
+        return {"__builtins__": safe_builtins, **context, "ToolError": ToolError}
 
     async def execute(
         self,

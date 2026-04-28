@@ -26,6 +26,11 @@ from ploston_core.types import (
 )
 from ploston_core.workflow import WorkflowDefinition
 
+from .error_enrichment import (
+    build_code_context,
+    extract_line_in_step,
+    summarize_prior_outputs,
+)
 from .normalize import normalize_mcp_response
 from .types import (
     ExecutionContext,
@@ -391,6 +396,28 @@ class WorkflowEngine:
             if not step:
                 continue
 
+            # Cascade-skip when any depends_on prerequisite already failed or
+            # was skipped. Surface ``root_cause_step_id`` in error_metadata so
+            # the agent can jump straight to the originating failure (spec
+            # P4d "step skipped due to failed dependency").
+            cascade_root = self._find_failed_dependency(step, context)
+            if cascade_root is not None:
+                root_id, root_result = cascade_root
+                from ploston_core.engine.error_enrichment import build_skipped_metadata
+
+                root_err = root_result.error if root_result.error else root_result.skip_reason
+                skipped = StepResult(
+                    step_id=step.id,
+                    status=StepStatus.SKIPPED,
+                    started_at=datetime.now(),
+                    completed_at=datetime.now(),
+                    duration_ms=0,
+                    skip_reason=f"dependency '{root_id}' did not complete",
+                    error_metadata=build_skipped_metadata(root_id, root_err),
+                )
+                context.add_step_result(skipped)
+                continue
+
             result = await self._execute_step(step, context, step_index, total_steps)
             context.add_step_result(result)
 
@@ -404,6 +431,27 @@ class WorkflowEngine:
                         if result.error
                         else create_error("STEP_FAILED", step_id=step_id)
                     )
+
+    def _find_failed_dependency(
+        self,
+        step: Any,
+        context: ExecutionContext,
+    ) -> tuple[str, StepResult] | None:
+        """Return the first ``depends_on`` prerequisite that failed/was skipped.
+
+        Used to cascade-skip downstream steps without re-executing them.
+        Only direct dependencies are inspected; indirect ancestors are
+        already covered transitively because they would have triggered
+        the same cascade earlier in execution order.
+        """
+        deps = getattr(step, "depends_on", None) or []
+        for dep_id in deps:
+            prior = context.step_results.get(dep_id)
+            if prior is None:
+                continue
+            if prior.status in (StepStatus.FAILED, StepStatus.SKIPPED):
+                return dep_id, prior
+        return None
 
     async def _execute_step(
         self,
@@ -616,6 +664,13 @@ class WorkflowEngine:
                     )
                     self._plugin_registry.execute_step_after(result_ctx)
 
+                error_metadata = self._build_error_metadata(
+                    step=step,
+                    exc=e,
+                    rendered_params=current_params,
+                    context=context,
+                )
+
                 return StepResult(
                     step_id=step.id,
                     status=StepStatus.FAILED,
@@ -623,7 +678,172 @@ class WorkflowEngine:
                     completed_at=completed_at,
                     duration_ms=duration_ms,
                     error=e,
+                    error_metadata=error_metadata,
                 )
+
+    def _build_error_metadata(
+        self,
+        *,
+        step: Any,  # StepDefinition
+        exc: BaseException,
+        rendered_params: dict[str, Any] | None,
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Construct the structured error_metadata block for a failed step.
+
+        See ``packages/ploston-core/src/ploston_core/engine/error_enrichment.py``
+        and the spec §workflow_run failure response design.
+        """
+        is_code = step.step_type != StepType.TOOL
+        meta: dict[str, Any] = {
+            "step_id": step.id,
+            "step_type": "code" if is_code else "tool",
+            "exception_type": type(exc).__name__,
+            "fix_via": "workflow_patch",
+        }
+
+        prior_keys = summarize_prior_outputs(context.step_results)
+        if prior_keys:
+            meta["step_inputs"] = {"prior_step_output_keys": prior_keys}
+
+        if is_code:
+            code = getattr(step, "code", "") or ""
+            line, source_line = extract_line_in_step(exc, code)
+            if line is not None:
+                meta["line_in_step"] = line
+                if source_line is not None:
+                    meta["source_line"] = source_line
+                meta["code_context"] = build_code_context(code, line)
+        else:
+            tool_name = getattr(step, "tool", None)
+            meta["tool"] = tool_name
+            meta["mcp"] = getattr(step, "mcp", None)
+            if rendered_params is not None:
+                meta["params_sent"] = dict(rendered_params)
+            # Deterministic typo-fix for TOOL_UNAVAILABLE: if the
+            # registry has a fuzzy-close name, surface a `suggested_fix`
+            # patch op the agent can apply verbatim.
+            suggested = self._suggest_tool_fix(tool_name, exc)
+            if suggested is not None:
+                meta["suggested_fix"] = {
+                    "op": "set",
+                    "path": f"steps.{step.id}.tool",
+                    "value": suggested,
+                }
+            # TEMPLATE_ERROR enrichment: surface the failing expression,
+            # the param path it appeared in, the available step ids, and
+            # — when the failing reference is a `steps.<id>...` path with
+            # a fuzzy-close known step — a suggested_fix replacing the
+            # bad identifier in the offending param.
+            self._enrich_template_error(meta, step, exc, context)
+
+        return meta
+
+    def _enrich_template_error(
+        self,
+        meta: dict[str, Any],
+        step: Any,
+        exc: BaseException,
+        context: ExecutionContext,
+    ) -> None:
+        """Populate template-resolution fields on ``meta`` when applicable."""
+        if not isinstance(exc, AELError) or exc.code != "TEMPLATE_ERROR":
+            return
+        variable = getattr(exc, "_template_variable", None)
+        expression = getattr(exc, "_template_expression", None)
+        param_path = getattr(exc, "_template_param_path", None)
+        if not isinstance(variable, str):
+            return
+
+        meta["template_expression"] = expression or variable
+        if param_path:
+            meta["param_path"] = param_path
+
+        available = sorted(context.step_outputs.keys())
+        meta["available_steps"] = available
+
+        # Suggest a fix only for `steps.<id>...` references where the
+        # failing component is the step id and there is a fuzzy-close
+        # match in the executed step set.
+        parts = variable.split(".")
+        if len(parts) >= 2 and parts[0] == "steps" and available:
+            from difflib import get_close_matches
+
+            bad_id = parts[1]
+            if bad_id not in available:
+                matches = get_close_matches(bad_id, available, n=1, cutoff=0.6)
+                if matches and param_path:
+                    fixed = variable.replace(f"steps.{bad_id}", f"steps.{matches[0]}", 1)
+                    meta["suggested_fix"] = {
+                        "op": "set",
+                        "path": f"steps.{step.id}.params.{param_path}",
+                        "value": "{{ " + fixed + " }}",
+                    }
+
+    def _suggest_tool_fix(self, tool_name: Any, exc: BaseException) -> str | None:
+        """Return the closest known tool name when ``tool_name`` looks like a typo."""
+        if not isinstance(tool_name, str) or not tool_name:
+            return None
+        if not isinstance(exc, AELError) or exc.code != "TOOL_UNAVAILABLE":
+            return None
+        if self._tool_registry is None:
+            return None
+        try:
+            known = [t.name for t in self._tool_registry.list_tools()]
+        except Exception:
+            return None
+        if not known or tool_name in known:
+            return None
+        from difflib import get_close_matches
+
+        matches = get_close_matches(tool_name, known, n=1, cutoff=0.6)
+        return matches[0] if matches else None
+
+    def _annotate_template_error(
+        self,
+        exc: AELError,
+        *,
+        params: Any,
+        step_id: str,
+        step_outputs: dict[str, Any],
+    ) -> None:
+        """Locate the offending param leaf and attach a ``param_path`` to ``exc``.
+
+        The template engine raises with the failing variable already
+        attached as ``_template_variable``. We walk ``params`` looking
+        for the first string leaf that contains that variable inside a
+        ``{{ ... }}`` expression and record the dot/bracket path
+        (e.g. ``"headers.Authorization"`` or ``"items[0].name"``) used
+        downstream by ``_enrich_template_error`` to build a
+        ``suggested_fix``.
+        """
+        variable = getattr(exc, "_template_variable", None)
+        if not isinstance(variable, str):
+            return
+
+        from ploston_core.template.parser import extract_templates
+
+        def walk(value: Any, path: list[str]) -> str | None:
+            if isinstance(value, str) and "{{" in value:
+                for tmpl in extract_templates(value):
+                    head = tmpl.split("|", 1)[0].strip()
+                    if head == variable:
+                        return ".".join(path) if path else ""
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    found = walk(v, [*path, str(k)])
+                    if found is not None:
+                        return found
+            elif isinstance(value, list):
+                for i, item in enumerate(value):
+                    found = walk(item, [*path, f"[{i}]"])
+                    if found is not None:
+                        return found
+            return None
+
+        param_path = walk(params, [])
+        if param_path is not None:
+            exc._template_param_path = param_path  # type: ignore[attr-defined]
 
     async def _execute_tool_step(
         self,
@@ -647,8 +867,22 @@ class WorkflowEngine:
         # Use plugin params if provided, otherwise use step params
         params_to_render = plugin_params if plugin_params is not None else step.params
 
-        # Use render_params which handles nested dicts/lists and extracts .value
-        rendered_params = self._template_engine.render_params(params_to_render, template_context)
+        # Use render_params which handles nested dicts/lists and extracts .value.
+        # On TEMPLATE_ERROR, locate the offending param leaf and attach
+        # ``_template_metadata`` to the exception for P4d enrichment.
+        try:
+            rendered_params = self._template_engine.render_params(
+                params_to_render, template_context
+            )
+        except AELError as exc:
+            if exc.code == "TEMPLATE_ERROR":
+                self._annotate_template_error(
+                    exc,
+                    params=params_to_render,
+                    step_id=step.id,
+                    step_outputs=context.step_outputs,
+                )
+            raise
 
         # Get step config for timeout
         step_config = self._get_step_config(step, context.workflow)

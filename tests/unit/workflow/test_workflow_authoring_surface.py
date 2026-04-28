@@ -5,6 +5,9 @@ Covers:
 - S-278: workflow_call_tool (CT-01..CT-07)
 - S-279: workflow_tool_schema batch mode (TS-B01..TS-B04)
 - S-280: workflow_schema cleanup + not-found breadcrumb (CL-01..CL-06)
+- S-290: workflow_schema split into Tier 1 + on-demand sections (P2)
+- S-291: workflow_create + workflow_validate merge with draft_id (P3)
+- S-292: workflow_patch ``set`` op + version semantics + live-safety (P4a)
 """
 
 from __future__ import annotations
@@ -19,11 +22,18 @@ from ploston_core.errors import create_error
 from ploston_core.invoker.types import ToolCallResult
 from ploston_core.registry.types import ToolDefinition
 from ploston_core.types import ToolSource, ToolStatus
+from ploston_core.workflow.schema_generator import (
+    AVAILABLE_SECTIONS,
+    generate_section,
+    generate_tier1_schema,
+)
 from ploston_core.workflow.tools import (
     ALL_WORKFLOW_MGMT_TOOLS,
     WORKFLOW_CALL_TOOL_TOOL,
+    WORKFLOW_CREATE_TOOL,
     WORKFLOW_LIST_TOOLS_TOOL,
     WORKFLOW_MGMT_TOOL_NAMES,
+    WORKFLOW_SCHEMA_TOOL,
     WORKFLOW_TOOL_SCHEMA_TOOL,
     WorkflowToolsProvider,
 )
@@ -397,10 +407,15 @@ class TestSchemaCleanup:
 
     @pytest.mark.asyncio
     async def test_cl02_section_mode_untouched(self, provider):
-        """CL-02: section-mode path is untouched by the cleanup (Clar-1)."""
-        raw = await provider.call("workflow_schema", {"section": "steps"})
+        """CL-02: section-mode path returns the named section.
+
+        Updated for S-290 P2 — the canonical section names are now
+        sandbox_constraints, context_api, tool_steps, inputs, outputs,
+        defaults, packages, examples. ``steps`` was renamed to ``tool_steps``.
+        """
+        raw = await provider.call("workflow_schema", {"section": "tool_steps"})
         result = _parse(raw)
-        assert result["section"] == "steps"
+        assert result["section"] == "tool_steps"
         assert "schema" in result
 
     @pytest.mark.asyncio
@@ -516,3 +531,954 @@ class TestStructuredContentSpecCompliance:
                 f"{tool_name} declares outputSchema but the response is "
                 f"missing structuredContent — MCP -32600 regression."
             )
+
+
+# ── S-290: workflow_schema split into Tier 1 + on-demand sections ──
+# (P2 of the WORKFLOW_AUTHORING_DX_V2 spec.)
+
+
+class TestSchemaSplitTier1:
+    @pytest.mark.asyncio
+    async def test_schema_no_section_returns_tier1(self, provider):
+        """No-arg returns Tier 1 minimal schema, not the full dump."""
+        raw = await provider.call("workflow_schema", {})
+        result = _parse(raw)
+        assert result["tier"] == 1
+        assert "schema" in result
+        assert "fields" in result["schema"]
+        assert "step_types" in result["schema"]
+        # Old full-dump markers must be absent.
+        assert "code_steps" not in result["schema"]
+        assert "properties" not in result["schema"]
+        assert list(result["sections"]) == list(AVAILABLE_SECTIONS)
+
+    def test_tier1_under_2k_tokens(self):
+        """Rendered Tier 1 must stay under the spec budget (~2K tokens)."""
+        # Heuristic: 1 token ≈ 4 chars of UTF-8 prose. Cap at 8000 chars
+        # to leave headroom under the 2K-token spec budget.
+        rendered = json.dumps(generate_tier1_schema(), separators=(",", ":"))
+        char_count = len(rendered)
+        token_estimate = char_count // 4
+        assert token_estimate < 2000, (
+            f"Tier 1 schema is ~{token_estimate} tokens ({char_count} chars); spec budget is 2K."
+        )
+
+
+class TestSchemaSplitSections:
+    @pytest.mark.asyncio
+    async def test_schema_section_sandbox_constraints(self, provider):
+        raw = await provider.call("workflow_schema", {"section": "sandbox_constraints"})
+        result = _parse(raw)
+        assert result["section"] == "sandbox_constraints"
+        assert "allowed_imports" in result["schema"]
+
+    @pytest.mark.asyncio
+    async def test_schema_section_context_api(self, provider):
+        raw = await provider.call("workflow_schema", {"section": "context_api"})
+        result = _parse(raw)
+        assert result["section"] == "context_api"
+        assert "context_api" in result["schema"]
+
+    @pytest.mark.asyncio
+    async def test_schema_invalid_section_returns_available_sections(self, provider):
+        raw = await provider.call("workflow_schema", {"section": "nope"})
+        result = _parse(raw)
+        assert "error" in result
+        assert "Unknown section" in result["error"]
+        assert list(result["available_sections"]) == list(AVAILABLE_SECTIONS)
+
+    @pytest.mark.asyncio
+    async def test_section_response_lists_available_sections(self, provider):
+        """Every section response carries the available_sections breadcrumb."""
+        raw = await provider.call("workflow_schema", {"section": "tool_steps"})
+        result = _parse(raw)
+        assert list(result["available_sections"]) == list(AVAILABLE_SECTIONS)
+
+    def test_every_advertised_section_resolvable(self):
+        """Every name in AVAILABLE_SECTIONS must be resolvable by generate_section."""
+        for name in AVAILABLE_SECTIONS:
+            section = generate_section(name)
+            assert isinstance(section, dict) and section, (
+                f"section {name!r} must return a non-empty dict"
+            )
+
+    def test_unknown_section_raises_keyerror(self):
+        with pytest.raises(KeyError):
+            generate_section("nope")
+
+
+class TestSchemaSplitToolDescriptions:
+    def test_workflow_create_description_embeds_tier1(self):
+        """workflow_create tool description must contain the Tier 1 cheatsheet."""
+        desc = WORKFLOW_CREATE_TOOL["description"]
+        assert "YAML schema (Tier 1):" in desc
+        assert "tool_step:" in desc
+        assert "code_step:" in desc
+        assert "Templates:" in desc
+        assert "workflow_schema(section=" in desc
+
+    def test_workflow_schema_description_lists_sections(self):
+        desc = WORKFLOW_SCHEMA_TOOL["description"]
+        for name in ("sandbox_constraints", "context_api", "tool_steps"):
+            assert name in desc
+
+    def test_section_param_enum_matches_available_sections(self):
+        """The inputSchema enum must match the canonical section list."""
+        enum = WORKFLOW_SCHEMA_TOOL["inputSchema"]["properties"]["section"]["enum"]
+        assert list(enum) == list(AVAILABLE_SECTIONS)
+
+
+# ── S-291 (P3): workflow_create + workflow_validate merge ──────────
+# (P3 of the WORKFLOW_AUTHORING_DX_V2 spec.)
+
+
+@pytest.fixture
+def real_tool_registry():
+    """ToolRegistry mock with an ``echo`` tool on ``system`` — exposed via
+    the public surface used by both the WorkflowValidator (``list_tools``,
+    ``get_tool``) and WorkflowToolsProvider._build_available_tools."""
+    from ploston_core.registry.types import ToolDefinition
+    from ploston_core.types import ToolSource, ToolStatus
+
+    echo = ToolDefinition(
+        name="echo",
+        description="Echo a message back.",
+        source=ToolSource.SYSTEM,
+        server_name="system",
+        input_schema={
+            "type": "object",
+            "required": ["message"],
+            "properties": {"message": {"type": "string"}},
+        },
+        status=ToolStatus.AVAILABLE,
+    )
+    tr = MagicMock()
+    tr.get_tool.return_value = MagicMock()
+    tr.get.return_value = None
+    tr.list_tools.return_value = [echo]
+    return tr
+
+
+@pytest.fixture
+def real_registry(tmp_path, real_tool_registry):
+    """A real WorkflowRegistry backed by tmp_path."""
+    from ploston_core.workflow.registry import WorkflowRegistry
+
+    config = MagicMock()
+    config.directory = str(tmp_path / "workflows")
+    config.draft_ttl_seconds = 1800
+    return WorkflowRegistry(real_tool_registry, config)
+
+
+@pytest.fixture
+def real_provider(real_registry, real_tool_registry):
+    return WorkflowToolsProvider(
+        workflow_registry=real_registry,
+        tool_registry=real_tool_registry,
+    )
+
+
+_VALID_YAML = (
+    "name: dx_p3_valid\n"
+    'version: "1.0.0"\n'
+    "description: A valid workflow used for S-291 P3 round-trip tests.\n"
+    "steps:\n"
+    "  - id: greet\n"
+    "    tool: echo\n"
+    "    mcp: system\n"
+    "    params:\n"
+    "      message: hi\n"
+)
+
+_INVALID_TOOL_YAML = (
+    "name: dx_p3_bad_tool\n"
+    'version: "1.0.0"\n'
+    "description: Step references a tool that does not exist.\n"
+    "steps:\n"
+    "  - id: greet\n"
+    "    tool: ehco\n"
+    "    mcp: system\n"
+    "    params:\n"
+    "      message: hi\n"
+)
+
+_RETURN_IN_CODE_YAML = (
+    "name: dx_p3_return\n"
+    'version: "1.0.0"\n'
+    "description: Code step that uses 'return' instead of 'result ='.\n"
+    "steps:\n"
+    "  - id: compute\n"
+    "    code: |\n"
+    "      x = 1 + 1\n"
+    "      return {'x': x}\n"
+)
+
+
+class TestWorkflowCreateDraftFlow:
+    """workflow_create now produces drafts on validation failure (S-291 P3)."""
+
+    @pytest.mark.asyncio
+    async def test_valid_workflow_returns_created(self, real_provider):
+        raw = await real_provider.call("workflow_create", {"yaml_content": _VALID_YAML})
+        result = _parse(raw)
+        assert result["status"] == "created"
+        assert result["name"] == "dx_p3_valid"
+        # No draft is stashed on success — draft_id may be omitted or null.
+        assert result.get("draft_id") in (None, "")
+        # Validation block is included even on success.
+        assert result["validation"]["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_dry_run_valid_no_side_effects(self, real_registry, real_provider):
+        """dry_run=true validates without registering or creating a draft."""
+        raw = await real_provider.call(
+            "workflow_create", {"yaml_content": _VALID_YAML, "dry_run": True}
+        )
+        result = _parse(raw)
+        assert result["validation"]["valid"] is True
+        # Workflow must NOT be registered.
+        assert real_registry.get("dx_p3_valid") is None
+        # No draft should be created for valid+dry_run.
+        assert result.get("draft_id") in (None, "")
+
+    @pytest.mark.asyncio
+    async def test_invalid_tool_returns_draft_with_id(self, real_registry, real_provider):
+        raw = await real_provider.call("workflow_create", {"yaml_content": _INVALID_TOOL_YAML})
+        result = _parse(raw)
+        assert result["status"] == "draft"
+        assert result["validation"]["valid"] is False
+        assert isinstance(result.get("draft_id"), str) and result["draft_id"]
+        # The workflow must NOT be registered.
+        assert real_registry.get("dx_p3_bad_tool") is None
+        # The draft must be retrievable via the store.
+        entry = real_registry.draft_store.get(result["draft_id"])
+        assert entry is not None
+        assert entry.yaml_content == _INVALID_TOOL_YAML
+
+    @pytest.mark.asyncio
+    async def test_return_in_code_step_caught_statically(self, real_provider):
+        raw = await real_provider.call("workflow_create", {"yaml_content": _RETURN_IN_CODE_YAML})
+        result = _parse(raw)
+        assert result["status"] == "draft"
+        errors = result["validation"]["errors"]
+        return_errors = [
+            e for e in errors if "return" in e["message"].lower() or e.get("kind") == "code_return"
+        ]
+        assert return_errors, f"expected a return-in-code error; got {errors}"
+
+    @pytest.mark.asyncio
+    async def test_suggested_fix_for_unknown_tool(self, real_provider):
+        raw = await real_provider.call("workflow_create", {"yaml_content": _INVALID_TOOL_YAML})
+        result = _parse(raw)
+        errors = result["validation"]["errors"]
+        # The unknown-tool error must carry a fuzzy-matched suggested_fix.
+        unknown_tool_errors = [e for e in errors if e["path"].endswith(".tool")]
+        assert unknown_tool_errors, f"expected an unknown-tool error; got {errors}"
+        fix = unknown_tool_errors[0].get("suggested_fix")
+        assert fix and fix.get("op") == "set"
+        assert fix.get("value") == "echo"
+
+
+class TestWorkflowPatchDraftRoundtrip:
+    """End-to-end: invalid YAML → draft_id → workflow_patch → success (S-291 P3)."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_roundtrip_via_draft(self, real_registry, real_provider):
+        # 1. Submit invalid YAML, receive draft_id.
+        raw = await real_provider.call("workflow_create", {"yaml_content": _INVALID_TOOL_YAML})
+        created = _parse(raw)
+        assert created["status"] == "draft"
+        draft_id = created["draft_id"]
+        assert draft_id
+
+        # 2. Apply the suggested_fix via workflow_patch on the draft.
+        unknown_tool_errors = [
+            e for e in created["validation"]["errors"] if e["path"].endswith(".tool")
+        ]
+        fix = unknown_tool_errors[0]["suggested_fix"]
+
+        patch_raw = await real_provider.call(
+            "workflow_patch",
+            {"draft_id": draft_id, "operations": [fix]},
+        )
+        patched = _parse(patch_raw)
+
+        # 3. After applying the fix, the workflow should validate and register.
+        assert patched["status"] == "patched", f"expected status='patched', got {patched}"
+        assert real_registry.get("dx_p3_bad_tool") is not None
+
+
+class TestWorkflowValidateAlias:
+    """workflow_validate is now a deprecated thin alias (S-291 P3)."""
+
+    @pytest.mark.asyncio
+    async def test_validate_alias_returns_validation_block(self, real_registry, real_provider):
+        raw = await real_provider.call("workflow_validate", {"yaml_content": _INVALID_TOOL_YAML})
+        result = _parse(raw)
+        # The alias adapts back to the legacy ``{valid, errors, warnings}``
+        # shape for backwards compatibility, but it goes through
+        # ``workflow_create(dry_run=True)`` under the hood — so no
+        # registration happens.
+        assert result["valid"] is False
+        assert isinstance(result["errors"], list) and result["errors"]
+        assert real_registry.get("dx_p3_bad_tool") is None
+
+    def test_validate_tool_description_advertises_deprecation(self):
+        from ploston_core.workflow.tools import WORKFLOW_VALIDATE_TOOL
+
+        desc = WORKFLOW_VALIDATE_TOOL["description"]
+        assert "deprecated" in desc.lower()
+        # Must point agents at the unified entry point.
+        assert "workflow_create" in desc
+
+
+_LIVE_YAML_FOR_PATCH = (
+    "name: dx_p4a_live\n"
+    'version: "1.0.0"\n'
+    "description: Live workflow used to exercise patch ops + version semantics.\n"
+    "inputs:\n"
+    "  - name: lookback\n"
+    "    type: integer\n"
+    "    default: 10\n"
+    "steps:\n"
+    "  - id: greet\n"
+    "    tool: echo\n"
+    "    mcp: system\n"
+    "    params:\n"
+    "      message: hi\n"
+)
+
+
+class TestWorkflowPatchSetOpAndVersionSemantics:
+    """workflow_patch ``set`` op + previous_version + live-safety (S-292 P4a)."""
+
+    @pytest.mark.asyncio
+    async def test_set_op_on_input_default_promotes_with_previous_version(self, real_provider):
+        raw_create = await real_provider.call(
+            "workflow_create", {"yaml_content": _LIVE_YAML_FOR_PATCH}
+        )
+        assert _parse(raw_create)["status"] == "created"
+
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4a_live",
+                "version": "1.0.1",
+                "operations": [{"op": "set", "path": "inputs.lookback.default", "value": 25}],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+        assert result["version"] == "1.0.1"
+        assert result["previous_version"] == "1.0.0"
+        assert result["patches_applied"] == 1
+        assert result["validation"]["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_same_version_rejected_for_live_patch(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _LIVE_YAML_FOR_PATCH})
+
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_p4a_live",
+                    "version": "1.0.0",  # same as current
+                    "operations": [{"op": "set", "path": "inputs.lookback.default", "value": 5}],
+                },
+            )
+        # ``detail`` carries the human message; ``str()`` returns the
+        # short ``message`` only, so look at the structured detail field.
+        assert "must differ" in (exc_info.value.detail or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_failed_live_patch_keeps_live_unchanged_creates_draft(
+        self, real_registry, real_provider
+    ):
+        await real_provider.call("workflow_create", {"yaml_content": _LIVE_YAML_FOR_PATCH})
+
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4a_live",
+                "version": "1.0.1",
+                # Set an unknown tool — validation will fail.
+                "operations": [{"op": "set", "path": "steps.greet.tool", "value": "no_such_tool"}],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "draft"
+        assert result["live_workflow_unchanged"] is True
+        assert result["draft_id"]
+        # The live registered workflow was never touched.
+        live = real_registry.get("dx_p4a_live")
+        assert live is not None
+        assert live.version == "1.0.0"
+
+    @pytest.mark.asyncio
+    async def test_set_op_on_step_param_succeeds(self, real_provider):
+        await real_provider.call("workflow_create", {"yaml_content": _LIVE_YAML_FOR_PATCH})
+
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4a_live",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "set",
+                        "path": "steps.greet.params.message",
+                        "value": "hello world",
+                    }
+                ],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+        assert result["previous_version"] == "1.0.0"
+
+
+_TWO_STEP_YAML = (
+    "name: dx_p4b_two\n"
+    'version: "1.0.0"\n'
+    "description: Two-step workflow used for add_step/remove_step coverage.\n"
+    "steps:\n"
+    "  - id: fetch\n"
+    "    tool: echo\n"
+    "    mcp: system\n"
+    "    params:\n"
+    "      message: fetch\n"
+    "  - id: greet\n"
+    "    tool: echo\n"
+    "    mcp: system\n"
+    "    params:\n"
+    "      message: hi\n"
+)
+
+
+class TestWorkflowPatchAddRemoveStep:
+    """workflow_patch ``add_step``/``remove_step`` ops (S-292 P4b)."""
+
+    @pytest.mark.asyncio
+    async def test_add_step_after_existing_step_inserts_at_position(self, real_provider):
+        await real_provider.call("workflow_create", {"yaml_content": _TWO_STEP_YAML})
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4b_two",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "add_step",
+                        "after": "fetch",
+                        "step": {
+                            "id": "between",
+                            "tool": "echo",
+                            "mcp": "system",
+                            "params": {"message": "between"},
+                        },
+                    }
+                ],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+        # The patch tool description in tool_preview should reveal three
+        # steps now — but at minimum the response should validate cleanly.
+        assert result["validation"]["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_add_step_missing_id_rejected(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _TWO_STEP_YAML})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_p4b_two",
+                    "version": "1.0.1",
+                    "operations": [
+                        {
+                            "op": "add_step",
+                            "after": "fetch",
+                            "step": {"tool": "echo", "mcp": "system"},
+                        }
+                    ],
+                },
+            )
+        assert "id" in (exc_info.value.detail or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_remove_step_with_no_dependents_succeeds(self, real_provider):
+        await real_provider.call("workflow_create", {"yaml_content": _TWO_STEP_YAML})
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4b_two",
+                "version": "1.0.1",
+                "operations": [{"op": "remove_step", "step_id": "greet"}],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+        assert result["previous_version"] == "1.0.0"
+
+    @pytest.mark.asyncio
+    async def test_max_patches_per_call_enforced(self, real_provider):
+        from ploston_core.errors import AELError
+
+        # Hard-cap the registry config to a small number; the fixture
+        # provides a MagicMock so we can stomp this directly.
+        real_provider._registry._config.max_patches_per_call = 3
+        await real_provider.call("workflow_create", {"yaml_content": _TWO_STEP_YAML})
+        ops = [
+            {
+                "op": "set",
+                "path": "steps.greet.params.message",
+                "value": f"v{i}",
+            }
+            for i in range(5)
+        ]
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_p4b_two",
+                    "version": "1.0.1",
+                    "operations": ops,
+                },
+            )
+        detail = (exc_info.value.detail or "").lower()
+        assert "too many" in detail
+        assert "max 3" in detail
+
+    @pytest.mark.asyncio
+    async def test_remove_step_with_dependents_rejected(self, real_provider):
+        from ploston_core.errors import AELError
+
+        yaml_with_deps = (
+            "name: dx_p4b_deps\n"
+            'version: "1.0.0"\n'
+            "description: Two-step workflow where greet depends on fetch.\n"
+            "steps:\n"
+            "  - id: fetch\n"
+            "    tool: echo\n"
+            "    mcp: system\n"
+            "    params:\n"
+            "      message: fetch\n"
+            "  - id: greet\n"
+            "    tool: echo\n"
+            "    mcp: system\n"
+            "    depends_on: [fetch]\n"
+            "    params:\n"
+            "      message: hi\n"
+        )
+        await real_provider.call("workflow_create", {"yaml_content": yaml_with_deps})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_p4b_deps",
+                    "version": "1.0.1",
+                    "operations": [{"op": "remove_step", "step_id": "fetch"}],
+                },
+            )
+        detail = (exc_info.value.detail or "").lower()
+        assert "depends_on" in detail
+        assert "greet" in detail
+
+
+# ── S-291 (P3): per-error-type roundtrip coverage ─────────────────
+# Spec §"Unit roundtrip per error type (12 tests)" — induce each
+# catalog error, take the response's ``suggested_fix`` (or assert
+# ``requires_agent_decision``), apply via ``workflow_patch`` on the
+# returned ``draft_id``, and verify the error is resolved.
+
+
+@pytest.fixture
+def strict_tool_registry():
+    """Tool registry whose ``list_tools(server_name=…)`` filters by mcp.
+
+    Required so the validator can produce ``unknown_mcp`` errors —
+    the simpler ``real_tool_registry`` returns the same tool list for
+    any server name and so masks server-not-found cases.
+    """
+    from ploston_core.registry.types import ToolDefinition
+    from ploston_core.types import ToolSource, ToolStatus
+
+    echo = ToolDefinition(
+        name="echo",
+        description="Echo a message back.",
+        source=ToolSource.SYSTEM,
+        server_name="system",
+        input_schema={"type": "object", "properties": {"message": {"type": "string"}}},
+        status=ToolStatus.AVAILABLE,
+    )
+    tr = MagicMock()
+    tr.get_tool.return_value = MagicMock()
+    tr.get.return_value = None
+
+    def _list(server_name: str | None = None):
+        if server_name in (None, "system"):
+            return [echo]
+        return []
+
+    tr.list_tools.side_effect = _list
+    return tr
+
+
+@pytest.fixture
+def strict_registry(tmp_path, strict_tool_registry):
+    from ploston_core.workflow.registry import WorkflowRegistry
+
+    config = MagicMock()
+    config.directory = str(tmp_path / "workflows")
+    config.draft_ttl_seconds = 1800
+    return WorkflowRegistry(strict_tool_registry, config)
+
+
+@pytest.fixture
+def strict_provider(strict_registry, strict_tool_registry):
+    return WorkflowToolsProvider(
+        workflow_registry=strict_registry,
+        tool_registry=strict_tool_registry,
+    )
+
+
+def _find_error(errors: list[dict], **predicates) -> dict | None:
+    """Return the first error whose fields match all ``predicates``."""
+    for e in errors:
+        if all(e.get(k) == v for k, v in predicates.items()):
+            return e
+    return None
+
+
+async def _create_and_get_errors(provider, yaml: str) -> tuple[str | None, list[dict]]:
+    raw = await provider.call("workflow_create", {"yaml_content": yaml})
+    body = _parse(raw)
+    return body.get("draft_id"), body.get("validation", {}).get("errors", [])
+
+
+async def _apply_fix(provider, draft_id: str, fix: dict) -> dict:
+    raw = await provider.call("workflow_patch", {"draft_id": draft_id, "operations": [fix]})
+    return _parse(raw)
+
+
+class TestWorkflowAuthoringRoundtrips:
+    """12 per-error-type roundtrip tests (spec §S-291 P3)."""
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_unknown_tool(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_unk_tool\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    tool: ehco\n    mcp: system\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.tool")
+        assert err and err["suggested_fix"]["value"] == "echo"
+
+        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_unk_tool") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_unknown_mcp(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_unk_mcp\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    tool: echo\n    mcp: systom\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.mcp")
+        assert err and err["suggested_fix"]["value"] == "system"
+
+        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_unk_mcp") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_return_in_code(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_return\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    code: |\n      x = 1\n      return {'x': x}\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.code")
+        assert err and err["suggested_fix"]["op"] == "replace"
+        assert "result =" in err["suggested_fix"]["new"]
+
+        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_return") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_forbidden_import(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_forb_imp\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    code: |\n      import socket\n      result = 1\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.code")
+        # ``forbidden_import`` is deterministic — the suggested_fix removes
+        # the offending line.
+        assert err and err["suggested_fix"]["op"] == "replace"
+        assert err["suggested_fix"]["new"] == ""
+
+        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_forb_imp") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_forbidden_builtin(self, strict_provider):
+        yaml = (
+            'name: rt_forb_bi\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    code: |\n      result = eval('1')\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.code")
+        # ``forbidden_builtin`` has no deterministic fix — agent must
+        # rewrite the expression. Verify the response signals that.
+        assert err and err["suggested_fix"] is None
+        assert err["requires_agent_decision"] is True
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_missing_field(self, strict_provider):
+        # Missing top-level ``name`` surfaces as a parse error — the
+        # spec catalog's missing_required path. Agents must supply the
+        # field; the response flags requires_agent_decision.
+        yaml = (
+            'version: "1.0.0"\ndescription: x\nsteps:\n  - id: a\n    tool: echo\n    mcp: system\n'
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="yaml")
+        assert err and err["requires_agent_decision"] is True
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_invalid_type(self, strict_provider):
+        # ``steps`` must be a list — string here exercises the parse
+        # path with a different error class than missing_field.
+        yaml = 'name: rt_bad_type\nversion: "1.0.0"\ndescription: x\nsteps: notalist\n'
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="yaml")
+        assert err and err["requires_agent_decision"] is True
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_template_unknown_step(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_tmpl_step\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n"
+            "  - id: a\n    tool: echo\n    mcp: system\n    params:\n      m: hi\n"
+            "  - id: b\n    tool: echo\n    mcp: system\n    depends_on: [a]\n"
+            '    params:\n      m: "{{ steps.aa.output }}"\n'
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.b.params")
+        assert err and "alternatives" in err and err["alternatives"] == ["a"]
+        assert err["requires_agent_decision"] is True
+
+        # The agent applies the resolution by editing the param value
+        # directly — workflow_patch ``set`` of the param.
+        fix = {
+            "op": "set",
+            "path": "steps.b.params.m",
+            "value": "{{ steps.a.output }}",
+        }
+        result = await _apply_fix(strict_provider, draft_id, fix)
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_tmpl_step") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_template_unknown_input(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_tmpl_inp\nversion: "1.0.0"\ndescription: x\n'
+            "inputs:\n  - name:\n      type: string\n      required: true\n"
+            "steps:\n  - id: a\n    tool: echo\n    mcp: system\n    params:\n"
+            '      m: "{{ inputs.namee }}"\n'
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.params")
+        assert err and err["alternatives"] == ["name"]
+        assert err["requires_agent_decision"] is True
+
+        fix = {
+            "op": "set",
+            "path": "steps.a.params.m",
+            "value": "{{ inputs.name }}",
+        }
+        result = await _apply_fix(strict_provider, draft_id, fix)
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_tmpl_inp") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_duplicate_step_id(self, strict_provider):
+        yaml = (
+            'name: rt_dup\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n"
+            "  - id: a\n    tool: echo\n    mcp: system\n"
+            "  - id: a\n    tool: echo\n    mcp: system\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps")
+        assert err and err["requires_agent_decision"] is True
+        assert err.get("current_value") == "a"
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_bad_depends_on(self, strict_provider, strict_registry):
+        yaml = (
+            'name: rt_bad_dep\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    tool: echo\n    mcp: system\n"
+            "    depends_on: [missing]\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="steps.a.depends_on")
+        assert err and err["suggested_fix"]["op"] == "set"
+        assert err["suggested_fix"]["value"] == []
+
+        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
+        assert result["status"] == "patched"
+        assert strict_registry.get("rt_bad_dep") is not None
+
+    @pytest.mark.asyncio
+    async def test_roundtrip_reserved_input_name(self, strict_provider):
+        yaml = (
+            'name: rt_resv\nversion: "1.0.0"\ndescription: x\n'
+            "inputs:\n  - context:\n      type: string\n"
+            "steps:\n  - id: a\n    tool: echo\n    mcp: system\n"
+        )
+        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
+        assert draft_id
+        err = _find_error(errors, path="inputs.context")
+        # ``reserved_input_name`` collisions need the agent to choose a
+        # new name — no deterministic fix.
+        assert err and err["requires_agent_decision"] is True
+        assert err["suggested_fix"] is None
+
+
+class _FakeInstrument:
+    """Records ``add``/``record`` calls for assertion in tests."""
+
+    def __init__(self, name: str, kind: str) -> None:
+        self.name = name
+        self.kind = kind
+        self.calls: list[tuple[float, dict]] = []
+
+    def add(self, amount: float, attributes: dict | None = None) -> None:
+        self.calls.append((amount, dict(attributes or {})))
+
+    def record(self, amount: float, attributes: dict | None = None) -> None:
+        self.calls.append((amount, dict(attributes or {})))
+
+
+class _FakeMeter:
+    """Minimal meter that returns ``_FakeInstrument`` for both kinds."""
+
+    def __init__(self) -> None:
+        self.instruments: dict[str, _FakeInstrument] = {}
+
+    def create_counter(self, *, name: str, **_: object) -> _FakeInstrument:
+        inst = _FakeInstrument(name, "counter")
+        self.instruments[name] = inst
+        return inst
+
+    def create_histogram(self, *, name: str, **_: object) -> _FakeInstrument:
+        inst = _FakeInstrument(name, "histogram")
+        self.instruments[name] = inst
+        return inst
+
+
+class TestAuthoringMetrics:
+    """M-081 Measurement Plan: six OTel meters on WorkflowToolsProvider."""
+
+    @pytest.fixture
+    def metered_provider(self, strict_provider):
+        meter = _FakeMeter()
+        strict_provider.set_meter(meter)
+        return strict_provider, meter
+
+    def test_six_instruments_registered(self, metered_provider):
+        _, meter = metered_provider
+        assert "ploston_workflow_schema_response_bytes" in meter.instruments
+        assert "ploston_workflow_create_roundtrips_total" in meter.instruments
+        assert "ploston_workflow_patch_calls_total" in meter.instruments
+        assert "ploston_draft_created_total" in meter.instruments
+        assert "ploston_draft_promoted_total" in meter.instruments
+        assert "ploston_suggested_fix_accepted_total" in meter.instruments
+        assert "ploston_suggested_fix_rejected_total" in meter.instruments
+
+    @pytest.mark.asyncio
+    async def test_schema_handler_records_response_bytes(self, metered_provider):
+        provider, meter = metered_provider
+        # Tier 1 (no section)
+        await provider._handle_schema({})
+        bytes_inst = meter.instruments["ploston_workflow_schema_response_bytes"]
+        assert len(bytes_inst.calls) == 1
+        size, attrs = bytes_inst.calls[0]
+        assert size > 0
+        assert attrs == {"section": "tier1"}
+
+        # Specific section
+        section = next(iter(AVAILABLE_SECTIONS))
+        await provider._handle_schema({"section": section})
+        assert len(bytes_inst.calls) == 2
+        _, attrs2 = bytes_inst.calls[1]
+        assert attrs2 == {"section": section}
+
+    @pytest.mark.asyncio
+    async def test_create_records_roundtrip_and_draft(self, metered_provider):
+        provider, meter = metered_provider
+        # Invalid YAML produces draft + create roundtrip.
+        bad_yaml = 'name: bad\nversion: "1.0.0"\nsteps: notalist\n'
+        await provider._handle_create({"yaml_content": bad_yaml})
+        rt = meter.instruments["ploston_workflow_create_roundtrips_total"]
+        drafts = meter.instruments["ploston_draft_created_total"]
+        assert len(rt.calls) == 1
+        assert rt.calls[0][1] == {"status": "draft"}
+        assert len(drafts.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_patch_records_promotion(self, metered_provider):
+        provider, meter = metered_provider
+        # Create an invalid YAML, then patch it to promote.
+        bad_yaml = (
+            'name: rt_metrics\nversion: "1.0.0"\ndescription: x\n'
+            "steps:\n  - id: a\n    tool: nope\n    mcp: system\n"
+        )
+        create_resp = await provider._handle_create({"yaml_content": bad_yaml})
+        draft_id = create_resp["draft_id"]
+        # Patch with a valid tool name to promote.
+        await provider._handle_patch(
+            {
+                "draft_id": draft_id,
+                "operations": [{"op": "set", "path": "steps.a.tool", "value": "echo"}],
+            }
+        )
+        patch_calls = meter.instruments["ploston_workflow_patch_calls_total"]
+        promoted = meter.instruments["ploston_draft_promoted_total"]
+        assert len(patch_calls.calls) == 1
+        assert patch_calls.calls[0][1] == {"target": "draft", "status": "patched"}
+        assert len(promoted.calls) == 1
+
+    def test_no_meter_is_noop(self, strict_provider):
+        # No set_meter call → recording is silent; no exception.
+        am = strict_provider._authoring_metrics
+        am.record_schema_response_bytes(100)
+        am.record_workflow_create(status="created")
+        am.record_workflow_patch(target="live", status="patched")
+        am.record_draft_created()
+        am.record_draft_promoted()
+        am.record_suggested_fix(accepted=True, kind="x")
+        am.record_suggested_fix(accepted=False, kind="x")
+        assert am.is_enabled is False

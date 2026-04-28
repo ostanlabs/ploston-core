@@ -3,6 +3,11 @@
 Generates a JSON Schema description of the workflow YAML format
 by introspecting the actual dataclass definitions. This ensures
 the schema is always in sync with the parser (single source of truth).
+
+S-290 P2: schema is split into a small Tier 1 minimal schema (embedded in
+the workflow_create tool description) and on-demand sections fetched via
+workflow_schema(section=...). The full dump is still available through
+``generate_workflow_schema()`` for backward compatibility.
 """
 
 import dataclasses
@@ -22,6 +27,19 @@ from .types import (
 
 # Fields that are internal (not part of the YAML surface)
 _INTERNAL_FIELDS = {"source_path", "yaml_content"}
+
+# S-290 P2: canonical section names exposed via workflow_schema(section=...).
+# Order matters — used as the deterministic "available_sections" listing.
+AVAILABLE_SECTIONS: tuple[str, ...] = (
+    "sandbox_constraints",
+    "context_api",
+    "tool_steps",
+    "inputs",
+    "outputs",
+    "defaults",
+    "packages",
+    "examples",
+)
 
 
 def _python_type_to_json_schema(type_hint: Any) -> dict[str, Any]:
@@ -302,7 +320,9 @@ def generate_workflow_schema() -> dict[str, Any]:
             "context.config": ("dict — workflow-level config values."),
             "context.tools.call('tool_name', {...})": (
                 "Call a registered tool from within a code step by full canonical name. "
-                "Returns the tool's output directly. "
+                "Returns the tool's normalized output — same shape a tool step would "
+                "produce (transport envelope removed). On a transport-level error "
+                "raises ToolError (pre-injected; no import needed). "
                 "Max 10 calls per step. "
                 "python_exec cannot call itself (recursion prevention)."
             ),
@@ -310,7 +330,15 @@ def generate_workflow_schema() -> dict[str, Any]:
                 "Call a tool by MCP server name and bare tool name. "
                 "Runner is resolved implicitly from the bridge context — "
                 "same resolution rules as tool steps. "
+                "Returns normalized output; raises ToolError on transport errors. "
                 "Preferred over call() for portable workflows."
+            ),
+            "ToolError": (
+                "Exception raised by call()/call_mcp() when a tool returns a "
+                'transport-level error envelope ({"content": ..., "error": <msg>}). '
+                "Pre-injected into the sandbox scope — use without import: "
+                "`try: data = await context.tools.call_mcp(...) except ToolError as e: ...`. "
+                "Attributes: e.message (str), e.tool (str|None), e.mcp (str|None)."
             ),
             "context.tools.call_mcp_loop_example": (
                 "# Fan-out over a list (foreach not yet available — use a code step loop)\n"
@@ -562,3 +590,129 @@ outputs:
   result:
     from: steps.transform.output
 """
+
+
+# ─────────────────────────────────────────────────────────────────
+# S-290 P2: Tier 1 minimal schema + on-demand section accessors
+# ─────────────────────────────────────────────────────────────────
+
+
+def generate_tier1_schema() -> dict[str, Any]:
+    """Return the minimal schema (Tier 1) suitable for embedding in tool
+    descriptions and as the default ``workflow_schema()`` no-arg response.
+
+    Includes only what an agent needs to author a basic workflow:
+        - YAML field names and types (top-level: name, version, description,
+          inputs, steps, outputs, defaults, packages)
+        - Step types (tool+mcp / code) and the ``result`` assignment rule
+        - Template syntax
+        - A pointer to ``workflow_schema(section=...)`` for deeper detail
+
+    Target size: under 2K tokens (~6KB UTF-8). Enforced by
+    ``test_tier1_under_2k_tokens``.
+    """
+    return {
+        "fields": {
+            "name": "string — workflow identifier (dashes auto-replaced with underscores)",
+            "version": 'string — semver, e.g. "1.0.0"',
+            "description": "string — public tool description shown in tools/list",
+            "inputs": "list — workflow inputs (string shorthand or full dict form)",
+            "steps": "list — ordered workflow steps (tool steps or code steps)",
+            "outputs": "dict or list — workflow outputs",
+            "defaults": "dict — optional defaults (timeout, on_error, retry, runner)",
+            "packages": "dict — optional package profile + extras for code steps",
+        },
+        "step_types": {
+            "tool_step": (
+                "Use 'tool' + 'mcp' fields. Example:\n"
+                "  - id: fetch\n"
+                "    tool: list_workflow_runs\n"
+                "    mcp: github\n"
+                "    params:\n"
+                '      owner: "{{ inputs.owner }}"'
+            ),
+            "code_step": (
+                "Use 'code' field. Assign to 'result' to set output. "
+                "Do NOT use 'return' (SyntaxError at top level of exec). Example:\n"
+                "  - id: transform\n"
+                "    code: |\n"
+                "      data = context.steps['fetch'].output\n"
+                "      result = {'count': len(data)}\n"
+                "    depends_on: [fetch]"
+            ),
+        },
+        "template_syntax": (
+            "Use {{ }} in step params: "
+            "{{ inputs.x }}, {{ steps.id.output }}, {{ steps.id.output.key }}"
+        ),
+        "input_shorthand": (
+            "- url               # required string\n"
+            "- topic: events     # optional, default 'events'\n"
+            "- url: {type: string, required: true, description: '...'}"
+        ),
+        "output_syntax": ("outputs:\n  result:\n    from: steps.transform.output"),
+        "more_detail": (
+            f"Call workflow_schema(section=NAME) for: {', '.join(AVAILABLE_SECTIONS)}."
+        ),
+    }
+
+
+def _build_section(name: str, full_schema: dict[str, Any]) -> dict[str, Any]:
+    """Extract a single section from the full schema dump.
+
+    Internal helper for ``generate_section()``. Maps a canonical section
+    name (see ``AVAILABLE_SECTIONS``) to the corresponding sub-tree of the
+    full schema produced by ``generate_workflow_schema()``.
+    """
+    if name == "sandbox_constraints":
+        return dict(full_schema["code_steps"]["sandbox_constraints"])
+    if name == "context_api":
+        # Pack context_api together with the related code-step authoring
+        # guidance: import notes, common patterns, anti-patterns, and the
+        # short example. ToolError is documented as a context_api entry.
+        cs = full_schema["code_steps"]
+        return {
+            "context_api": cs["context_api"],
+            "import_notes": cs.get("import_notes", {}),
+            "common_patterns": cs.get("common_patterns", {}),
+            "anti_patterns": cs.get("anti_patterns", []),
+            "example": cs.get("example", ""),
+            "output": cs.get("output", ""),
+        }
+    if name == "tool_steps":
+        return dict(full_schema["tool_steps"])
+    if name == "inputs":
+        return dict(full_schema["properties"]["inputs"])
+    if name == "outputs":
+        return dict(full_schema["properties"]["outputs"])
+    if name == "defaults":
+        return dict(full_schema["properties"]["defaults"])
+    if name == "packages":
+        return dict(full_schema["properties"]["packages"])
+    if name == "examples":
+        return {
+            "workflow_example": full_schema.get("example", ""),
+            "code_step_example": full_schema["code_steps"].get("example", ""),
+            "common_patterns": full_schema["code_steps"].get("common_patterns", {}),
+            "anti_patterns": full_schema["code_steps"].get("anti_patterns", []),
+            "template_syntax": full_schema.get("template_syntax", {}),
+        }
+    raise KeyError(name)
+
+
+def generate_section(name: str) -> dict[str, Any]:
+    """Return a single named section of the workflow schema.
+
+    Args:
+        name: Canonical section name (must be in ``AVAILABLE_SECTIONS``).
+
+    Returns:
+        The schema fragment for the requested section.
+
+    Raises:
+        KeyError: If ``name`` is not a recognized section.
+    """
+    if name not in AVAILABLE_SECTIONS:
+        raise KeyError(name)
+    full = generate_workflow_schema()
+    return _build_section(name, full)

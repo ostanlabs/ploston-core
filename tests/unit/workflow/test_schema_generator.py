@@ -241,18 +241,30 @@ class TestSchemaGeneratorCodeSteps:
         assert "return" in combined
 
     def test_workflow_schema_tool_returns_code_steps(self):
-        """workflow_validate MCP tool response must include code_steps.
+        """code_steps content must be reachable via workflow_schema MCP tool.
 
-        This verifies the schema flows through to what the agent actually
-        receives when calling workflow_schema via MCP.
+        S-290 P2: code_steps is no longer in the default no-arg response
+        (Tier 1 minimal schema). Agents reach the sandbox_constraints and
+        context_api content via ``workflow_schema(section=...)``. This test
+        verifies both routes flow through the MCP tool path.
         """
         from ploston_core.workflow.tools import WorkflowToolsProvider
 
         provider = WorkflowToolsProvider(MagicMock())
-        result = asyncio.run(provider.call("workflow_schema", {}))
-        schema_str = result["content"][0]["text"]
-        schema = json.loads(schema_str)
-        assert "code_steps" in schema["schema"]
+
+        # context_api section → must include the context.* surface
+        ctx_result = asyncio.run(provider.call("workflow_schema", {"section": "context_api"}))
+        ctx_schema = json.loads(ctx_result["content"][0]["text"])
+        assert ctx_schema["section"] == "context_api"
+        assert "context_api" in ctx_schema["schema"]
+
+        # sandbox_constraints section → must include allowed imports
+        sb_result = asyncio.run(
+            provider.call("workflow_schema", {"section": "sandbox_constraints"})
+        )
+        sb_schema = json.loads(sb_result["content"][0]["text"])
+        assert sb_schema["section"] == "sandbox_constraints"
+        assert "allowed_imports" in sb_schema["schema"]
 
 
 # ──────────────────────────────────────────────────────────────────

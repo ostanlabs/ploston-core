@@ -1,7 +1,7 @@
 """Workflow types for Ploston Core."""
 
 from .parser import parse_workflow_yaml
-from .registry import WorkflowRegistry
+from .registry import DraftEntry, DraftStore, WorkflowRegistry
 from .schema_generator import generate_workflow_schema
 from .tools import WorkflowToolsProvider
 from .types import (
@@ -28,4 +28,6 @@ __all__ = [
     "WorkflowRegistry",
     "WorkflowToolsProvider",
     "WorkflowValidator",
+    "DraftStore",
+    "DraftEntry",
 ]

@@ -1,11 +1,15 @@
-"""S-270 TS-01..TS-04: normalization applied at tool step and sandbox call sites."""
+"""S-270 TS-01..TS-04: normalization applied at tool step and sandbox call sites.
+
+S-289 P1 extends this with ToolError raising on transport-level error envelopes
+(see test_te01..te05 below).
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ploston_core.engine.engine import WorkflowEngine
-from ploston_core.sandbox.types import RunnerContext, ToolCallInterface
+from ploston_core.sandbox.types import RunnerContext, ToolCallInterface, ToolError
 
 # ── TS-01: _execute_tool_step normalizes tool output ──
 
@@ -129,3 +133,94 @@ async def test_call_preserves_bare_result_with_siblings():
     )
     out = await iface.call("my_tool", {})
     assert out == {"result": [1, 2], "warnings": ["w"]}
+
+
+# ── S-289 P1: ToolError on {"content": X, "error": E} envelope ──
+
+
+@pytest.mark.asyncio
+async def test_te01_call_raises_tool_error_on_envelope():
+    """call() raises ToolError when the response envelope has non-null error."""
+    iface = _build_tool_iface(
+        caller_result={"content": None, "error": "tool blew up"},
+    )
+    with pytest.raises(ToolError) as excinfo:
+        await iface.call("my_runner__github__get_file", {})
+    assert excinfo.value.message == "tool blew up"
+    assert excinfo.value.tool == "my_runner__github__get_file"
+    assert excinfo.value.mcp is None
+
+
+@pytest.mark.asyncio
+async def test_te02_call_mcp_cp_direct_raises_tool_error():
+    """CP-direct call_mcp raises ToolError on transport error and tags mcp/tool."""
+    tool_def = MagicMock()
+    tool_def.name = "list_commits"
+    tr = MagicMock()
+    tr.list_tools.return_value = [tool_def]
+
+    iface = _build_tool_iface(
+        caller_result={"content": None, "error": "rate limited"},
+        tool_registry=tr,
+    )
+    with pytest.raises(ToolError) as excinfo:
+        await iface.call_mcp("github", "list_commits", {})
+    assert excinfo.value.message == "rate limited"
+    assert excinfo.value.mcp == "github"
+    assert excinfo.value.tool == "list_commits"
+
+
+@pytest.mark.asyncio
+async def test_te03_call_mcp_runner_path_raises_tool_error():
+    """Runner-hosted call_mcp raises ToolError with mcp/tool tags."""
+    iface = _build_tool_iface(
+        caller_result={"content": None, "error": "upstream 503"},
+        runner_context=RunnerContext(defaults_runner="my_runner", runner_name=None),
+    )
+    with pytest.raises(ToolError) as excinfo:
+        await iface.call_mcp("github", "get_file", {})
+    assert excinfo.value.message == "upstream 503"
+    assert excinfo.value.mcp == "github"
+    assert excinfo.value.tool == "get_file"
+
+
+@pytest.mark.asyncio
+async def test_te04_envelope_with_extra_keys_is_not_an_error():
+    """Domain payload that happens to have an "error" key is not a transport
+    error — must be returned normalized, not raised."""
+    iface = _build_tool_iface(
+        caller_result={"content": [], "error": "no results", "meta": "x"},
+    )
+    out = await iface.call("my_tool", {})
+    assert out == {"content": [], "error": "no results", "meta": "x"}
+
+
+@pytest.mark.asyncio
+async def test_te05_null_error_envelope_unwrapped_no_raise():
+    """{"content": X, "error": None} returns X, never raises."""
+    iface = _build_tool_iface(
+        caller_result={"content": {"data": 1}, "error": None},
+    )
+    out = await iface.call("my_tool", {})
+    assert out == {"data": 1}
+
+
+# ── S-289 P1: ToolError is injected into sandbox safe-globals ──
+
+
+@pytest.mark.asyncio
+async def test_te06_tool_error_available_in_sandbox_without_import():
+    """Code steps can `except ToolError` without importing it — the name is
+    pre-injected into the safe-globals dict alongside `context`."""
+    from ploston_core.sandbox import PythonExecSandbox
+
+    sandbox = PythonExecSandbox(timeout=5)
+    code = (
+        "try:\n"
+        "    raise ToolError('boom', tool='t', mcp='m')\n"
+        "except ToolError as e:\n"
+        "    result = {'message': e.message, 'tool': e.tool, 'mcp': e.mcp}\n"
+    )
+    res = await sandbox.execute(code)
+    assert res.success is True, res.error
+    assert res.result == {"message": "boom", "tool": "t", "mcp": "m"}

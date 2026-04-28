@@ -561,6 +561,10 @@ class PlostApplication:
             tool_invoker=self.tool_invoker,
             schema_store=self.schema_store,  # F-088 · T-890
         )
+        # M-081: wire authoring-DX meters once telemetry is available.
+        telemetry = get_telemetry()
+        if telemetry and telemetry.get("meter"):
+            workflow_tools.set_meter(telemetry["meter"])
 
         self.mcp_frontend = MCPFrontend(
             self.workflow_engine,

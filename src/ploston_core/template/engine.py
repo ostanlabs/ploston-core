@@ -219,10 +219,18 @@ class TemplateEngine:
         try:
             value = self._resolve_variable(var_path, context)
         except (KeyError, AttributeError, IndexError) as e:
-            raise create_error(
+            err = create_error(
                 "TEMPLATE_ERROR",
                 variable=var_path,
-            ) from e
+            )
+            # S-292 P4d: stash the failing variable + full expression on
+            # the exception so the engine can build a structured
+            # error_metadata block (template_expression, available_steps,
+            # suggested_fix). AELError is a frozen dataclass so we use a
+            # plain attribute on the underlying Exception instance.
+            err._template_variable = var_path  # type: ignore[attr-defined]
+            err._template_expression = expression  # type: ignore[attr-defined]
+            raise err from e
 
         # Apply filters
         for filter_expr in filters:

@@ -131,6 +131,66 @@ class CodeExecutionResult:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Tool error exception (injected into sandbox scope; S-289 P1)
+# ─────────────────────────────────────────────────────────────────
+
+
+class ToolError(Exception):
+    """Raised inside the sandbox when a tool call returns a transport-level error.
+
+    Sandbox code steps catch this without importing it — `ToolError` is injected
+    into the sandbox safe-globals scope alongside `context`. The transport
+    envelope `{"content": X, "error": E}` with non-null `E` is detected by
+    `ToolCallInterface.call()` and `call_mcp()`, which raise `ToolError(message=E,
+    tool=..., mcp=...)` instead of returning the envelope. Successful calls
+    (envelope with `error: None` or no envelope at all) return fully-normalized
+    output — the same shape a tool step would produce.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        tool: str | None = None,
+        mcp: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tool = tool
+        self.mcp = mcp
+
+    def __repr__(self) -> str:
+        parts = [f"message={self.message!r}"]
+        if self.tool is not None:
+            parts.append(f"tool={self.tool!r}")
+        if self.mcp is not None:
+            parts.append(f"mcp={self.mcp!r}")
+        return f"ToolError({', '.join(parts)})"
+
+
+def _maybe_raise_tool_error(
+    raw: Any,
+    tool: str | None,
+    mcp: str | None,
+) -> None:
+    """If raw is a transport envelope with a non-null error, raise ToolError.
+
+    The envelope must be exactly the dict shape `{"content", "error"}` (the
+    same shape recognized by `normalize_mcp_response`). Domain-level dicts
+    that happen to have an `error` key alongside other application keys are
+    not treated as transport errors.
+    """
+    if (
+        isinstance(raw, dict)
+        and set(raw.keys()) == {"content", "error"}
+        and raw["error"] is not None
+    ):
+        message = raw["error"]
+        if not isinstance(message, str):
+            message = str(message)
+        raise ToolError(message=message, tool=tool, mcp=mcp)
+
+
+# ─────────────────────────────────────────────────────────────────
 # Tool Calling Protocol (breaks circular dependency)
 # ─────────────────────────────────────────────────────────────────
 
@@ -272,6 +332,8 @@ class ToolCallInterface:
                 },
             )
 
+        # S-289 P1: surface transport-level errors as ToolError before normalization
+        _maybe_raise_tool_error(result, tool=tool_name, mcp=None)
         return normalize_mcp_response(result)
 
     async def call_mcp(
@@ -354,7 +416,10 @@ class ToolCallInterface:
                                 "execution_id": self._execution_id,
                             },
                         )
-                    return normalize_mcp_response(await self._caller.call(tool, params))
+                    cp_result = await self._caller.call(tool, params)
+                    # S-289 P1: surface transport-level errors as ToolError
+                    _maybe_raise_tool_error(cp_result, tool=tool, mcp=mcp)
+                    return normalize_mcp_response(cp_result)
 
         # Step 2: Resolve runner
         # Priority: explicit arg (F-072) > defaults_runner > runner_name > inference
@@ -406,7 +471,10 @@ class ToolCallInterface:
                         "execution_id": self._execution_id,
                     },
                 )
-            return normalize_mcp_response(await self._caller.call(canonical, params))
+            runner_result = await self._caller.call(canonical, params)
+            # S-289 P1: surface transport-level errors as ToolError
+            _maybe_raise_tool_error(runner_result, tool=tool, mcp=mcp)
+            return normalize_mcp_response(runner_result)
 
         raise create_error(
             "TOOL_UNAVAILABLE",

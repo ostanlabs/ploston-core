@@ -39,6 +39,12 @@ class StepResult:
     error: Any = None  # AELError
     skip_reason: str | None = None
 
+    # S-292 P4d: structured error enrichment for the workflow_run
+    # response. Populated by the engine when a step fails (code
+    # context, line numbers, prior step output keys, params_sent,
+    # root_cause_step_id, etc). Surfaced through ExecutionResult.
+    error_metadata: dict[str, Any] | None = None
+
     # Retry info
     attempt: int = 1
     max_attempts: int = 1
@@ -153,6 +159,13 @@ class ExecutionResult:
                 step_data["debug_log"] = list(s.debug_log)
             if s.error:
                 step_data["error"] = str(s.error)
+            if s.error_metadata:
+                # S-292 P4d: surface structured error context
+                # (code_context, line_in_step, prior_step_output_keys,
+                # params_sent, root_cause_step_id) so agents can build a
+                # workflow_patch call without round-tripping for the
+                # workflow YAML.
+                step_data["error_metadata"] = s.error_metadata
             if s.skip_reason:
                 step_data["skip_reason"] = s.skip_reason
             steps[s.step_id] = step_data

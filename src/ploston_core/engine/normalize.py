@@ -9,10 +9,17 @@ Handled shapes:
     2. {"result": {"content": X}}                  → unwrap to X
     3. [{"type": "text", "text": "<json|str>"}]   → parse JSON if possible
     4. {"content": X} with only that key           → unwrap to X
+    5. {"content": X, "error": None}               → unwrap to X (S-289 P1)
 
 Bare {"result": X} without a "status" sibling is left alone — a tool
 legitimately returning {"result": ..., "warnings": [...]} must keep its
 shape.
+
+Shape 5 unwraps the transport envelope only when the dict has *exactly*
+the keys {"content", "error"} and error is None. Tool payloads that happen
+to have an "error" key alongside other application keys are not affected.
+A non-null "error" is left as-is — sandbox call sites inspect the envelope
+before normalization and raise ToolError on non-null errors.
 """
 
 from __future__ import annotations
@@ -43,8 +50,16 @@ def normalize_mcp_response(raw: Any) -> Any:
             raw = raw["result"]
         # Otherwise: bare {"result": X} is a legitimate tool response — leave it alone.
 
-        # Unwrap single-key {"content": X} envelope
+        # Shape 4: single-key {"content": X} envelope
         if isinstance(raw, dict) and "content" in raw and len(raw) == 1:
+            raw = raw["content"]
+        # Shape 5: {"content": X, "error": None} transport envelope (S-289 P1).
+        # Unwrap only when keys are exactly {"content", "error"} and error is None.
+        elif (
+            isinstance(raw, dict)
+            and set(raw.keys()) == {"content", "error"}
+            and raw["error"] is None
+        ):
             raw = raw["content"]
 
     # Shape 3: [{"type": "text", "text": "<json|str>"}] → parse JSON if possible

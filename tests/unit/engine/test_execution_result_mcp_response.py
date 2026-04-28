@@ -94,6 +94,35 @@ def test_mr07_skipped_step_includes_skip_reason():
     assert resp["execution"]["steps"]["x"]["status"] == "skipped"
 
 
+# ── S-292 P4d: error_metadata surfaces structured failure context ──
+
+
+def test_p4d_error_metadata_propagated_to_response():
+    metadata = {
+        "step_type": "code",
+        "exception_type": "KeyError",
+        "line_in_step": 4,
+        "code_context": [{"line": 4, "text": "x = data['missing']", "is_error_line": True}],
+    }
+    step = StepResult(
+        step_id="diagnose",
+        status=StepStatus.FAILED,
+        duration_ms=12,
+        error=KeyError("missing"),
+        error_metadata=metadata,
+    )
+    r = _build_result(steps=[step], status=ExecutionStatus.FAILED)
+    resp = r.to_mcp_response()
+    assert resp["execution"]["steps"]["diagnose"]["error_metadata"] == metadata
+
+
+def test_p4d_error_metadata_omitted_when_absent():
+    step = StepResult(step_id="ok", status=StepStatus.COMPLETED, duration_ms=5)
+    r = _build_result(steps=[step])
+    resp = r.to_mcp_response()
+    assert "error_metadata" not in resp["execution"]["steps"]["ok"]
+
+
 # ── Rev 3 Issue A: top-level key is "result", not "outputs" ──
 
 
