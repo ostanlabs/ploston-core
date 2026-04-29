@@ -67,6 +67,10 @@ class ErrorRegistry:
         if message is None:
             message = f"Error {code}"
 
+        data = context.get("data")
+        if data is not None and not isinstance(data, dict):
+            data = None
+
         return AELError(
             code=template.code,
             category=template.category,
@@ -79,6 +83,7 @@ class ErrorRegistry:
             tool_name=context.get("tool_name"),
             execution_id=context.get("execution_id"),
             cause=cause,
+            data=data,
         )
 
     def _interpolate(

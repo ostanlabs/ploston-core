@@ -264,6 +264,8 @@ class MCPFrontend:
                 error_data["detail"] = e.detail
             if e.suggestion:
                 error_data["suggestion"] = e.suggestion
+            if e.data:
+                error_data["data"] = e.data
             return self._error_response(
                 msg_id,
                 e.http_status,

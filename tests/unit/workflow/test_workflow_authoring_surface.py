@@ -1207,6 +1207,163 @@ class TestWorkflowPatchAddRemoveStep:
         assert "greet" in detail
 
 
+_PATCH_REPLACE_YAML = (
+    "name: dx_replace_target\n"
+    'version: "1.0.0"\n'
+    "description: Code-only workflow used for replace-op error coverage.\n"
+    "steps:\n"
+    "  - id: compute\n"
+    "    code: |\n"
+    "      x = 1 + 1\n"
+    "      y = x * 2\n"
+    "      result = {'x': x, 'y': y}\n"
+)
+
+
+class TestWorkflowPatchOldNotFound:
+    """``workflow_patch`` ``replace`` op surfaces structured context when
+    ``old`` doesn't match the canonical step code.
+
+    Exact-match path stays a normal success; missed-match raises
+    ``INPUT_INVALID`` whose ``data`` payload echoes the canonical
+    ``step_code`` and the agent's ``attempted_old``, plus an optional
+    ``closest_match`` hint with ``differences`` classified as
+    ``whitespace_only`` or ``content``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exact_match_still_succeeds(self, real_provider):
+        # Regression: enriching the failure path must not regress the
+        # happy path.
+        await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_replace_target",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "replace",
+                        "step_id": "compute",
+                        "old": "y = x * 2",
+                        "new": "y = x * 3",
+                    }
+                ],
+            },
+        )
+        assert _parse(raw)["status"] == "patched"
+
+    @pytest.mark.asyncio
+    async def test_old_not_found_returns_step_code_and_attempted_old(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_replace_target",
+                    "version": "1.0.1",
+                    "operations": [
+                        {
+                            "op": "replace",
+                            "step_id": "compute",
+                            "old": "totally absent line",
+                            "new": "irrelevant",
+                        }
+                    ],
+                },
+            )
+        data = exc_info.value.data or {}
+        assert data.get("step_id") == "compute"
+        assert "x = 1 + 1" in (data.get("step_code") or "")
+        assert data.get("attempted_old") == "totally absent line"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_drift_classified_as_whitespace_only(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_replace_target",
+                    "version": "1.0.1",
+                    "operations": [
+                        {
+                            "op": "replace",
+                            "step_id": "compute",
+                            # Same tokens as ``y = x * 2`` but with two
+                            # leading spaces — exact substring won't match
+                            # because the canonical code has no leading
+                            # whitespace inside the YAML block scalar body.
+                            "old": "  y = x * 2",
+                            "new": "y = x * 3",
+                        }
+                    ],
+                },
+            )
+        closest = (exc_info.value.data or {}).get("closest_match")
+        assert closest is not None, "expected a closest_match hint"
+        assert closest["differences"] == "whitespace_only"
+        assert closest["match_ratio"] >= 0.6
+        assert closest["line_range"] == [2, 2]
+
+    @pytest.mark.asyncio
+    async def test_content_drift_classified_as_content(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_replace_target",
+                    "version": "1.0.1",
+                    "operations": [
+                        {
+                            "op": "replace",
+                            "step_id": "compute",
+                            # Token-level differences (``z`` vs ``y``,
+                            # ``+`` vs ``*``) — not whitespace-only.
+                            "old": "z = x + 2",
+                            "new": "y = x * 3",
+                        }
+                    ],
+                },
+            )
+        closest = (exc_info.value.data or {}).get("closest_match")
+        assert closest is not None
+        assert closest["differences"] == "content"
+
+    @pytest.mark.asyncio
+    async def test_unrelated_old_omits_closest_match(self, real_provider):
+        from ploston_core.errors import AELError
+
+        await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
+        with pytest.raises(AELError) as exc_info:
+            await real_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_replace_target",
+                    "version": "1.0.1",
+                    "operations": [
+                        {
+                            "op": "replace",
+                            "step_id": "compute",
+                            # Nothing in the code body resembles this.
+                            "old": "QQQQ unrelated payload zzzz",
+                            "new": "irrelevant",
+                        }
+                    ],
+                },
+            )
+        data = exc_info.value.data or {}
+        assert "step_code" in data
+        assert "closest_match" not in data
+
+
 # ── S-291 (P3): per-error-type roundtrip coverage ─────────────────
 # Spec §"Unit roundtrip per error type (12 tests)" — induce each
 # catalog error, take the response's ``suggested_fix`` (or assert

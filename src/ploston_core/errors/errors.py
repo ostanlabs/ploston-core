@@ -40,6 +40,12 @@ class AELError(Exception):
     # Error chain (max depth 3)
     cause: "AELError | None" = None
 
+    # Optional structured payload for machine-readable failure context that
+    # doesn't fit in ``detail``/``suggestion`` (e.g. enriched
+    # ``workflow_patch`` failures carrying ``step_code`` + ``closest_match``).
+    # Forwarded through ``to_dict()`` and the JSON-RPC error envelope.
+    data: dict[str, Any] | None = None
+
     # Metadata
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -65,6 +71,7 @@ class AELError(Exception):
             "execution_id": self.execution_id,
             "timestamp": self.timestamp.isoformat(),
             "cause": self.cause.to_dict() if self.cause else None,
+            "data": self.data,
         }
 
     def with_context(
@@ -95,6 +102,7 @@ class AELError(Exception):
             tool_name=tool_name or self.tool_name,
             execution_id=execution_id or self.execution_id,
             cause=self.cause,
+            data=self.data,
             timestamp=self.timestamp,
         )
 

@@ -15,6 +15,7 @@ via ``workflow_patch`` rather than re-calling ``workflow_create``.
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -1073,6 +1074,119 @@ _MGMT_TOOL_OUTPUT_SCHEMAS: dict[str, dict[str, Any] | None] = {
 
 
 # ─────────────────────────────────────────────────────────────────
+# workflow_patch helpers
+# ─────────────────────────────────────────────────────────────────
+
+# Cap on how many bytes of step code / agent input we echo back inside an
+# error payload. 4 KiB keeps the response small for the JSON-RPC layer
+# while comfortably covering the canonical body of typical code: blocks.
+_PATCH_PAYLOAD_BLOB_LIMIT = 4096
+
+# Below this ratio the closest_match hint has no signal and is omitted.
+_PATCH_CLOSEST_MATCH_MIN_RATIO = 0.6
+
+
+def _truncate_for_payload(text: str, *, limit: int = _PATCH_PAYLOAD_BLOB_LIMIT) -> str:
+    """Cap ``text`` at ``limit`` bytes (UTF-8) for safe inclusion in errors."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    # Decode with errors="ignore" so we don't slice mid-codepoint.
+    return encoded[:limit].decode("utf-8", errors="ignore") + "…[truncated]"
+
+
+def _find_closest_match(attempted_old: str, code_str: str) -> dict[str, Any] | None:
+    """Locate the contiguous span of ``code_str`` most similar to ``attempted_old``.
+
+    Returns a dict with ``text`` (the matched span verbatim from
+    ``code_str``), ``line_range`` (1-based, inclusive), ``match_ratio``
+    (0.0–1.0), and ``differences`` ("whitespace_only" or "content"). Returns
+    None when the best ratio falls below
+    ``_PATCH_CLOSEST_MATCH_MIN_RATIO`` — at that point the hint carries no
+    signal and is omitted from the error payload.
+
+    The span is located by sliding a window of ``len(old_lines)`` lines
+    over the code body and scoring each window with
+    ``SequenceMatcher.ratio()``. The result aligns with YAML line
+    boundaries (so ``line_range`` is meaningful) without requiring line
+    equality — which by definition won't hold when the agent's mistake is
+    indentation or whitespace drift.
+    """
+    if not attempted_old or not code_str:
+        return None
+
+    code_lines = code_str.splitlines(keepends=True)
+    old_lines = attempted_old.splitlines(keepends=True)
+    if not old_lines or not code_lines:
+        return None
+
+    window_size = len(old_lines)
+    if window_size > len(code_lines):
+        window_size = len(code_lines)
+
+    # Cap the window count to keep cost bounded for pathological inputs.
+    # Each ratio() is O(n*m); with the 4KiB blob cap above this is at
+    # most a few thousand cheap comparisons.
+    best_ratio = 0.0
+    best_start = 0
+    best_size = window_size
+    for start in range(0, len(code_lines) - window_size + 1):
+        candidate = "".join(code_lines[start : start + window_size])
+        ratio = difflib.SequenceMatcher(None, attempted_old, candidate, autojunk=False).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_start = start
+            best_size = window_size
+            if ratio == 1.0:
+                break
+
+    if best_ratio < _PATCH_CLOSEST_MATCH_MIN_RATIO:
+        return None
+
+    span_lines = code_lines[best_start : best_start + best_size]
+    span_text = "".join(span_lines)
+
+    # Whitespace-only classifier: if both strings collapse to the same
+    # token sequence after stripping all whitespace, the only thing the
+    # agent got wrong is indentation/line breaks.
+    differences = (
+        "whitespace_only"
+        if "".join(attempted_old.split()) == "".join(span_text.split())
+        else "content"
+    )
+
+    return {
+        "text": _truncate_for_payload(span_text),
+        "line_range": [best_start + 1, best_start + best_size],
+        "match_ratio": round(best_ratio, 3),
+        "differences": differences,
+    }
+
+
+def _build_old_not_found_payload(
+    *, step_id: str, code_str: str, attempted_old: str
+) -> dict[str, Any]:
+    """Build the structured ``data`` payload for a ``replace`` op that missed.
+
+    Always includes ``step_id``, ``step_code`` (canonical body, capped),
+    and ``attempted_old`` (capped). When a usable fuzzy hit exists, also
+    includes ``closest_match`` with ``text``, ``line_range``,
+    ``match_ratio``, and a ``differences`` classifier
+    ("whitespace_only"|"content"). The classifier is informational only —
+    no auto-suggested-fix is emitted; the agent decides how to repair.
+    """
+    payload: dict[str, Any] = {
+        "step_id": step_id,
+        "step_code": _truncate_for_payload(code_str),
+        "attempted_old": _truncate_for_payload(attempted_old),
+    }
+    closest = _find_closest_match(attempted_old, code_str)
+    if closest is not None:
+        payload["closest_match"] = closest
+    return payload
+
+
+# ─────────────────────────────────────────────────────────────────
 # Provider
 # ─────────────────────────────────────────────────────────────────
 
@@ -2112,6 +2226,11 @@ class WorkflowToolsProvider:
             raise create_error(
                 "INPUT_INVALID",
                 detail=f"'old' substring not found in step '{step_id}' code",
+                data=_build_old_not_found_payload(
+                    step_id=step_id,
+                    code_str=code_str,
+                    attempted_old=str(old),
+                ),
             )
         if occurrences > 1:
             raise create_error(
