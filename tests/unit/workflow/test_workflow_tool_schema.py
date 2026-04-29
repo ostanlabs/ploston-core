@@ -371,7 +371,7 @@ class TestWorkflowGetDefinition:
 
 
 class TestWorkflowNameSanitization:
-    """workflow_create / workflow_update replace dashes with underscores."""
+    """workflow_create replaces dashes with underscores."""
 
     _YAML_WITH_DASHES = (
         "# header comment\n"
@@ -437,30 +437,3 @@ class TestWorkflowNameSanitization:
 
         assert result["name"] == "already_clean"
         assert "name_sanitized" not in result
-
-    @pytest.mark.asyncio
-    async def test_update_sanitizes_lookup_name_and_yaml(self, mock_workflow_registry):
-        """workflow_update sanitizes both the `name` param and the YAML body."""
-        existing = MagicMock()
-        existing.name = "my_cool_workflow"
-        mock_workflow_registry.get.return_value = existing
-
-        provider = WorkflowToolsProvider(workflow_registry=mock_workflow_registry)
-
-        raw = await provider.call(
-            "workflow_update",
-            {"name": "my-cool-workflow", "yaml_content": self._YAML_WITH_DASHES},
-        )
-        result = _parse_mcp_result(raw)
-
-        # Registry lookup must have happened under the sanitized key.
-        mock_workflow_registry.get.assert_called_once_with("my_cool_workflow")
-        mock_workflow_registry.unregister.assert_called_once_with("my_cool_workflow")
-        mock_workflow_registry.register_from_yaml.assert_called_once()
-        passed_yaml = mock_workflow_registry.register_from_yaml.call_args.args[0]
-        assert "name: my_cool_workflow" in passed_yaml
-
-        assert result["name"] == "my_cool_workflow"
-        assert result["status"] == "updated"
-        assert result["name_sanitized"]["original"] == "my-cool-workflow"
-        assert result["name_sanitized"]["registered_as"] == "my_cool_workflow"

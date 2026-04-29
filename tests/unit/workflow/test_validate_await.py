@@ -1,8 +1,11 @@
 """Unit tests for the missing-await static check (S-286 / T-905).
 
 Covers ``_check_missing_await`` and its surfacing through
-``_handle_validate``. The check is AST-based and best-effort: warnings are
-advisory and never affect ``valid``.
+``workflow_create`` (the warning shows up in the ``validation.warnings``
+list of the response, both for the ``status="created"`` success path and
+for the ``status="draft"`` / ``dry_run=true`` paths). The check is
+AST-based and best-effort: warnings are advisory and never affect
+``valid``.
 """
 
 from __future__ import annotations
@@ -88,7 +91,7 @@ class TestMissingAwaitCheck:
         assert warnings == []
 
 
-class TestHandleValidateSurfacesAwaitWarning:
+class TestWorkflowCreateSurfacesAwaitWarning:
     @pytest.fixture
     def provider(self):
         reg = MagicMock()
@@ -100,7 +103,7 @@ class TestHandleValidateSurfacesAwaitWarning:
         return WorkflowToolsProvider(workflow_registry=reg)
 
     @pytest.mark.asyncio
-    async def test_validate_returns_await_warning(self, provider):
+    async def test_dry_run_returns_await_warning(self, provider):
         yaml_content = (
             "name: dx_check\n"
             'version: "1.0"\n'
@@ -111,16 +114,19 @@ class TestHandleValidateSurfacesAwaitWarning:
             '      x = context.tools.call_mcp("a", "b", {})\n'
             '      result = {"x": x}\n'
         )
-        raw = await provider.call("workflow_validate", {"yaml_content": yaml_content})
+        raw = await provider.call(
+            "workflow_create", {"yaml_content": yaml_content, "dry_run": True}
+        )
         result = _parse(raw)
-        assert result["valid"] is True  # warning never blocks
-        await_warnings = [w for w in result["warnings"] if w.get("path") == "steps[bad].code"]
+        validation = result["validation"]
+        assert validation["valid"] is True  # warning never blocks
+        await_warnings = [w for w in validation["warnings"] if w.get("path") == "steps[bad].code"]
         assert len(await_warnings) == 1
         assert await_warnings[0]["line"] == 1
         assert "await" in await_warnings[0]["message"]
 
     @pytest.mark.asyncio
-    async def test_validate_no_warning_when_awaited(self, provider):
+    async def test_dry_run_no_warning_when_awaited(self, provider):
         yaml_content = (
             "name: dx_check\n"
             'version: "1.0"\n'
@@ -131,7 +137,10 @@ class TestHandleValidateSurfacesAwaitWarning:
             '      x = await context.tools.call_mcp("a", "b", {})\n'
             '      result = {"x": x}\n'
         )
-        raw = await provider.call("workflow_validate", {"yaml_content": yaml_content})
+        raw = await provider.call(
+            "workflow_create", {"yaml_content": yaml_content, "dry_run": True}
+        )
         result = _parse(raw)
-        await_warnings = [w for w in result["warnings"] if w.get("path") == "steps[ok].code"]
+        validation = result["validation"]
+        await_warnings = [w for w in validation["warnings"] if w.get("path") == "steps[ok].code"]
         assert await_warnings == []

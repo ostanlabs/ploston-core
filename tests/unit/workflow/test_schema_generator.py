@@ -304,15 +304,6 @@ class TestWorkflowToolsNotification:
         cb.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_update_fires_notification(self):
-        cb = AsyncMock()
-        provider = self._make_provider(cb)
-        await provider.call(
-            "workflow_update", {"name": "test-wf", "yaml_content": VALID_WORKFLOW_YAML}
-        )
-        cb.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_delete_fires_notification(self):
         cb = AsyncMock()
         provider = self._make_provider(cb)

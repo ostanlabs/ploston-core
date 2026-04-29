@@ -6,7 +6,7 @@ Covers:
 - S-279: workflow_tool_schema batch mode (TS-B01..TS-B04)
 - S-280: workflow_schema cleanup + not-found breadcrumb (CL-01..CL-06)
 - S-290: workflow_schema split into Tier 1 + on-demand sections (P2)
-- S-291: workflow_create + workflow_validate merge with draft_id (P3)
+- S-291: workflow_create absorbs validation surface with draft_id (P3)
 - S-292: workflow_patch ``set`` op + version semantics + live-safety (P4a)
 """
 
@@ -628,7 +628,7 @@ class TestSchemaSplitToolDescriptions:
         assert list(enum) == list(AVAILABLE_SECTIONS)
 
 
-# ── S-291 (P3): workflow_create + workflow_validate merge ──────────
+# ── S-291 (P3): workflow_create absorbs validation surface ──────────
 # (P3 of the WORKFLOW_AUTHORING_DX_V2 spec.)
 
 
@@ -808,28 +808,59 @@ class TestWorkflowPatchDraftRoundtrip:
         assert real_registry.get("dx_p3_bad_tool") is not None
 
 
-class TestWorkflowValidateAlias:
-    """workflow_validate is now a deprecated thin alias (S-291 P3)."""
+class TestDeprecatedToolsRemoved:
+    """``workflow_validate`` and ``workflow_update`` are removed entirely.
+
+    Their capabilities are absorbed by ``workflow_create(dry_run=true)``
+    and ``workflow_patch`` respectively.
+    """
+
+    def test_workflow_validate_not_in_tool_catalog(self):
+        from ploston_core.workflow.tools import (
+            ALL_WORKFLOW_MGMT_TOOLS,
+            WORKFLOW_MGMT_TOOL_NAMES,
+        )
+
+        names = {t["name"] for t in ALL_WORKFLOW_MGMT_TOOLS}
+        assert "workflow_validate" not in names
+        assert "workflow_validate" not in WORKFLOW_MGMT_TOOL_NAMES
+
+    def test_workflow_update_not_in_tool_catalog(self):
+        from ploston_core.workflow.tools import (
+            ALL_WORKFLOW_MGMT_TOOLS,
+            WORKFLOW_MGMT_TOOL_NAMES,
+        )
+
+        names = {t["name"] for t in ALL_WORKFLOW_MGMT_TOOLS}
+        assert "workflow_update" not in names
+        assert "workflow_update" not in WORKFLOW_MGMT_TOOL_NAMES
 
     @pytest.mark.asyncio
-    async def test_validate_alias_returns_validation_block(self, real_registry, real_provider):
-        raw = await real_provider.call("workflow_validate", {"yaml_content": _INVALID_TOOL_YAML})
+    async def test_workflow_validate_dispatch_raises(self, real_provider):
+        # Dispatcher must reject the unknown tool name rather than silently
+        # routing to a stale handler.
+        with pytest.raises(Exception):
+            await real_provider.call("workflow_validate", {"yaml_content": "name: x"})
+
+    @pytest.mark.asyncio
+    async def test_workflow_update_dispatch_raises(self, real_provider):
+        with pytest.raises(Exception):
+            await real_provider.call("workflow_update", {"name": "x", "yaml_content": "name: x"})
+
+    @pytest.mark.asyncio
+    async def test_create_dry_run_returns_validation_envelope(self, real_registry, real_provider):
+        # Equivalent of the old ``workflow_validate``: an invalid YAML
+        # comes back with ``status='draft'`` and an ``errors`` list, and
+        # nothing is registered.
+        raw = await real_provider.call(
+            "workflow_create", {"yaml_content": _INVALID_TOOL_YAML, "dry_run": True}
+        )
         result = _parse(raw)
-        # The alias adapts back to the legacy ``{valid, errors, warnings}``
-        # shape for backwards compatibility, but it goes through
-        # ``workflow_create(dry_run=True)`` under the hood — so no
-        # registration happens.
-        assert result["valid"] is False
-        assert isinstance(result["errors"], list) and result["errors"]
+        assert result["status"] == "draft"
+        assert result["validation"]["valid"] is False
+        assert isinstance(result["validation"]["errors"], list)
+        assert result["validation"]["errors"]
         assert real_registry.get("dx_p3_bad_tool") is None
-
-    def test_validate_tool_description_advertises_deprecation(self):
-        from ploston_core.workflow.tools import WORKFLOW_VALIDATE_TOOL
-
-        desc = WORKFLOW_VALIDATE_TOOL["description"]
-        assert "deprecated" in desc.lower()
-        # Must point agents at the unified entry point.
-        assert "workflow_create" in desc
 
 
 _LIVE_YAML_FOR_PATCH = (

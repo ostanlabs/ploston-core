@@ -478,8 +478,15 @@ def generate_workflow_schema() -> dict[str, Any]:
         "description": (
             "MCP tools for iterative workflow authoring. "
             "Recommended flow: workflow_schema → workflow_list_tools → "
-            "workflow_tool_schema → author YAML → workflow_validate → "
-            "workflow_create → workflow_list"
+            "workflow_tool_schema → workflow_create. "
+            "Submit the YAML directly via workflow_create — do not call any "
+            "separate validate tool. If workflow_create returns "
+            '`status="draft"`, repair the YAML via workflow_patch using the '
+            "returned `draft_id` and the `validation.errors[].suggested_fix` "
+            "ops. If workflow_run fails on a registered workflow, repair it "
+            "in place via workflow_patch using the engine's "
+            "`error_metadata.suggested_fix`. Re-call workflow_create only "
+            "to author a new workflow, never to retry a failed one."
         ),
         "tools": [
             {
@@ -505,20 +512,16 @@ def generate_workflow_schema() -> dict[str, Any]:
                 ),
             },
             {
-                "name": "workflow_validate",
-                "description": (
-                    "Validate a YAML workflow definition without registering it. "
-                    "Returns schema errors and tool resolution warnings. "
-                    "Call after every edit before workflow_create."
-                ),
-            },
-            {
                 "name": "workflow_patch",
                 "description": (
-                    "Apply targeted str_replace edits to code step bodies of "
-                    "a registered workflow without resubmitting the full YAML. "
-                    "Use after workflow_create to iterate on a code step in "
-                    "place; bumps the workflow version on each call."
+                    "Iterate on a workflow with targeted edits — `replace` "
+                    "(str_replace inside a code step), `set` (scalar at a "
+                    "dot-path), `add_step`, `remove_step`. Use after "
+                    "workflow_create returns a draft, or after workflow_run "
+                    "fails on a registered workflow; pass back the "
+                    "`suggested_fix` op from the prior response. Validates "
+                    "and re-registers in one call; bumps the workflow "
+                    "version on each live patch."
                 ),
             },
             {

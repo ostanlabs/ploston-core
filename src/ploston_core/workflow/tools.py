@@ -1,8 +1,15 @@
 """Workflow management tools for MCP exposure.
 
 Provides flat-named workflow management tools (workflow_schema, workflow_list,
-workflow_get, workflow_create, workflow_update, workflow_delete, workflow_validate,
-workflow_tool_schema, workflow_run) that delegate to WorkflowRegistry / WorkflowEngine.
+workflow_get, workflow_get_definition, workflow_create, workflow_delete,
+workflow_patch, workflow_tool_schema, workflow_run, workflow_list_tools,
+workflow_call_tool) that delegate to WorkflowRegistry / WorkflowEngine.
+
+Authoring intent: agents author by submitting YAML directly through
+``workflow_create``; validation runs as part of that call and is returned in
+``validation: {valid, errors, warnings}``. On failure, ``workflow_create``
+returns a draft with a ``draft_id`` and ``suggested_fix`` ops; agents iterate
+via ``workflow_patch`` rather than re-calling ``workflow_create``.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from ploston_core.engine.normalize import normalize_mcp_response
 from ploston_core.errors import AELError, create_error
-from ploston_core.types.validation import ValidationResult
+from ploston_core.types.validation import ValidationIssue, ValidationResult
 
 from .schema_generator import (
     AVAILABLE_SECTIONS,
@@ -171,9 +178,7 @@ WORKFLOW_MGMT_TOOL_NAMES = frozenset(
         "workflow_get",
         "workflow_get_definition",
         "workflow_create",
-        "workflow_update",
         "workflow_delete",
-        "workflow_validate",
         "workflow_patch",
         "workflow_tool_schema",
         "workflow_call_tool",
@@ -304,63 +309,67 @@ _OUTPUT_SCHEMA_WORKFLOW_GET_DEFINITION = {
 }
 
 
-# Shared by workflow_create / workflow_update -- same shape, ``status`` differs.
-# S-291 P3: ``workflow_create`` adds ``status="draft"`` plus ``draft_id`` and
-# ``validation`` for the validation-failure path; ``tool_preview`` becomes
-# nullable. ``workflow_update`` keeps the original two-status shape.
-def _workflow_mutation_schema(
-    status_enum: list[str],
-    *,
-    include_draft_fields: bool = False,
-) -> dict[str, Any]:
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "version": {"type": "string"},
-            "status": {"type": "string", "enum": status_enum},
-            "tool_preview": {
-                "type": ["object", "null"] if include_draft_fields else "object",
-                "additionalProperties": True,
-            },
-            "warnings": {"type": "array"},
-            "name_sanitized": {
-                "type": "object",
-                "description": (
-                    "Present only when the workflow name was rewritten "
-                    "(dashes replaced with underscores)."
-                ),
-                "properties": {
-                    "original": {"type": "string"},
-                    "registered_as": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["original", "registered_as", "reason"],
-                "additionalProperties": False,
-            },
+# S-291 P3: ``workflow_create`` is the single workflow-mutation surface.
+# ``status`` is "created" on registration or "draft" on validation failure /
+# ``dry_run=true``. ``tool_preview`` is nullable in the draft case;
+# ``draft_id`` is set when a draft was stashed; ``validation`` carries the
+# enriched error envelope plus structured warnings (with optional 1-based
+# ``line`` for code-step static checks like the missing-``await`` detector).
+_OUTPUT_SCHEMA_WORKFLOW_CREATE: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "status": {"type": "string", "enum": ["created", "draft"]},
+        "tool_preview": {
+            "type": ["object", "null"],
+            "additionalProperties": True,
         },
-        "required": ["name", "version", "status", "tool_preview", "warnings"],
-        "additionalProperties": False,
-    }
-    if include_draft_fields:
-        schema["properties"]["draft_id"] = {"type": ["string", "null"]}
-        schema["properties"]["validation"] = {
+        "warnings": {"type": "array"},
+        "draft_id": {"type": ["string", "null"]},
+        "validation": {
             "type": "object",
             "properties": {
                 "valid": {"type": "boolean"},
                 "errors": {"type": "array"},
-                "warnings": {"type": "array"},
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "message": {"type": "string"},
+                            # Optional 1-based source line for static-analysis
+                            # warnings that pinpoint a specific location inside
+                            # a code step (S-286 / T-904 missing-await check).
+                            "line": {"type": "integer", "minimum": 1},
+                        },
+                        "required": ["path", "message"],
+                        "additionalProperties": False,
+                    },
+                },
             },
             "required": ["valid", "errors", "warnings"],
             "additionalProperties": False,
-        }
-    return schema
-
-
-_OUTPUT_SCHEMA_WORKFLOW_CREATE = _workflow_mutation_schema(
-    ["created", "draft"], include_draft_fields=True
-)
-_OUTPUT_SCHEMA_WORKFLOW_UPDATE = _workflow_mutation_schema(["updated"])
+        },
+        "name_sanitized": {
+            "type": "object",
+            "description": (
+                "Present only when the workflow name was rewritten "
+                "(dashes replaced with underscores)."
+            ),
+            "properties": {
+                "original": {"type": "string"},
+                "registered_as": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["original", "registered_as", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["name", "version", "status", "tool_preview", "warnings"],
+    "additionalProperties": False,
+}
 
 _OUTPUT_SCHEMA_WORKFLOW_DELETE = {
     "type": "object",
@@ -369,43 +378,6 @@ _OUTPUT_SCHEMA_WORKFLOW_DELETE = {
         "status": {"type": "string", "enum": ["deleted"]},
     },
     "required": ["name", "status"],
-    "additionalProperties": False,
-}
-
-_OUTPUT_SCHEMA_WORKFLOW_VALIDATE = {
-    "type": "object",
-    "properties": {
-        "valid": {"type": "boolean"},
-        "errors": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "message": {"type": "string"},
-                },
-                "required": ["path", "message"],
-                "additionalProperties": False,
-            },
-        },
-        "warnings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "message": {"type": "string"},
-                    # Optional 1-based source line for static-analysis warnings
-                    # that pinpoint a specific location inside a code step
-                    # (S-286 / T-904 missing-await check).
-                    "line": {"type": "integer", "minimum": 1},
-                },
-                "required": ["path", "message"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["valid", "errors", "warnings"],
     "additionalProperties": False,
 }
 
@@ -607,7 +579,12 @@ WORKFLOW_SCHEMA_TOOL = {
         "sections. Call with section=NAME for deeper detail. "
         "Sections: sandbox_constraints, context_api, tool_steps, inputs, "
         "outputs, defaults, packages, examples. "
-        "Call workflow_list_tools to discover tools available for workflow steps."
+        "Authoring flow: workflow_schema → workflow_list_tools → "
+        "workflow_tool_schema → workflow_create. If workflow_create returns "
+        '`status="draft"`, fix it via workflow_patch with the returned '
+        "`draft_id` — do not re-call workflow_create. If workflow_run fails, "
+        "repair the registered workflow with workflow_patch. Do not call "
+        "any separate validate or update tool."
     ),
     "inputSchema": {
         "type": "object",
@@ -697,20 +674,34 @@ WORKFLOW_GET_DEFINITION_TOOL = {
 WORKFLOW_CREATE_TOOL = {
     "name": "workflow_create",
     "description": (
-        "Publish a workflow as an MCP tool. Once registered, the workflow appears in "
-        "tools/list under its bare name — its `description` field becomes what agents "
-        "see when selecting tools, and each input `description` becomes a parameter doc. "
-        "Validation runs before registration: when the YAML fails validation, the call "
-        'returns `status="draft"` with `draft_id` and an enriched `validation.errors` '
-        "list (each error carries `path`, `message`, `current_value`, and a "
-        "`suggested_fix` patch op). Pass that `draft_id` to workflow_patch to apply the "
-        "fix without resubmitting the full YAML. Pass `dry_run=true` to validate without "
-        "registering or storing a draft. "
-        "Returns a preview of how the tool will appear in tools/list when it succeeds. "
-        "Note: dashes ('-') in the workflow name are automatically replaced with "
-        "underscores ('_'). If a rename occurred, the response includes a "
-        "`name_sanitized` field with the original name for reference.\n\n"
-        + _TIER1_DESCRIPTION_BLOCK
+        "Author and publish a workflow in a single call. This is the entry "
+        "point for workflow authoring — submit the YAML directly; do not "
+        "pre-validate it through any other tool. Validation runs as part of "
+        "`workflow_create` and its result is always returned in "
+        "`validation: {valid, errors, warnings}`.\n\n"
+        "Outcomes:\n"
+        "- Success: the workflow is registered and appears in tools/list "
+        'under its bare name (`status="created"`). The response also '
+        "includes `validation.warnings` for non-fatal advisories "
+        "(missing `await` on `context.tools.call_mcp`, weak descriptions, "
+        "undocumented inputs).\n"
+        "- Validation failure: the call returns "
+        '`status="draft"` with a `draft_id` and an enriched '
+        "`validation.errors` list. Each error carries `path`, `message`, "
+        "`current_value`, and a `suggested_fix` patch op. Pass the "
+        "`draft_id` plus the `suggested_fix` (or your own ops) to "
+        "`workflow_patch` to fix and re-validate without resubmitting "
+        "the full YAML. Iterate via patch — do not re-call "
+        "`workflow_create` with the corrected YAML.\n\n"
+        "Pass `dry_run=true` to validate without registering or storing a "
+        "draft (response shape is identical). Most authoring flows do not "
+        "need `dry_run`: just call `workflow_create` and let the "
+        "draft/patch loop handle errors.\n\n"
+        "On success the response includes a preview of how the tool will "
+        "appear in tools/list. Dashes ('-') in the workflow name are "
+        "automatically replaced with underscores ('_'); when a rename "
+        "occurs the response includes `name_sanitized` with the original "
+        "name for reference.\n\n" + _TIER1_DESCRIPTION_BLOCK
     ),
     "inputSchema": {
         "type": "object",
@@ -738,42 +729,6 @@ WORKFLOW_CREATE_TOOL = {
     "outputSchema": _OUTPUT_SCHEMA_WORKFLOW_CREATE,
 }
 
-WORKFLOW_UPDATE_TOOL = {
-    "name": "workflow_update",
-    "description": (
-        "Update a published workflow tool. The workflow's `description` and input "
-        "`description` fields are the public tool interface seen by other agents — "
-        "update them as you would update tool documentation. "
-        "Use workflow_get to retrieve the current definition. "
-        "Returns a preview of how the updated tool will appear in tools/list. "
-        "Note: dashes ('-') in the workflow name are automatically replaced with "
-        "underscores ('_') — both the `name` parameter and the name inside "
-        "`yaml_content` are sanitized the same way."
-    ),
-    "inputSchema": {
-        "type": "object",
-        "required": ["name", "yaml_content"],
-        "properties": {
-            "name": {
-                "type": "string",
-                "description": (
-                    "Name of the workflow to update. Dashes are replaced with "
-                    "underscores before lookup."
-                ),
-            },
-            "yaml_content": {
-                "type": "string",
-                "description": (
-                    "Updated workflow definition in YAML format. Call workflow_schema to "
-                    "see the expected structure. Workflow names must not contain dashes — "
-                    "any dashes are silently replaced with underscores."
-                ),
-            },
-        },
-    },
-    "outputSchema": _OUTPUT_SCHEMA_WORKFLOW_UPDATE,
-}
-
 WORKFLOW_DELETE_TOOL = {
     "name": "workflow_delete",
     "description": "Delete a registered workflow by name.",
@@ -790,34 +745,23 @@ WORKFLOW_DELETE_TOOL = {
     "outputSchema": _OUTPUT_SCHEMA_WORKFLOW_DELETE,
 }
 
-WORKFLOW_VALIDATE_TOOL = {
-    "name": "workflow_validate",
-    "description": (
-        "[Deprecated] Validate workflow YAML without registering it. "
-        "Prefer workflow_create with `dry_run=true` — it returns the same "
-        "validation result plus a `draft_id` and structured "
-        "`suggested_fix` payloads you can hand to workflow_patch. "
-        "This surface is preserved for backwards compatibility and "
-        "returns the legacy {valid, errors, warnings} shape."
-    ),
-    "inputSchema": {
-        "type": "object",
-        "required": ["yaml_content"],
-        "properties": {
-            "yaml_content": {
-                "type": "string",
-                "description": "Workflow YAML to validate.",
-            }
-        },
-    },
-    "outputSchema": _OUTPUT_SCHEMA_WORKFLOW_VALIDATE,
-}
-
 WORKFLOW_PATCH_TOOL = {
     "name": "workflow_patch",
     "description": (
-        "Apply targeted edits to a workflow's YAML without resubmitting "
-        "the full document. Each operation is one of four shapes:\n"
+        "Iterate on a workflow with targeted edits — without resubmitting "
+        "the full YAML. This is the standard repair path for both "
+        "authoring and runtime failures:\n"
+        '- After `workflow_create` returns `status="draft"` with a '
+        "`draft_id`, pass that `draft_id` plus the "
+        "`validation.errors[].suggested_fix` (or your own ops) here to "
+        "re-validate; on success the workflow is registered automatically "
+        "and the draft is dropped; on failure the same `draft_id` comes "
+        "back updated.\n"
+        "- After `workflow_run` fails on a registered workflow, pass "
+        "`name` + a new `version` plus ops derived from the engine's "
+        "`error_metadata.suggested_fix` (or your own diagnosis) to repair "
+        "it in place.\n\n"
+        "Each operation is one of four shapes:\n"
         "- `{op:'replace', step_id, old, new}` — str_replace inside a "
         "single code step's `code` block (the `old` substring must be "
         "unique within that step).\n"
@@ -829,23 +773,25 @@ WORKFLOW_PATCH_TOOL = {
         "`step` must include `id` and either ('tool' + 'mcp') or 'code'.\n"
         "- `{op:'remove_step', step_id}` — remove the step with id "
         "`step_id`. Refuses if other steps reference it via `depends_on`.\n"
-        "The shape of each entry mirrors `validation.errors[].suggested_fix` "
-        "from `workflow_create`, so an agent can pass a fix straight back "
-        "in. If any operation fails, no changes are persisted.\n\n"
-        "Live-safety invariant (P4c): patching a registered workflow "
-        "validates the patched YAML on a copy before swapping it into "
-        "the registry. If validation fails, the live workflow is left "
-        "untouched at its current version and a new draft is returned "
-        "under `draft_id` so the agent can iterate.\n\n"
+        "Op shapes mirror `validation.errors[].suggested_fix` from "
+        "`workflow_create` and `error_metadata.suggested_fix` from "
+        "`workflow_run`, so an agent can pass a fix straight back in. "
+        "If any operation fails, no changes are persisted.\n\n"
+        "Validation runs on every patch and is returned in "
+        "`validation: {valid, errors, warnings}`. Live-safety invariant: "
+        "patching a registered workflow validates the patched YAML on a "
+        "copy before swapping it in. If validation fails, the live "
+        "workflow stays at its current version and a new draft is "
+        "returned under `draft_id` so the agent can keep iterating.\n\n"
         "Two modes:\n"
         "- Registered workflow: pass `name` and `version`. The new "
         "`version` must differ from the current version. The response "
         "includes `previous_version` so the agent can track what changed.\n"
-        "- Draft (S-291 P3): pass `draft_id` returned by "
-        "workflow_create when validation fails. The patched YAML is "
-        "re-validated; on success it is registered (and the draft "
-        "dropped); on failure the draft is updated in place and the "
-        "same `draft_id` is returned.\n\n"
+        "- Draft: pass `draft_id` returned by `workflow_create` (or by a "
+        "previous failed live patch). The patched YAML is re-validated; "
+        "on success it is registered (and the draft dropped); on failure "
+        "the draft is updated in place and the same `draft_id` is "
+        "returned.\n\n"
         "The legacy `patches` parameter (a list of "
         "`{step_id, old, new}` entries) is still accepted as a synonym "
         "for `operations` containing `op:'replace'` entries.\n\n"
@@ -1004,8 +950,12 @@ WORKFLOW_RUN_TOOL: dict[str, Any] = {
     "name": "workflow_run",
     "description": (
         "Execute a registered workflow by name with the given inputs. "
-        "Returns workflow outputs on success, or a structured error on failure. "
-        "Use after workflow_create or workflow_update to verify the workflow behaves correctly."
+        "Returns workflow outputs on success, or a structured error on "
+        "failure with `error_metadata` (code context, prior step outputs, "
+        "rendered params, and a `suggested_fix` op when applicable). "
+        "On failure, repair the workflow via `workflow_patch` using that "
+        "`suggested_fix` (or your own diagnosis) — do not re-author it "
+        "with `workflow_create`."
     ),
     "inputSchema": {
         "type": "object",
@@ -1088,9 +1038,7 @@ ALL_WORKFLOW_MGMT_TOOLS: list[dict[str, Any]] = [
     WORKFLOW_GET_TOOL,
     WORKFLOW_GET_DEFINITION_TOOL,
     WORKFLOW_CREATE_TOOL,
-    WORKFLOW_UPDATE_TOOL,
     WORKFLOW_DELETE_TOOL,
-    WORKFLOW_VALIDATE_TOOL,
     WORKFLOW_PATCH_TOOL,
     WORKFLOW_TOOL_SCHEMA_TOOL,
     WORKFLOW_CALL_TOOL_TOOL,
@@ -1156,9 +1104,7 @@ class WorkflowToolsProvider:
             "workflow_get": self._handle_get,
             "workflow_get_definition": self._handle_get_definition,
             "workflow_create": self._handle_create,
-            "workflow_update": self._handle_update,
             "workflow_delete": self._handle_delete,
-            "workflow_validate": self._handle_validate,
             "workflow_patch": self._handle_patch,
             "workflow_tool_schema": self._handle_tool_schema,
             "workflow_call_tool": self._handle_call_tool,
@@ -1641,6 +1587,49 @@ class WorkflowToolsProvider:
             result.errors.append(issue)
         for issue in detect_reserved_input_names(workflow):
             result.errors.append(issue)
+        # Description-quality advisories (S-286): warning-only checks that
+        # nudge authors to write tools/list-grade docs for the workflow's
+        # public surface (top-level ``description`` and each input's
+        # ``description``). Never affect ``valid``.
+        fallback_description = f"Execute {workflow.name} workflow"
+        if not workflow.description or workflow.description.strip() == fallback_description:
+            result.warnings.append(
+                ValidationIssue(
+                    path="description",
+                    message=(
+                        "description is empty or generic — agents will see a "
+                        "fallback string in tools/list. Write it as tool "
+                        "documentation: purpose, return value, when to use."
+                    ),
+                    severity="warning",
+                )
+            )
+        for inp in workflow.inputs or []:
+            if not inp.description:
+                result.warnings.append(
+                    ValidationIssue(
+                        path=f"inputs[{inp.name}].description",
+                        message=(
+                            f"Input '{inp.name}' has no description — agents "
+                            "will see no parameter doc for this field in "
+                            "tools/list."
+                        ),
+                        severity="warning",
+                    )
+                )
+        # Missing-await check (S-286 / T-905): warning-only AST scan that
+        # flags ``context.tools.call(...)``/``call_mcp(...)`` calls that
+        # forget the ``await`` keyword. Never affects ``valid``.
+        if workflow.steps:
+            for warning in _check_missing_await(workflow.steps):
+                result.warnings.append(
+                    ValidationIssue(
+                        path=warning["path"],
+                        message=warning["message"],
+                        severity="warning",
+                        line=warning.get("line"),
+                    )
+                )
         if result.errors:
             result.valid = False
 
@@ -1666,6 +1655,15 @@ class WorkflowToolsProvider:
         await self._notify_tools_changed()
 
         tool_preview, warnings = self._build_tool_preview(workflow)
+        # Surface any structured advisories collected during validation
+        # (e.g. missing-await warnings) on the success path too.
+        validation_warnings: list[dict[str, Any]] = []
+        for w in result.warnings:
+            entry: dict[str, Any] = {"path": w.path, "message": w.message}
+            line = getattr(w, "line", None)
+            if line is not None:
+                entry["line"] = line
+            validation_warnings.append(entry)
         response: dict[str, Any] = {
             "name": workflow.name,
             "version": workflow.version,
@@ -1673,7 +1671,11 @@ class WorkflowToolsProvider:
             "tool_preview": tool_preview,
             "warnings": warnings,
             "draft_id": None,
-            "validation": {"valid": True, "errors": [], "warnings": []},
+            "validation": {
+                "valid": True,
+                "errors": [],
+                "warnings": validation_warnings,
+            },
         }
         if name_was_sanitized:
             response["name_sanitized"] = {
@@ -1690,8 +1692,6 @@ class WorkflowToolsProvider:
         self, yaml_content: str, exc: BaseException, *, dry_run: bool
     ) -> dict[str, Any]:
         """Build a ``status="draft"`` response for an unparseable YAML."""
-        from ploston_core.types import ValidationIssue, ValidationResult
-
         issue = {
             "path": "yaml",
             "message": f"YAML parse error: {exc}",
@@ -1748,7 +1748,13 @@ class WorkflowToolsProvider:
             safe_imports=SAFE_IMPORTS,
             dangerous_builtins=DANGEROUS_BUILTINS,
         )
-        warnings_payload = [{"path": w.path, "message": w.message} for w in result.warnings]
+        warnings_payload: list[dict[str, Any]] = []
+        for w in result.warnings:
+            entry: dict[str, Any] = {"path": w.path, "message": w.message}
+            line = getattr(w, "line", None)
+            if line is not None:
+                entry["line"] = line
+            warnings_payload.append(entry)
 
         # When the workflow is valid AND dry_run, no draft is stored — the
         # caller is just inspecting. Otherwise stash the YAML so the next
@@ -1783,65 +1789,6 @@ class WorkflowToolsProvider:
             }
         return response
 
-    async def _handle_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Handle workflow_update tool call."""
-        name = arguments.get("name")
-        yaml_content = arguments.get("yaml_content")
-        if not name:
-            raise create_error("PARAM_INVALID", message="'name' parameter is required")
-        if not yaml_content:
-            raise create_error("PARAM_INVALID", message="'yaml_content' parameter is required")
-
-        # Sanitize the lookup name first — workflows are always stored under
-        # the dashless form, so a caller passing "my-flow" must resolve to
-        # the "my_flow" entry.
-        name = _sanitize_workflow_name(name)
-
-        existing = self._registry.get(name)
-        if not existing:
-            raise create_error("WORKFLOW_NOT_FOUND", workflow_name=name)
-
-        from .parser import parse_workflow_yaml
-
-        workflow = parse_workflow_yaml(yaml_content)
-
-        # Sanitize the name inside the YAML body too — dashes are never
-        # allowed to reach the registry, so the YAML's `name:` field is
-        # rewritten before comparison and registration.
-        original_yaml_name = workflow.name
-        sanitized_yaml_name = _sanitize_workflow_name(original_yaml_name)
-        yaml_name_was_sanitized = sanitized_yaml_name != original_yaml_name
-        if yaml_name_was_sanitized:
-            yaml_content = _rewrite_workflow_name_in_yaml(yaml_content, sanitized_yaml_name)
-            workflow.name = sanitized_yaml_name
-
-        if workflow.name != name:
-            raise create_error(
-                "INPUT_INVALID",
-                message=f"Workflow name '{workflow.name}' does not match '{name}'",
-            )
-
-        self._registry.unregister(name)
-        # register_from_yaml raises AELError(INPUT_INVALID) on validation failure
-        self._registry.register_from_yaml(yaml_content, persist=True)
-        await self._notify_tools_changed()
-
-        tool_preview, warnings = self._build_tool_preview(workflow)
-        response: dict[str, Any] = {
-            "name": workflow.name,
-            "version": workflow.version,
-            "status": "updated",
-            "tool_preview": tool_preview,
-            "warnings": warnings,
-        }
-        if yaml_name_was_sanitized:
-            response["name_sanitized"] = {
-                "original": original_yaml_name,
-                "registered_as": sanitized_yaml_name,
-                "reason": "dashes replaced with underscores",
-            }
-        return response
-
     async def _handle_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_delete tool call."""
         name = arguments.get("name")
@@ -1853,78 +1800,6 @@ class WorkflowToolsProvider:
 
         await self._notify_tools_changed()
         return {"name": name, "status": "deleted"}
-
-    async def _handle_validate(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``workflow_validate`` (deprecated alias).
-
-        S-291 P3: this surface used to be the only way to dry-run a YAML.
-        ``workflow_create`` now accepts ``dry_run=true`` and returns a
-        ``status="draft"`` envelope with enriched errors and a
-        ``draft_id``. This handler delegates to that flow and adapts the
-        response back to the legacy ``{valid, errors, warnings}`` shape
-        for backwards compatibility. Description-quality and
-        missing-``await`` warnings are still surfaced for parity.
-
-        Prefer ``workflow_create(dry_run=true)`` in new code.
-        """
-        yaml_content = arguments.get("yaml_content")
-        if not yaml_content:
-            raise create_error("PARAM_INVALID", message="'yaml_content' parameter is required")
-
-        # Delegate to the validation-bearing creation flow.
-        create_response = await self._handle_create({"yaml_content": yaml_content, "dry_run": True})
-        validation = create_response.get("validation") or {}
-
-        # Description quality check + missing-await check (warnings only —
-        # never affect ``valid``). Both are best-effort: any parse or
-        # analysis failure degrades to an empty list.
-        desc_warnings: list[dict[str, Any]] = []
-        async_warnings: list[dict[str, Any]] = []
-        try:
-            from .parser import parse_workflow_yaml
-
-            wf = parse_workflow_yaml(yaml_content)
-            fallback = f"Execute {wf.name} workflow"
-            if not wf.description or wf.description.strip() == fallback:
-                desc_warnings.append(
-                    {
-                        "path": "description",
-                        "message": (
-                            "description is empty or generic — agents will see a fallback string in "
-                            "tools/list. Write it as tool documentation: purpose, return value, when to use."
-                        ),
-                    }
-                )
-            if wf.inputs:
-                for inp in wf.inputs:
-                    if not inp.description:
-                        desc_warnings.append(
-                            {
-                                "path": f"inputs[{inp.name}].description",
-                                "message": (
-                                    f"Input '{inp.name}' has no description — agents will see no "
-                                    "parameter doc for this field in tools/list."
-                                ),
-                            }
-                        )
-            if wf.steps:
-                async_warnings = _check_missing_await(wf.steps)
-        except Exception:
-            desc_warnings = []
-            async_warnings = []
-
-        # Adapt enriched errors back to the legacy ``{path, message}`` shape.
-        legacy_errors = [
-            {"path": e.get("path", ""), "message": e.get("message", "")}
-            for e in validation.get("errors", [])
-        ]
-        legacy_warnings = list(validation.get("warnings", []))
-
-        return {
-            "valid": bool(validation.get("valid", False)),
-            "errors": legacy_errors,
-            "warnings": legacy_warnings + desc_warnings + async_warnings,
-        }
 
     async def _handle_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Handle workflow_patch tool call.
@@ -1968,9 +1843,9 @@ class WorkflowToolsProvider:
             for p in patches:
                 ops.append({"op": "replace", **p})
 
-        # Match existing handler pattern (_handle_update et al): use
-        # PARAM_INVALID with tool_name for parity even though the
-        # ``message`` kwarg is templated out by the error registry.
+        # Match existing handler pattern: use PARAM_INVALID with
+        # tool_name for parity even though the ``message`` kwarg is
+        # templated out by the error registry.
         if not ops:
             raise create_error("PARAM_INVALID", tool_name="workflow_patch")
         if not name and not draft_id:

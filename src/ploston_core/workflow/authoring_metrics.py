@@ -7,8 +7,8 @@ that quantify the round-trip and token savings claims of M-081:
   payload size; ensures the budget under 2K tokens stays honest.
 - ``ploston_workflow_create_roundtrips_total`` (counter) — count of
   ``workflow_create`` calls per session; target is 1 per session.
-- ``ploston_workflow_patch_calls_total`` (counter) — replaces the
-  pre-change ``workflow_update`` count.
+- ``ploston_workflow_patch_calls_total`` (counter) — sole workflow
+  mutation surface; tracks YAML-edit volume.
 - ``ploston_draft_created_total`` (counter) — drafts produced when
   ``workflow_create`` returns invalid YAML.
 - ``ploston_draft_promoted_total`` (counter) — drafts promoted to
@@ -75,7 +75,7 @@ class WorkflowAuthoringMetrics:
         )
         self._workflow_patch_calls_total = meter.create_counter(
             name=f"{_PREFIX}_workflow_patch_calls_total",
-            description="Total workflow_patch calls; replaces workflow_update count.",
+            description="Total workflow_patch calls; sole mutation surface.",
             unit="1",
         )
         self._draft_created_total = meter.create_counter(

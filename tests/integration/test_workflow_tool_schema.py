@@ -1,7 +1,7 @@
 """Integration tests for workflow_tool_schema (I-01 & I-02).
 
 I-01: Full authoring loop: workflow_schema → workflow_tool_schema →
-      workflow_create → workflow_validate succeeds end-to-end.
+      workflow_create(dry_run=True) → workflow_create succeeds end-to-end.
 I-02: workflow_tool_schema is present in tools/list and callable.
 
 Usage:
@@ -156,11 +156,16 @@ steps:
         assert create_result["name_sanitized"]["original"] == "test-loop"
         assert create_result["name_sanitized"]["registered_as"] == "test_loop"
 
-        # Step 4: workflow_validate — confirm the YAML is valid
+        # Step 4: workflow_create(dry_run=True) — confirm the YAML still
+        # validates after the round-trip. The validation envelope lives
+        # inside the create response now (S-291 P3).
         validate_result = _parse(
-            await provider.call("workflow_validate", {"yaml_content": yaml_content})
+            await provider.call(
+                "workflow_create",
+                {"yaml_content": yaml_content, "dry_run": True},
+            )
         )
-        assert validate_result["valid"] is True
+        assert validate_result["validation"]["valid"] is True
 
 
 class TestToolExposure:
@@ -182,10 +187,15 @@ class TestToolExposure:
 
 
 class TestValidateAwait:
-    """S-286 / T-905: workflow_validate surfaces missing-await warnings."""
+    """S-286 / T-905: workflow_create surfaces missing-await warnings.
+
+    The check used to live behind ``workflow_validate``; after S-291 P3 +
+    the deprecated-tool removal, it ships through
+    ``workflow_create(dry_run=true)`` in the ``validation.warnings`` list.
+    """
 
     @pytest.mark.asyncio
-    async def test_validate_returns_await_warning(self, provider):
+    async def test_create_dry_run_returns_await_warning(self, provider):
         yaml_content = """
 name: missing_await
 version: "1.0"
@@ -196,10 +206,13 @@ steps:
       x = context.tools.call_mcp("github", "list_repos", {})
       result = {"x": x}
 """
-        raw = await provider.call("workflow_validate", {"yaml_content": yaml_content})
+        raw = await provider.call(
+            "workflow_create", {"yaml_content": yaml_content, "dry_run": True}
+        )
         result = _parse(raw)
-        assert result["valid"] is True
-        await_warnings = [w for w in result["warnings"] if w.get("path") == "steps[bad].code"]
+        validation = result["validation"]
+        assert validation["valid"] is True
+        await_warnings = [w for w in validation["warnings"] if w.get("path") == "steps[bad].code"]
         assert len(await_warnings) == 1
         assert "await" in await_warnings[0]["message"]
         assert await_warnings[0]["line"] == 1
