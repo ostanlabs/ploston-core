@@ -10,6 +10,7 @@ workflow_schema(section=...). The full dump is still available through
 ``generate_workflow_schema()`` for backward compatibility.
 """
 
+import copy
 import dataclasses
 import enum
 import types
@@ -28,9 +29,12 @@ from .types import (
 # Fields that are internal (not part of the YAML surface)
 _INTERNAL_FIELDS = {"source_path", "yaml_content"}
 
-# S-290 P2: canonical section names exposed via workflow_schema(section=...).
+# Canonical section names exposed via workflow_schema(section=...).
 # Order matters — used as the deterministic "available_sections" listing.
+# "discovery" leads because it is the recommended first call after the
+# Tier 1 schema (see ``before_you_start`` in ``generate_tier1_schema``).
 AVAILABLE_SECTIONS: tuple[str, ...] = (
+    "discovery",
     "sandbox_constraints",
     "context_api",
     "tool_steps",
@@ -477,7 +481,8 @@ def generate_workflow_schema() -> dict[str, Any]:
     base["authoring_tools"] = {
         "description": (
             "MCP tools for iterative workflow authoring. "
-            "Recommended flow: workflow_schema → workflow_list_tools → "
+            "Recommended flow: workflow_schema → "
+            'workflow_schema(section="discovery") → workflow_list_tools → '
             "workflow_tool_schema → workflow_create. "
             "Submit the YAML directly via workflow_create — do not call any "
             "separate validate tool. If workflow_create returns "
@@ -596,8 +601,95 @@ outputs:
 
 
 # ─────────────────────────────────────────────────────────────────
-# S-290 P2: Tier 1 minimal schema + on-demand section accessors
+# Tier 1 minimal schema + on-demand section accessors
 # ─────────────────────────────────────────────────────────────────
+
+
+# Principle-only guidance returned by workflow_schema(section="discovery").
+# Deliberately MCP-agnostic: no concrete tool names from any specific server.
+# Concrete examples for a target server come from workflow_list_tools +
+# workflow_tool_schema + workflow_call_tool, on demand.
+_DISCOVERY_SECTION: dict[str, Any] = {
+    "purpose": (
+        "Investigation discipline for the conversation that precedes "
+        "workflow_create. Loaded explicitly via "
+        'workflow_schema(section="discovery"). Holds principles only — '
+        "concrete tool names live behind workflow_list_tools / "
+        "workflow_tool_schema / workflow_call_tool."
+    ),
+    "principles": {
+        "narrow_over_broad": (
+            "Always call discovery tools with the narrowest filters they "
+            "support (per_page / limit, status, branch, path, time window, "
+            "tag, name prefix). Every byte returned is context the agent "
+            "must re-process on the next turn. An unfiltered list call is "
+            "almost always the wrong call."
+        ),
+        "schema_then_call": (
+            "Before authoring a step against an unfamiliar tool, call "
+            "workflow_tool_schema for the contract, then workflow_call_tool "
+            "with realistic params to see the actual response shape. "
+            "Do not infer response shapes from tool names or descriptions."
+        ),
+        "source_over_surface": (
+            "When both a configuration source (a file, manifest, or "
+            "declarative definition) and a runtime-state listing (jobs, "
+            "runs, instances, events) can answer the same question, prefer "
+            "the source. The source is canonical; the listing reflects "
+            "history and may be partial, paginated, or rate-limited."
+        ),
+        "investigate_in_conversation": (
+            "Do investigation up-front in the conversation, not inline as "
+            "workflow steps. A workflow step should encode a validated "
+            "plan against a known shape; it should not re-discover the "
+            "shape at runtime. If a step needs to branch on data, encode "
+            "the branch on the data — not on a fresh discovery call."
+        ),
+        "minimal_step_count": (
+            "Prefer the smallest number of steps that produces the "
+            "required output. A single tool call followed by a single "
+            "code step that shapes the result is usually sufficient. "
+            "Resist adding steps that re-fetch data already available "
+            "in context.steps[<id>].output."
+        ),
+    },
+    "investigation_toolbox": {
+        "workflow_list_tools": (
+            "Discover which MCP servers are connected and what tools they "
+            "expose. Scope to specific servers via mcp_servers=[...] when "
+            "you know the domain."
+        ),
+        "workflow_tool_schema": (
+            "Pull the parameter schema for one or many tools (batch via "
+            "tools=[{mcp,tool}, ...]). Read this before authoring params."
+        ),
+        "workflow_call_tool": (
+            "Smoke-test a tool with realistic params and inspect the "
+            "normalized response. Use this to confirm response shapes "
+            "before encoding step params or output handling."
+        ),
+        "workflow_get / workflow_list": (
+            "Inspect already-registered workflows. Useful for cloning, "
+            "patching, or verifying a name is free before workflow_create."
+        ),
+    },
+    "anti_patterns": [
+        "Listing everything and filtering in a code step instead of passing filters to the tool.",
+        "Authoring steps against an inferred response shape, then "
+        "iterating via workflow_run errors instead of confirming the "
+        "shape via workflow_call_tool first.",
+        "Adding a discovery step inside the workflow to learn data the "
+        "agent could have learned during authoring.",
+        "Calling the same listing tool twice with the same params across "
+        "two steps instead of reusing context.steps[<id>].output.",
+    ],
+    "next": (
+        "After discovery: workflow_list_tools → workflow_tool_schema → "
+        "workflow_create. On validation failure use workflow_patch with "
+        "the returned draft_id; on runtime failure use workflow_patch "
+        "with the engine's error_metadata.suggested_fix."
+    ),
+}
 
 
 def generate_tier1_schema() -> dict[str, Any]:
@@ -615,6 +707,12 @@ def generate_tier1_schema() -> dict[str, Any]:
     ``test_tier1_under_2k_tokens``.
     """
     return {
+        "before_you_start": (
+            'Call workflow_schema(section="discovery") next for '
+            "investigation-discipline principles (narrow filters over "
+            "broad calls, schema-then-call, source-over-surface). "
+            "Read these before authoring against an unfamiliar tool."
+        ),
         "fields": {
             "name": "string — workflow identifier (dashes auto-replaced with underscores)",
             "version": 'string — semver, e.g. "1.0.0"',
@@ -667,6 +765,11 @@ def _build_section(name: str, full_schema: dict[str, Any]) -> dict[str, Any]:
     name (see ``AVAILABLE_SECTIONS``) to the corresponding sub-tree of the
     full schema produced by ``generate_workflow_schema()``.
     """
+    if name == "discovery":
+        # Static, principle-only guidance — independent of the rest of the
+        # generated schema. Returned as a deep copy so callers can mutate
+        # the dict without affecting the module-level constant.
+        return copy.deepcopy(_DISCOVERY_SECTION)
     if name == "sandbox_constraints":
         return dict(full_schema["code_steps"]["sandbox_constraints"])
     if name == "context_api":

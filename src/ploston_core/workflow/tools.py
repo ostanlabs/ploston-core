@@ -40,6 +40,8 @@ def _render_tier1_for_description() -> str:
     """
     t1 = generate_tier1_schema()
     lines: list[str] = ["YAML schema (Tier 1):"]
+    if t1.get("before_you_start"):
+        lines.append(f"Before you start: {t1['before_you_start']}")
     lines.append("Fields:")
     for k, v in t1["fields"].items():
         lines.append(f"  {k}: {v}")
@@ -577,10 +579,15 @@ WORKFLOW_SCHEMA_TOOL = {
         "Without arguments returns the Tier 1 minimal schema (~1.5K tokens) — "
         "field names, step types, template syntax, and a pointer to detailed "
         "sections. Call with section=NAME for deeper detail. "
-        "Sections: sandbox_constraints, context_api, tool_steps, inputs, "
-        "outputs, defaults, packages, examples. "
-        "Authoring flow: workflow_schema → workflow_list_tools → "
-        "workflow_tool_schema → workflow_create. If workflow_create returns "
+        "Sections: discovery, sandbox_constraints, context_api, tool_steps, "
+        "inputs, outputs, defaults, packages, examples. "
+        "Authoring flow: workflow_schema → "
+        'workflow_schema(section="discovery") → workflow_list_tools → '
+        "workflow_tool_schema → workflow_create. The discovery section "
+        "carries investigation-discipline principles (narrow filters over "
+        "broad calls, schema-then-call, source-over-surface) and should be "
+        "loaded before authoring against an unfamiliar tool. "
+        "If workflow_create returns "
         '`status="draft"`, fix it via workflow_patch with the returned '
         "`draft_id` — do not re-call workflow_create. If workflow_run fails, "
         "repair the registered workflow with workflow_patch. Do not call "
@@ -593,6 +600,7 @@ WORKFLOW_SCHEMA_TOOL = {
                 "type": "string",
                 "description": ("Optional section name. Omit to get the Tier 1 minimal schema."),
                 "enum": [
+                    "discovery",
                     "sandbox_constraints",
                     "context_api",
                     "tool_steps",
@@ -679,6 +687,10 @@ WORKFLOW_CREATE_TOOL = {
         "pre-validate it through any other tool. Validation runs as part of "
         "`workflow_create` and its result is always returned in "
         "`validation: {valid, errors, warnings}`.\n\n"
+        "Before authoring against an unfamiliar tool, call "
+        '`workflow_schema(section="discovery")` for investigation-discipline '
+        "principles (narrow filters over broad calls, schema-then-call via "
+        "`workflow_tool_schema` + `workflow_call_tool`, source-over-surface).\n\n"
         "Outcomes:\n"
         "- Success: the workflow is registered and appears in tools/list "
         'under its bare name (`status="created"`). The response also '

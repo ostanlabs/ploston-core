@@ -628,6 +628,91 @@ class TestSchemaSplitToolDescriptions:
         assert list(enum) == list(AVAILABLE_SECTIONS)
 
 
+# ── M-081 follow-up: discovery section ───────────────────────────────
+# Adds a principle-only "discovery" section that fronts the authoring
+# flow with investigation discipline (narrow filters over broad calls,
+# schema-then-call, source-over-surface).
+
+
+class TestDiscoverySection:
+    def test_discovery_listed_first(self):
+        """`discovery` must lead AVAILABLE_SECTIONS so the more_detail
+        breadcrumb and inputSchema enum surface it before any other
+        section."""
+        assert AVAILABLE_SECTIONS[0] == "discovery"
+
+    def test_discovery_section_resolves_with_principles(self):
+        """Section content is principle-only and stable."""
+        section = generate_section("discovery")
+        assert "principles" in section
+        principles = section["principles"]
+        # Each principle is a non-empty string keyed by a stable name.
+        for key in (
+            "narrow_over_broad",
+            "schema_then_call",
+            "source_over_surface",
+            "investigate_in_conversation",
+            "minimal_step_count",
+        ):
+            assert key in principles, f"missing principle: {key}"
+            assert isinstance(principles[key], str) and principles[key].strip()
+        # Companion fields documented in the spec.
+        assert "investigation_toolbox" in section
+        assert "anti_patterns" in section and section["anti_patterns"]
+        assert "next" in section and "workflow_create" in section["next"]
+
+    def test_discovery_section_is_principle_only(self):
+        """Section must not name concrete MCP servers/tools — those live
+        behind workflow_list_tools / workflow_tool_schema."""
+        import json as _json
+
+        blob = _json.dumps(generate_section("discovery")).lower()
+        for forbidden in ("github", "grafana", "loki", "prometheus", "tempo"):
+            assert forbidden not in blob, (
+                f"discovery section must stay MCP-agnostic; found {forbidden!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_schema_section_discovery_via_provider(self, provider):
+        raw = await provider.call("workflow_schema", {"section": "discovery"})
+        result = _parse(raw)
+        assert result["section"] == "discovery"
+        assert "principles" in result["schema"]
+        assert list(result["available_sections"]) == list(AVAILABLE_SECTIONS)
+
+
+class TestDiscoverySurfacing:
+    def test_tier1_carries_before_you_start_pointer(self):
+        """Tier 1 schema must include a `before_you_start` field that
+        points at the discovery section."""
+        t1 = generate_tier1_schema()
+        assert "before_you_start" in t1
+        bys = t1["before_you_start"]
+        assert "discovery" in bys
+        assert "workflow_schema" in bys
+
+    def test_create_description_points_at_discovery(self):
+        """workflow_create description must include the discovery
+        pointer so agents that skip the schema step still see it."""
+        desc = WORKFLOW_CREATE_TOOL["description"]
+        assert 'workflow_schema(section="discovery")' in desc
+
+    def test_schema_description_mentions_discovery(self):
+        """workflow_schema description lists discovery in the section
+        catalogue and in the recommended flow."""
+        desc = WORKFLOW_SCHEMA_TOOL["description"]
+        assert "discovery" in desc
+        assert 'workflow_schema(section="discovery")' in desc
+
+    def test_tier1_rendered_block_includes_before_you_start(self):
+        """The compact block embedded in workflow_create.description
+        must surface the before_you_start line."""
+        from ploston_core.workflow.tools import _TIER1_DESCRIPTION_BLOCK
+
+        assert "Before you start:" in _TIER1_DESCRIPTION_BLOCK
+        assert "discovery" in _TIER1_DESCRIPTION_BLOCK
+
+
 # ── S-291 (P3): workflow_create absorbs validation surface ──────────
 # (P3 of the WORKFLOW_AUTHORING_DX_V2 spec.)
 
