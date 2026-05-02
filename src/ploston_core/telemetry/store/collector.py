@@ -1,6 +1,7 @@
 """Telemetry Collector - Event collector for execution telemetry."""
 
 import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -135,6 +136,15 @@ class TelemetryCollector:
 
         # Calculate metrics
         record.metrics = self._calculate_metrics(record)
+
+        # T-967 — denormalized counters / byte sizes for ClickHouse + Session Inspector
+        record.inputs_bytes = _byte_size(record.inputs)
+        record.outputs_bytes = _byte_size(record.outputs)
+        record.step_count = len(record.steps)
+        record.tool_call_count = sum(len(s.tool_calls) for s in record.steps)
+        record.total_response_bytes = sum(
+            tc.response_bytes for s in record.steps for tc in s.tool_calls
+        )
 
         await self._store.save_execution(record)
         del self._active_executions[execution_id]
@@ -344,3 +354,17 @@ class TelemetryCollector:
                 )
 
         return metrics
+
+
+def _byte_size(value: Any) -> int:
+    """Return the UTF-8 byte length of ``value`` JSON-serialized.
+
+    Used for T-967 byte counters; falls back to 0 if serialization fails
+    (e.g. value contains non-JSON types) so collection never crashes a request.
+    """
+    if value is None or value == {} or value == "":
+        return 0
+    try:
+        return len(json.dumps(value, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0

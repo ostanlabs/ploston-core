@@ -89,7 +89,7 @@ class TelemetryStoreConfig:
     enabled: bool = True
 
     # Storage backend
-    storage_type: str = "memory"  # "memory" | "sqlite" | "postgres"
+    storage_type: str = "memory"  # "memory" | "sqlite" | "postgres" | "clickhouse"
 
     # SQLite settings
     sqlite_path: str = "./data/telemetry.db"
@@ -100,6 +100,14 @@ class TelemetryStoreConfig:
     # Memory settings
     max_memory_records: int = 1000
 
+    # ClickHouse settings (S-296)
+    clickhouse_host: str = "localhost"
+    clickhouse_port: int = 8123
+    clickhouse_database: str = "ploston"
+    clickhouse_username: str = "default"
+    clickhouse_password: str = ""
+    clickhouse_secure: bool = False
+
     # Retention
     retention: RetentionConfig = field(default_factory=RetentionConfig)
 
@@ -108,3 +116,8 @@ class TelemetryStoreConfig:
 
     # Export
     otlp: OTLPExportConfig = field(default_factory=OTLPExportConfig)
+
+    def __post_init__(self) -> None:
+        """Validate configuration."""
+        if self.storage_type == "clickhouse" and not self.clickhouse_host:
+            raise ValueError("clickhouse_host must be set when storage_type='clickhouse'")

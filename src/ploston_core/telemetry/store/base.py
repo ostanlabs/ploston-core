@@ -141,6 +141,19 @@ def create_telemetry_store(config: "TelemetryStoreConfig") -> TelemetryStore:
             db_path=config.sqlite_path,
             redaction=config.redaction,
         )
+    elif config.storage_type == "clickhouse":
+        # Local import keeps clickhouse-connect optional for SQLite/memory deployments.
+        from .clickhouse.store import ClickHouseTelemetryStore
+
+        return ClickHouseTelemetryStore(
+            host=config.clickhouse_host,
+            port=config.clickhouse_port,
+            database=config.clickhouse_database,
+            username=config.clickhouse_username,
+            password=config.clickhouse_password,
+            secure=config.clickhouse_secure,
+            redaction=config.redaction,
+        )
     elif config.storage_type == "postgres":
         if not config.postgres_connection_string:
             raise ValueError("PostgreSQL connection string required")

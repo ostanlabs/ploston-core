@@ -49,6 +49,7 @@ class ToolCallSource(str, Enum):
 
     TOOL_STEP = "tool_step"  # From a tool step in workflow
     CODE_BLOCK = "code_block"  # From within python_exec code
+    DIRECT = "direct"  # Direct tool call outside any workflow (T-967)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -86,6 +87,13 @@ class ToolCallRecord:
     step_id: str = ""
     source: ToolCallSource = ToolCallSource.TOOL_STEP
     sequence: int = 0  # Order within step
+
+    # T-967 — populated by callers (MCPFrontend, sandbox)
+    params_bytes: int = 0
+    response_bytes: int = 0
+    runner_id: str | None = None
+    bridge_id: str | None = None
+    session_id: str | None = None
 
 
 @dataclass
@@ -181,3 +189,10 @@ class ExecutionRecord:
 
     # Logs (in-memory only, not persisted to DB)
     logs: list[dict[str, Any]] = field(default_factory=list)
+
+    # T-967 — computed at end_execution time by TelemetryCollector
+    inputs_bytes: int = 0
+    outputs_bytes: int = 0
+    step_count: int = 0
+    tool_call_count: int = 0
+    total_response_bytes: int = 0
