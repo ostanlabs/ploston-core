@@ -45,6 +45,41 @@ if TYPE_CHECKING:
     from ploston_core.runner_management import RunnerRegistry
 
 
+def _build_telemetry_store_config_from_env() -> TelemetryStoreConfig:
+    """Translate ``PLOSTON_*`` env vars into a TelemetryStoreConfig.
+
+    DEC-193: ``PLOSTON_TELEMETRY_BACKEND`` chooses between sqlite (default,
+    OSS-friendly) and clickhouse (observability bootstrap path). Discrete
+    ``PLOSTON_CLICKHOUSE_*`` vars carry the connection details — there is
+    no DSN form yet (deferred per S-303 v2).
+
+    Validation lives in ``TelemetryStoreConfig.__post_init__``: missing
+    ``PLOSTON_CLICKHOUSE_HOST`` raises ``ValueError`` and the CP fails fast.
+    """
+    backend = os.environ.get("PLOSTON_TELEMETRY_BACKEND", "sqlite").lower()
+    if backend == "clickhouse":
+        return TelemetryStoreConfig(
+            enabled=True,
+            storage_type="clickhouse",
+            clickhouse_host=os.environ.get("PLOSTON_CLICKHOUSE_HOST", ""),
+            clickhouse_port=int(os.environ.get("PLOSTON_CLICKHOUSE_PORT", "8123")),
+            clickhouse_database=os.environ.get("PLOSTON_CLICKHOUSE_DATABASE", "ploston"),
+            clickhouse_username=os.environ.get("PLOSTON_CLICKHOUSE_USERNAME", "default"),
+            clickhouse_password=os.environ.get("PLOSTON_CLICKHOUSE_PASSWORD", ""),
+            clickhouse_secure=os.environ.get("PLOSTON_CLICKHOUSE_SECURE", "false").lower()
+            == "true",
+        )
+    telemetry_store_path = os.environ.get(
+        "TELEMETRY_STORE_SQLITE_PATH",
+        "./data/telemetry.db",
+    )
+    return TelemetryStoreConfig(
+        enabled=True,
+        storage_type="sqlite",
+        sqlite_path=telemetry_store_path,
+    )
+
+
 class PlostApplication:
     """
     Ploston Application orchestrator.
@@ -247,16 +282,22 @@ class PlostApplication:
                     "opentelemetry-instrumentation-logging not installed; skipping OTEL log bridge"
                 )
 
-        # 3b. Telemetry Store (DEC-148: canonical execution store)
-        telemetry_store_path = os.environ.get(
-            "TELEMETRY_STORE_SQLITE_PATH",
-            "./data/telemetry.db",
-        )
-        store_config = TelemetryStoreConfig(
-            enabled=True,
-            storage_type="sqlite",
-            sqlite_path=telemetry_store_path,
-        )
+        # 3b. Telemetry Store (DEC-148: canonical execution store; DEC-193: backend selection)
+        store_config = _build_telemetry_store_config_from_env()
+        if store_config.storage_type == "clickhouse":
+            # Run schema migrations idempotently before the store is constructed,
+            # so save_execution() never hits a missing schema. run_migrations is
+            # async and idempotent (covered by S-295's testcontainers tests).
+            from ploston_core.telemetry.store.clickhouse.migrate import run_migrations
+
+            await run_migrations(
+                host=store_config.clickhouse_host,
+                port=store_config.clickhouse_port,
+                database=store_config.clickhouse_database,
+                username=store_config.clickhouse_username,
+                password=store_config.clickhouse_password,
+                secure=store_config.clickhouse_secure,
+            )
         self.telemetry_store = create_telemetry_store(store_config)
 
         # 3c. Telemetry Collector (DEC-152: wraps store for execution lifecycle)
