@@ -774,10 +774,21 @@ WORKFLOW_PATCH_TOOL = {
         "`name` + a new `version` plus ops derived from the engine's "
         "`error_metadata.suggested_fix` (or your own diagnosis) to repair "
         "it in place.\n\n"
-        "Each operation is one of four shapes:\n"
+        "Each operation is one of five shapes:\n"
         "- `{op:'replace', step_id, old, new}` — str_replace inside a "
         "single code step's `code` block (the `old` substring must be "
-        "unique within that step).\n"
+        "unique within that step). Best for surgical, single-expression "
+        "edits.\n"
+        "- `{op:'replace_lines', step_id, start_line, end_line, new}` — "
+        "address a code step's `code` block by 1-indexed inclusive line "
+        "range and replace it with `new` (raw text, not a list of lines). "
+        "`end_line` defaults to `start_line` when omitted; pass `-1` for "
+        '"through end of code". `new` must be unindented exactly as the '
+        "code block prints (ruamel re-applies the YAML indent on dump). "
+        "Sequential ops on the same step see line numbers shift after "
+        "earlier ops apply — process bottom-to-top to avoid drift. Best "
+        "for replacing large contiguous blocks where re-typing the `old` "
+        "substring verbatim is error-prone.\n"
         "- `{op:'set', path, value}` — set the YAML scalar at a "
         "dot-delimited path (e.g. `steps.greet.mcp`, `steps.greet.tool`, "
         "`defaults.timeout`, `inputs.lookback.default`).\n"
@@ -854,6 +865,17 @@ WORKFLOW_PATCH_TOOL = {
                                 "op": {"const": "replace"},
                                 "step_id": {"type": "string"},
                                 "old": {"type": "string"},
+                                "new": {"type": "string"},
+                            },
+                            "additionalProperties": False,
+                        },
+                        {
+                            "required": ["op", "step_id", "start_line", "new"],
+                            "properties": {
+                                "op": {"const": "replace_lines"},
+                                "step_id": {"type": "string"},
+                                "start_line": {"type": "integer", "minimum": 1},
+                                "end_line": {"type": "integer"},
                                 "new": {"type": "string"},
                             },
                             "additionalProperties": False,
@@ -1160,6 +1182,42 @@ def _find_closest_match(attempted_old: str, code_str: str) -> dict[str, Any] | N
         "line_range": [best_start + 1, best_start + best_size],
         "match_ratio": round(best_ratio, 3),
         "differences": differences,
+    }
+
+
+def _build_line_range_invalid_payload(
+    *,
+    step_id: str,
+    code_str: str,
+    total_lines: int,
+    requested_range: list[int],
+) -> dict[str, Any]:
+    """Build the structured ``data`` payload for a ``replace_lines`` op
+    that addressed a line range outside the step's code body.
+
+    Returns ``step_id``, ``step_code`` (canonical body, capped),
+    ``total_lines``, ``requested_range`` (as ``[start_line, end_line]``;
+    ``end_line`` may be ``-1`` for the "through end" sentinel), and a
+    ``context`` window of up to 3 lines around ``requested_range[0]``
+    clamped to bounds. Each context entry is ``{line, text}`` so the
+    agent can self-correct without re-fetching the whole step.
+    """
+    code_lines = code_str.splitlines()
+    if total_lines:
+        pivot = max(1, min(requested_range[0], total_lines))
+        window_start = max(1, pivot - 1)
+        window_end = min(total_lines, pivot + 1)
+        context = [
+            {"line": ln, "text": code_lines[ln - 1]} for ln in range(window_start, window_end + 1)
+        ]
+    else:
+        context = []
+    return {
+        "step_id": step_id,
+        "step_code": _truncate_for_payload(code_str),
+        "total_lines": total_lines,
+        "requested_range": requested_range,
+        "context": context,
     }
 
 
@@ -2072,6 +2130,8 @@ class WorkflowToolsProvider:
             op_type = op_entry.get("op", "replace")
             if op_type == "replace":
                 self._apply_replace_op(op_entry, index, name, steps_list)
+            elif op_type == "replace_lines":
+                self._apply_replace_lines_op(op_entry, index, name, steps_list)
             elif op_type == "set":
                 self._apply_set_op(op_entry, index, data)
             elif op_type == "add_step":
@@ -2083,7 +2143,8 @@ class WorkflowToolsProvider:
                     "INPUT_INVALID",
                     detail=(
                         f"operations[{index}].op must be one of 'replace', "
-                        f"'set', 'add_step', 'remove_step'; got {op_type!r}"
+                        f"'replace_lines', 'set', 'add_step', 'remove_step'; "
+                        f"got {op_type!r}"
                     ),
                 )
 
@@ -2242,6 +2303,95 @@ class WorkflowToolsProvider:
             )
 
         step_data["code"] = code_str.replace(old, new, 1)
+
+    def _apply_replace_lines_op(
+        self,
+        op_entry: dict[str, Any],
+        index: int,
+        name: str,
+        steps_list: list[Any],
+    ) -> None:
+        """Apply ``{op: 'replace_lines', step_id, start_line, end_line, new}``.
+
+        Addresses a step's ``code`` block by 1-based inclusive line range and
+        replaces ``lines[start_line-1 : end_line]`` with ``new`` (treated as
+        raw text). Uses ``splitlines()`` for addressing so the line numbering
+        matches the engine's ``line_in_step`` and the validator's per-issue
+        ``line`` field — agents can pass those values straight through as
+        ``start_line``. The original code body's trailing newline (if any)
+        is preserved on rejoin. ``end_line == -1`` is the "through end of
+        code" sentinel; ``end_line`` defaults to ``start_line`` when omitted.
+        """
+        step_id = op_entry.get("step_id")
+        new = op_entry.get("new")
+        start_line = op_entry.get("start_line")
+        end_line = op_entry.get("end_line", start_line)
+        if (
+            not step_id
+            or new is None
+            or not isinstance(start_line, int)
+            or not isinstance(end_line, int)
+        ):
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"operations[{index}] (op:'replace_lines') must include non-empty "
+                    "'step_id', integer 'start_line', integer 'end_line' "
+                    "(or omit for single-line replace), and 'new' fields"
+                ),
+            )
+
+        step_data = next((s for s in steps_list if s.get("id") == step_id), None)
+        if step_data is None:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=f"Step '{step_id}' not found in workflow '{name}'",
+            )
+
+        code = step_data.get("code")
+        if code is None:
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"Step '{step_id}' has no 'code' block to patch — "
+                    "replace_lines only applies to code steps"
+                ),
+            )
+
+        code_str = str(code)
+        lines = code_str.splitlines()
+        total_lines = len(lines)
+
+        effective_end = total_lines if end_line == -1 else end_line
+        if (
+            start_line < 1
+            or start_line > total_lines
+            or effective_end < start_line
+            or effective_end > total_lines
+        ):
+            raise create_error(
+                "INPUT_INVALID",
+                detail=(
+                    f"operations[{index}] (op:'replace_lines') line range "
+                    f"[{start_line}, {end_line}] is out of bounds for step "
+                    f"'{step_id}' (total_lines={total_lines})"
+                ),
+                data=_build_line_range_invalid_payload(
+                    step_id=step_id,
+                    code_str=code_str,
+                    total_lines=total_lines,
+                    requested_range=[start_line, end_line],
+                ),
+            )
+
+        new_lines = str(new).splitlines()
+        spliced = lines[: start_line - 1] + new_lines + lines[effective_end:]
+        rejoined = "\n".join(spliced)
+        # Preserve the original trailing newline so YAML literal blocks
+        # round-trip with the same final-line semantics as the source.
+        if code_str.endswith("\n"):
+            rejoined += "\n"
+        step_data["code"] = rejoined
 
     def _apply_set_op(
         self,

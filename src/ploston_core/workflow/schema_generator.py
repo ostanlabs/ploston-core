@@ -520,13 +520,14 @@ def generate_workflow_schema() -> dict[str, Any]:
                 "name": "workflow_patch",
                 "description": (
                     "Iterate on a workflow with targeted edits — `replace` "
-                    "(str_replace inside a code step), `set` (scalar at a "
-                    "dot-path), `add_step`, `remove_step`. Use after "
-                    "workflow_create returns a draft, or after workflow_run "
-                    "fails on a registered workflow; pass back the "
-                    "`suggested_fix` op from the prior response. Validates "
-                    "and re-registers in one call; bumps the workflow "
-                    "version on each live patch."
+                    "(str_replace inside a code step), `replace_lines` "
+                    "(line-range edit inside a code step, for large blocks), "
+                    "`set` (scalar at a dot-path), `add_step`, `remove_step`. "
+                    "Use after workflow_create returns a draft, or after "
+                    "workflow_run fails on a registered workflow; pass back "
+                    "the `suggested_fix` op from the prior response. "
+                    "Validates and re-registers in one call; bumps the "
+                    "workflow version on each live patch."
                 ),
             },
             {

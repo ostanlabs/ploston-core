@@ -320,3 +320,252 @@ class TestWorkflowPatch:
         )
         # registry.get must have been called with the sanitized name.
         registry.get.assert_called_with("my_flow")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# `replace_lines` op (line-range edit inside a code step)
+# ──────────────────────────────────────────────────────────────────────
+
+
+_LINES_YAML = """name: dx_lines
+version: "1.0"
+description: "DX replace_lines fixture"
+steps:
+  - id: shape
+    code: |
+      a = 1
+      b = 2
+      c = 3
+      d = 4
+      result = {"sum": a + b + c + d}
+  - id: pull
+    tool: python_exec
+    mcp: system
+    params:
+      code: "result = 1"
+"""
+
+
+@pytest.fixture
+def lines_registry():
+    """Mock registry serving the multi-line ``_LINES_YAML`` fixture."""
+    reg = MagicMock()
+    existing = parse_workflow_yaml(_LINES_YAML)
+    existing.yaml_content = _LINES_YAML
+    reg.get.return_value = existing
+    reg.unregister.return_value = True
+    reg.register_from_yaml.side_effect = lambda y, persist=False: parse_workflow_yaml(y)
+    return reg
+
+
+@pytest.fixture
+def lines_provider(lines_registry):
+    return WorkflowToolsProvider(workflow_registry=lines_registry)
+
+
+def _shape_code(yaml_text: str) -> str:
+    """Pull the ``shape`` step's ``code`` body out of a serialized workflow."""
+    wf = parse_workflow_yaml(yaml_text)
+    return next(s.code for s in wf.steps if s.id == "shape")
+
+
+class TestReplaceLines:
+    @pytest.mark.asyncio
+    async def test_replace_single_line(self, lines_provider, lines_registry):
+        await lines_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_lines",
+                "version": "1.1.0",
+                "operations": [
+                    {
+                        "op": "replace_lines",
+                        "step_id": "shape",
+                        "start_line": 1,
+                        "end_line": 1,
+                        "new": "a = 10",
+                    }
+                ],
+            },
+        )
+        patched = lines_registry.register_from_yaml.call_args[0][0]
+        code = _shape_code(patched)
+        assert code.splitlines()[0] == "a = 10"
+        assert "b = 2" in code
+
+    @pytest.mark.asyncio
+    async def test_replace_contiguous_range(self, lines_provider, lines_registry):
+        await lines_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_lines",
+                "version": "1.1.0",
+                "operations": [
+                    {
+                        "op": "replace_lines",
+                        "step_id": "shape",
+                        "start_line": 2,
+                        "end_line": 4,
+                        "new": "b = 20\nc = 30\nd = 40",
+                    }
+                ],
+            },
+        )
+        code = _shape_code(lines_registry.register_from_yaml.call_args[0][0])
+        lines = code.splitlines()
+        assert lines[0] == "a = 1"
+        assert lines[1:4] == ["b = 20", "c = 30", "d = 40"]
+        assert lines[4].startswith("result = ")
+
+    @pytest.mark.asyncio
+    async def test_replace_through_end_with_minus_one(self, lines_provider, lines_registry):
+        await lines_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_lines",
+                "version": "1.1.0",
+                "operations": [
+                    {
+                        "op": "replace_lines",
+                        "step_id": "shape",
+                        "start_line": 3,
+                        "end_line": -1,
+                        "new": 'result = {"only": a + b}',
+                    }
+                ],
+            },
+        )
+        code = _shape_code(lines_registry.register_from_yaml.call_args[0][0])
+        assert code.rstrip().splitlines() == [
+            "a = 1",
+            "b = 2",
+            'result = {"only": a + b}',
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sequential_ops_apply_bottom_to_top(self, lines_provider, lines_registry):
+        # Two ops in one call: edit lines 4 then lines 1. The second op
+        # must see the file as mutated by the first (sequential semantics).
+        await lines_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_lines",
+                "version": "1.1.0",
+                "operations": [
+                    {
+                        "op": "replace_lines",
+                        "step_id": "shape",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "new": "d = 400",
+                    },
+                    {
+                        "op": "replace_lines",
+                        "step_id": "shape",
+                        "start_line": 1,
+                        "end_line": 1,
+                        "new": "a = 100",
+                    },
+                ],
+            },
+        )
+        code = _shape_code(lines_registry.register_from_yaml.call_args[0][0])
+        lines = code.splitlines()
+        assert lines[0] == "a = 100"
+        assert lines[3] == "d = 400"
+        assert lines[1] == "b = 2" and lines[2] == "c = 3"
+
+    @pytest.mark.asyncio
+    async def test_out_of_bounds_emits_diagnostic_payload(self, lines_provider):
+        with pytest.raises(AELError) as exc:
+            await lines_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_lines",
+                    "version": "1.1.0",
+                    "operations": [
+                        {
+                            "op": "replace_lines",
+                            "step_id": "shape",
+                            "start_line": 99,
+                            "end_line": 100,
+                            "new": "noop",
+                        }
+                    ],
+                },
+            )
+        assert exc.value.code == "INPUT_INVALID"
+        data = exc.value.data or {}
+        assert data.get("step_id") == "shape"
+        assert data.get("total_lines") == 5
+        assert data.get("requested_range") == [99, 100]
+        assert isinstance(data.get("context"), list)
+        # Pivot clamps to total_lines, so context window includes the last 2 lines.
+        ctx_text = " ".join(c["text"] for c in data["context"])
+        assert "result" in ctx_text or "d = 4" in ctx_text
+
+    @pytest.mark.asyncio
+    async def test_inverted_range_rejected(self, lines_provider):
+        with pytest.raises(AELError) as exc:
+            await lines_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_lines",
+                    "version": "1.1.0",
+                    "operations": [
+                        {
+                            "op": "replace_lines",
+                            "step_id": "shape",
+                            "start_line": 4,
+                            "end_line": 2,
+                            "new": "x",
+                        }
+                    ],
+                },
+            )
+        assert exc.value.code == "INPUT_INVALID"
+        assert "out of bounds" in (exc.value.detail or "")
+
+    @pytest.mark.asyncio
+    async def test_tool_step_rejected(self, lines_provider):
+        with pytest.raises(AELError) as exc:
+            await lines_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_lines",
+                    "version": "1.1.0",
+                    "operations": [
+                        {
+                            "op": "replace_lines",
+                            "step_id": "pull",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "new": "result = 2",
+                        }
+                    ],
+                },
+            )
+        assert exc.value.code == "INPUT_INVALID"
+        assert "code" in (exc.value.detail or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_unknown_step_rejected(self, lines_provider):
+        with pytest.raises(AELError) as exc:
+            await lines_provider.call(
+                "workflow_patch",
+                {
+                    "name": "dx_lines",
+                    "version": "1.1.0",
+                    "operations": [
+                        {
+                            "op": "replace_lines",
+                            "step_id": "ghost",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "new": "x",
+                        }
+                    ],
+                },
+            )
+        assert exc.value.code == "INPUT_INVALID"
+        assert "ghost" in (exc.value.detail or "")
