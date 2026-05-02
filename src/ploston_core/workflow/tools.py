@@ -1711,7 +1711,6 @@ class WorkflowToolsProvider:
         from .validator import (
             check_forbidden_builtins,
             check_forbidden_imports,
-            check_return_in_code,
             detect_reserved_input_names,
         )
 
@@ -1763,8 +1762,6 @@ class WorkflowToolsProvider:
             result.errors = []
         if not isinstance(result.warnings, list):
             result.warnings = []
-        for issue in check_return_in_code(workflow):
-            result.errors.append(issue)
         for issue in check_forbidden_imports(workflow, SAFE_IMPORTS):
             result.errors.append(issue)
         for issue in check_forbidden_builtins(workflow, DANGEROUS_BUILTINS):

@@ -74,53 +74,12 @@ _FUZZY_CUTOFF = 0.6
 
 
 # ── Static checks (S-291 P3) ─────────────────────────────────────────
-
-
-def check_return_in_code(workflow: WorkflowDefinition) -> list[ValidationIssue]:
-    """Flag ``return X`` statements in code steps.
-
-    Code steps run as the body of an ``async def`` in the sandbox; agents
-    are required to assign their output to ``result`` instead of using
-    ``return``. The runtime sandbox does enforce this, but surfacing it at
-    validation time turns a runtime failure into an authoring-time one
-    that ``workflow_create`` can fix via ``suggested_fix``.
-
-    Best-effort: any per-step parse failure degrades to a no-op for that
-    step (the Python parser raises when the user wrote unrelated syntax
-    errors, in which case other validation pathways will already complain).
-    """
-    issues: list[ValidationIssue] = []
-    for step in workflow.steps:
-        if not step.code:
-            continue
-        try:
-            tree = ast.parse(step.code)
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Return):
-                # Capture the source slice for the suggested_fix `old` field.
-                lines = step.code.splitlines()
-                line_idx = (node.lineno - 1) if node.lineno else 0
-                line_text = lines[line_idx] if 0 <= line_idx < len(lines) else ""
-                issues.append(
-                    ValidationIssue(
-                        path=f"steps.{step.id}.code",
-                        message=(
-                            "code steps must assign to 'result', not use 'return'. "
-                            "Replace 'return X' with 'result = X'."
-                        ),
-                        severity="error",
-                        line=node.lineno,
-                    )
-                )
-                # One issue per step is enough — the suggested_fix will
-                # cover the first offending line; agents can re-validate
-                # to surface any remainder. Avoids spamming the response
-                # for the common case of a single trailing ``return``.
-                _ = line_text
-                break
-    return issues
+#
+# Note: ``check_return_in_code`` was removed by S-293 / DEC-189. Top-level
+# ``return X`` is now rewritten by the sandbox AST-rewriter to
+# ``result = X; raise __ploston_step_exit__()``, so the static check is no
+# longer needed. The corresponding ``return_in_code`` issue kind is gone
+# from the error catalog.
 
 
 def check_forbidden_imports(
@@ -558,7 +517,7 @@ def _classify_issue(issue: ValidationIssue) -> str:
     """Map a ValidationIssue to one of the spec catalog error types.
 
     Returns one of: ``unknown_tool``, ``unknown_mcp``, ``missing_mcp``,
-    ``missing_tool_or_code``, ``tool_xor_code``, ``return_in_code``,
+    ``missing_tool_or_code``, ``tool_xor_code``,
     ``forbidden_import``, ``forbidden_builtin``, ``missing_required``,
     ``invalid_type``, ``template_unknown``, ``duplicate_step``,
     ``bad_depends_on``, ``output_missing_value``, ``cycle``,
@@ -596,8 +555,6 @@ def _classify_issue(issue: ValidationIssue) -> str:
             return "duplicate_step"
         if "Circular" in msg or "cycle" in msg.lower():
             return "cycle"
-    if "must assign to 'result'" in msg:
-        return "return_in_code"
     if msg.startswith("forbidden import "):
         return "forbidden_import"
     if msg.startswith("forbidden builtin "):
@@ -627,36 +584,6 @@ def _output_name_from_path(path: str) -> str | None:
 
 def _find_step(workflow: WorkflowDefinition, step_id: str) -> StepDefinition | None:
     return workflow.get_step(step_id)
-
-
-def _step_first_return_line(code: str) -> tuple[str, str] | None:
-    """Find the first ``return X`` statement in ``code``.
-
-    Returns ``(line_text, value_expr)`` tuple where ``line_text`` is the
-    full source line (used as the ``old`` of the ``replace`` op) and
-    ``value_expr`` is everything after the ``return `` keyword (used to
-    construct ``result = ...``).
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Return):
-            lines = code.splitlines()
-            line_idx = (node.lineno - 1) if node.lineno else 0
-            if not (0 <= line_idx < len(lines)):
-                return None
-            line_text = lines[line_idx]
-            stripped = line_text.lstrip()
-            if not stripped.startswith("return"):
-                # ``return`` on a different line than the AST source — bail.
-                return None
-            # Slice off the "return" keyword (and an optional value).
-            after = stripped[len("return") :]
-            value_expr = after.lstrip()
-            return line_text, value_expr
-    return None
 
 
 def _step_first_import_line(
@@ -851,20 +778,6 @@ def _enrich_one(
             "path": f"steps.{step_id}.mcp",
             "value": None,
         }
-
-    elif kind == "return_in_code" and step and step.code:
-        found = _step_first_return_line(step.code)
-        if found:
-            line_text, value_expr = found
-            indent = line_text[: len(line_text) - len(line_text.lstrip())]
-            new_line = f"{indent}result = {value_expr}" if value_expr else f"{indent}result = None"
-            out["current_value"] = line_text.strip()
-            out["suggested_fix"] = {
-                "op": "replace",
-                "step_id": step_id,
-                "old": line_text,
-                "new": new_line,
-            }
 
     elif kind == "forbidden_import" and step and step.code:
         found = _step_first_import_line(step.code, safe_imports)

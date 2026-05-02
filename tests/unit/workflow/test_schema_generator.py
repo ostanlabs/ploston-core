@@ -208,12 +208,14 @@ class TestSchemaGeneratorCodeSteps:
         assert "description" in schema["code_steps"]
         assert len(schema["code_steps"]["description"]) > 0
 
-    def test_code_steps_documents_result_not_return(self):
-        """code_steps must explicitly mention result variable and warn against return."""
+    def test_code_steps_documents_result_and_return(self):
+        """code_steps must document both the ``result`` variable and the
+        S-293 / DEC-189 ``return X`` capability (rewritten to ``result = X``
+        + early exit)."""
         schema = generate_workflow_schema()
         section = str(schema["code_steps"])
         assert "result" in section
-        assert "return" in section.lower()  # The warning must mention return
+        assert "return" in section.lower()
 
     def test_code_steps_documents_context_api(self):
         """code_steps must document the full context API surface."""
@@ -233,12 +235,14 @@ class TestSchemaGeneratorCodeSteps:
         assert "context.steps" in example
 
     def test_code_steps_has_anti_patterns(self):
-        """code_steps must include anti-patterns list to deter return usage."""
+        """code_steps must include an anti-patterns list calling out at least
+        one common authoring mistake. The S-293 ``return``-specific entries
+        were removed; the list now centres on import / builtin pitfalls."""
         schema = generate_workflow_schema()
         anti_patterns = schema["code_steps"].get("anti_patterns", [])
         assert len(anti_patterns) > 0
         combined = " ".join(anti_patterns)
-        assert "return" in combined
+        assert "import os" in combined
 
     def test_workflow_schema_tool_returns_code_steps(self):
         """code_steps content must be reachable via workflow_schema MCP tool.

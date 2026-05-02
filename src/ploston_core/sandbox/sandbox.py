@@ -28,6 +28,75 @@ class SecurityError(Exception):
     pass
 
 
+class _PlostonStepExit(BaseException):
+    """Internal control-flow signal raised when agent code uses top-level
+    ``return``. Inherits from :class:`BaseException` (not :class:`Exception`)
+    so user ``except Exception:`` blocks don't swallow it. Caught only at
+    the sandbox wrapper boundary inside ``PythonExecSandbox.execute()``.
+    """
+
+
+class _ReturnRewriter(ast.NodeTransformer):
+    """Rewrite top-level ``return X`` into ``result = X; raise __ploston_step_exit__()``.
+
+    Nested function/lambda bodies are left alone — those are real Python
+    functions whose ``return`` keeps standard semantics.
+
+    Implements DEC-189 / S-293.
+    """
+
+    def __init__(self) -> None:
+        self._depth = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self._depth += 1
+        node = self.generic_visit(node)  # type: ignore[assignment]
+        self._depth -= 1
+        return node
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        self._depth += 1
+        node = self.generic_visit(node)  # type: ignore[assignment]
+        self._depth -= 1
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        # Lambdas can't contain Return statements, but recurse defensively.
+        self._depth += 1
+        node = self.generic_visit(node)  # type: ignore[assignment]
+        self._depth -= 1
+        return node
+
+    def visit_Return(self, node: ast.Return) -> Any:
+        if self._depth > 0:
+            return node
+
+        raise_exit = ast.Raise(
+            exc=ast.Call(
+                func=ast.Name(id="__ploston_step_exit__", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            ),
+            cause=None,
+        )
+        ast.copy_location(raise_exit, node)
+
+        if node.value is None:
+            return raise_exit
+
+        # Self-assignment optimization: ``return result`` skips the redundant
+        # ``result = result`` and emits only the raise.
+        if isinstance(node.value, ast.Name) and node.value.id == "result":
+            return raise_exit
+
+        assign = ast.Assign(
+            targets=[ast.Name(id="result", ctx=ast.Store())],
+            value=node.value,
+        )
+        ast.copy_location(assign, node)
+        return [assign, raise_exit]
+
+
 @dataclass
 class SandboxResult:
     """Result of sandbox code execution.
@@ -393,7 +462,15 @@ class PythonExecSandbox:
         # is injected after **context so caller-supplied keys can never shadow it.
         from ploston_core.sandbox.types import ToolError
 
-        return {"__builtins__": safe_builtins, **context, "ToolError": ToolError}
+        # S-293 / DEC-189: inject the AST-rewriter's exit signal so the rewritten
+        # ``raise __ploston_step_exit__()`` resolves at runtime. Same shadowing
+        # protection as ToolError above.
+        return {
+            "__builtins__": safe_builtins,
+            **context,
+            "ToolError": ToolError,
+            "__ploston_step_exit__": _PlostonStepExit,
+        }
 
     async def execute(
         self,
@@ -432,10 +509,28 @@ class PythonExecSandbox:
             # Add result variable to capture output
             safe_globals["result"] = None
 
+            # S-293 / DEC-189: rewrite top-level ``return X`` into
+            # ``result = X; raise __ploston_step_exit__()`` so agents can write
+            # idiomatic guard clauses. Nested function bodies are left alone.
+            try:
+                tree = ast.parse(code, mode="exec", type_comments=False)
+            except SyntaxError:
+                # Top-level ``await`` is rejected by the default parser; fall
+                # back to PyCF_ALLOW_TOP_LEVEL_AWAIT-aware parsing via compile()
+                # → AST. ``return`` then errors normally inside a function.
+                tree = compile(
+                    code,
+                    "<sandbox>",
+                    "exec",
+                    flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT | ast.PyCF_ONLY_AST,
+                )
+            tree = _ReturnRewriter().visit(tree)
+            ast.fix_missing_locations(tree)
+
             # Compile with PyCF_ALLOW_TOP_LEVEL_AWAIT so code steps can use
             # ``await context.tools.call(...)`` for nested tool invocations.
             compiled = compile(
-                code,
+                tree,
                 "<sandbox>",
                 "exec",
                 flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
@@ -449,9 +544,15 @@ class PythonExecSandbox:
             async def _execute() -> Any:
                 with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                     fn = types.FunctionType(compiled, safe_globals)
-                    coro_or_none = fn()
-                    if asyncio.iscoroutine(coro_or_none):
-                        await coro_or_none
+                    # S-293: catch the rewriter's exit signal at the wrapper
+                    # boundary. Must be inner (inside _execute) so it never
+                    # propagates through asyncio.wait_for to the outer chain.
+                    try:
+                        coro_or_none = fn()
+                        if asyncio.iscoroutine(coro_or_none):
+                            await coro_or_none
+                    except _PlostonStepExit:
+                        pass  # normal early exit from top-level ``return``
                 return safe_globals.get("result")
 
             try:

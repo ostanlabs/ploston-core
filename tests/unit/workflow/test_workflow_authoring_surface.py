@@ -787,15 +787,15 @@ _INVALID_TOOL_YAML = (
     "      message: hi\n"
 )
 
-_RETURN_IN_CODE_YAML = (
-    "name: dx_p3_return\n"
+_FORBIDDEN_IMPORT_YAML = (
+    "name: dx_p3_bad_import\n"
     'version: "1.0.0"\n'
-    "description: Code step that uses 'return' instead of 'result ='.\n"
+    "description: Code step uses a forbidden import.\n"
     "steps:\n"
     "  - id: compute\n"
     "    code: |\n"
-    "      x = 1 + 1\n"
-    "      return {'x': x}\n"
+    "      import os\n"
+    "      result = {'x': 1}\n"
 )
 
 
@@ -841,17 +841,6 @@ class TestWorkflowCreateDraftFlow:
         assert entry.yaml_content == _INVALID_TOOL_YAML
 
     @pytest.mark.asyncio
-    async def test_return_in_code_step_caught_statically(self, real_provider):
-        raw = await real_provider.call("workflow_create", {"yaml_content": _RETURN_IN_CODE_YAML})
-        result = _parse(raw)
-        assert result["status"] == "draft"
-        errors = result["validation"]["errors"]
-        return_errors = [
-            e for e in errors if "return" in e["message"].lower() or e.get("kind") == "code_return"
-        ]
-        assert return_errors, f"expected a return-in-code error; got {errors}"
-
-    @pytest.mark.asyncio
     async def test_suggested_fix_for_unknown_tool(self, real_provider):
         raw = await real_provider.call("workflow_create", {"yaml_content": _INVALID_TOOL_YAML})
         result = _parse(raw)
@@ -891,6 +880,36 @@ class TestWorkflowPatchDraftRoundtrip:
         # 3. After applying the fix, the workflow should validate and register.
         assert patched["status"] == "patched", f"expected status='patched', got {patched}"
         assert real_registry.get("dx_p3_bad_tool") is not None
+
+    @pytest.mark.asyncio
+    async def test_replace_lines_via_draft_id(self, real_registry, real_provider):
+        # Use the forbidden-import fixture: line 1 of the code body is
+        # ``import os`` (a forbidden import). Patch via draft + replace_lines
+        # to swap it for an allowed import.
+        raw = await real_provider.call("workflow_create", {"yaml_content": _FORBIDDEN_IMPORT_YAML})
+        created = _parse(raw)
+        assert created["status"] == "draft"
+        draft_id = created["draft_id"]
+        assert draft_id
+
+        patch_raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "draft_id": draft_id,
+                "operations": [
+                    {
+                        "op": "replace_lines",
+                        "step_id": "compute",
+                        "start_line": 1,
+                        "end_line": 1,
+                        "new": "import json",
+                    }
+                ],
+            },
+        )
+        patched = _parse(patch_raw)
+        assert patched["status"] == "patched", f"expected 'patched', got {patched}"
+        assert real_registry.get("dx_p3_bad_import") is not None
 
 
 class TestDeprecatedToolsRemoved:
@@ -1472,22 +1491,6 @@ class TestWorkflowAuthoringRoundtrips:
         result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
         assert result["status"] == "patched"
         assert strict_registry.get("rt_unk_mcp") is not None
-
-    @pytest.mark.asyncio
-    async def test_roundtrip_return_in_code(self, strict_provider, strict_registry):
-        yaml = (
-            'name: rt_return\nversion: "1.0.0"\ndescription: x\n'
-            "steps:\n  - id: a\n    code: |\n      x = 1\n      return {'x': x}\n"
-        )
-        draft_id, errors = await _create_and_get_errors(strict_provider, yaml)
-        assert draft_id
-        err = _find_error(errors, path="steps.a.code")
-        assert err and err["suggested_fix"]["op"] == "replace"
-        assert "result =" in err["suggested_fix"]["new"]
-
-        result = await _apply_fix(strict_provider, draft_id, err["suggested_fix"])
-        assert result["status"] == "patched"
-        assert strict_registry.get("rt_return") is not None
 
     @pytest.mark.asyncio
     async def test_roundtrip_forbidden_import(self, strict_provider, strict_registry):

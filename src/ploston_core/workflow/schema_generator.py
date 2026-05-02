@@ -301,14 +301,16 @@ def generate_workflow_schema() -> dict[str, Any]:
     # Document the code step contract for agents authoring workflows
     base["code_steps"] = {
         "description": (
-            "Code steps execute Python via exec(). "
-            "Set step output by assigning to the 'result' variable. "
-            "Do NOT use 'return' statements — they raise SyntaxError "
-            "at the top level of exec()."
+            "Code steps execute Python in a sandboxed exec() environment. "
+            "Set step output by assigning to the 'result' variable, or by "
+            "using a top-level 'return X' (rewritten to 'result = X' + early "
+            "exit). 'return X' is useful for guard clauses; 'result = X' "
+            "continues execution to the next statement."
         ),
         "output": (
-            "Assign to the 'result' variable to set step output. "
-            "If 'result' is never assigned, step output is None."
+            "Assign to the 'result' variable to set step output, or use "
+            "'return X' to set it and exit the step immediately. "
+            "If neither is used, step output is None."
         ),
         "context_api": {
             "context.inputs": (
@@ -408,12 +410,11 @@ def generate_workflow_schema() -> dict[str, Any]:
             "    result = {'run_id': None}"
         ),
         "anti_patterns": [
-            "return {...}  # SyntaxError — use result = {...} instead",
-            "return None   # SyntaxError — just don't assign result, or assign result = None",
             "import os     # SecurityError — os is not in allowed_imports",
             "type(x)       # NameError — type is in forbidden_builtins",
             "dir(x)        # NameError — dir is in forbidden_builtins",
             "getattr(x, k) # NameError — getattr is in forbidden_builtins; use x.key notation instead",
+            "eval(s)       # NameError — eval is in forbidden_builtins",
         ],
         # S-272 T-862: authoring guidance surfaced on workflow_schema so agents
         # pick the right APIs the first time.
@@ -734,11 +735,13 @@ def generate_tier1_schema() -> dict[str, Any]:
                 '      owner: "{{ inputs.owner }}"'
             ),
             "code_step": (
-                "Use 'code' field. Assign to 'result' to set output. "
-                "Do NOT use 'return' (SyntaxError at top level of exec). Example:\n"
+                "Use 'code' field. Assign to 'result' or use 'return X' "
+                "(rewritten to 'result = X' + early exit). Example:\n"
                 "  - id: transform\n"
                 "    code: |\n"
                 "      data = context.steps['fetch'].output\n"
+                "      if not data:\n"
+                "          return {'count': 0}\n"
                 "      result = {'count': len(data)}\n"
                 "    depends_on: [fetch]"
             ),
