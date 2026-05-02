@@ -7,8 +7,8 @@ Configures OpenTelemetry SDK with:
 
 Supports:
 - Prometheus metrics export (/metrics endpoint)
-- OTLP trace export to Tempo
-- OTLP log export to Loki
+- OTLP trace export to OTEL Collector → ClickHouse (DEC-191; was Tempo pre-M-082)
+- OTLP log export to OTEL Collector → ClickHouse (DEC-191; was Loki pre-M-082)
 """
 
 from dataclasses import dataclass, field
@@ -194,7 +194,7 @@ def setup_telemetry(config: TelemetryConfig | None = None) -> dict[str, Any]:
     tracer_provider = TracerProvider(resource=resource)
 
     if config.traces_enabled and config.otlp.enabled:
-        # Add OTLP span exporter for Tempo
+        # Add OTLP span exporter (forwarded by OTEL Collector to ClickHouse per DEC-191)
         span_exporter = _create_otlp_span_exporter(config.otlp)
         tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
 

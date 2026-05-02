@@ -50,8 +50,8 @@ class _WorkflowSourceLogger:
     """Thin wrapper that injects workflow context into every log record.
 
     Automatically adds ``source``, ``execution_id``, and ``step_id`` to the
-    OTEL log attributes so that Loki can promote them to stream labels
-    (``ael_source``, ``ael_execution_id``, ``ael_step_id``).
+    OTEL log attributes.  Per DEC-191 these are now ClickHouse Map columns
+    (``LogAttributes['ael_source']`` etc.) rather than Loki stream labels.
 
     The engine sets ``execution_id`` once at workflow start and updates
     ``step_id`` before each step.  The wrapper merges these into every
@@ -481,7 +481,7 @@ class WorkflowEngine:
         step_config = self._get_step_config(step, context.workflow)
 
         # Set step context on wrapper logger so all subsequent log calls
-        # automatically include ael_step_id for Loki label promotion.
+        # automatically include ael_step_id (ClickHouse Map attribute per DEC-191).
         if self._logger:
             self._logger.set_step_id(step.id)
 

@@ -287,7 +287,7 @@ class TelemetryLoggingConfig:
 
     Attributes:
         enabled: Whether OTEL logging is enabled
-        export_to_otlp: Whether to export logs to OTLP collector (Loki)
+        export_to_otlp: Whether to export logs to OTLP collector (ClickHouse via DEC-191)
         include_trace_context: Whether to include trace_id/span_id in logs
     """
 

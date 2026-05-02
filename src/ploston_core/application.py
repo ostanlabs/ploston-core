@@ -225,7 +225,8 @@ class PlostApplication:
         # When logs are enabled, LoggingInstrumentor.instrument() attaches an
         # OTEL LoggingHandler to the root Python logger so that stdlib logging
         # output is forwarded to the OTEL LoggerProvider and ultimately to
-        # Loki via the collector.  It also injects trace-context fields into
+        # ClickHouse via the collector (DEC-191; was Loki pre-M-082).  It also
+        # injects trace-context fields into
         # log records.
         #
         # We must also lower the root logger level to DEBUG so that INFO-level

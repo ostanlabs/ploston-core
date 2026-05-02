@@ -70,7 +70,7 @@ class AELLogger:
         }
         # Stdlib logger for OTEL bridge.  LoggingInstrumentor attaches an
         # OTELHandler to the root logger, so any stdlib log record emitted
-        # here is forwarded to the OTEL LoggerProvider → Loki.
+        # here is forwarded to the OTEL LoggerProvider → ClickHouse (DEC-191).
         # propagate=True (default) ensures the record reaches the root handler
         # added by LoggingInstrumentor.  We set no handlers of our own so
         # there is no duplicate console output.
@@ -135,7 +135,7 @@ class AELLogger:
             self._log_colored(level, component, message, context)
 
         # Bridge to stdlib logging so LoggingInstrumentor forwards the
-        # record (with context attributes) to the OTEL LoggerProvider → Loki.
+        # record (with context attributes) to the OTEL LoggerProvider → ClickHouse (DEC-191).
         # Context keys are prefixed with "ael_" to avoid collision with
         # LogRecord reserved attributes (name, message, args, module, etc.).
         stdlib_level = self._LEVEL_TO_STDLIB.get(level, logging.INFO)

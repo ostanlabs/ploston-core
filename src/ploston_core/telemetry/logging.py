@@ -1,7 +1,7 @@
 """AEL Telemetry Logging - Structured logging with OTEL integration.
 
 Provides structured JSON logging with automatic trace context injection.
-Logs can be exported to Loki via OTLP when configured.
+Logs can be exported to ClickHouse via OTLP when configured (DEC-191; was Loki pre-M-082).
 
 Usage:
     from ploston_core.telemetry.logging import get_logger
