@@ -45,9 +45,13 @@ def test_owned_tables_use_create_if_not_exists():
         assert "CREATE TABLE IF NOT EXISTS" in sql, fname
 
 
-def test_views_use_create_if_not_exists():
+def test_views_are_idempotent_or_replaceable():
+    """Both views must be re-applicable; events uses OR REPLACE so schema
+    drift (e.g. new ael_* keys) propagates on every migration run."""
     sql = (SCHEMA_DIR / "010_views.sql").read_text()
-    assert sql.count("CREATE VIEW IF NOT EXISTS") == 2
+    create_or_replace = sql.count("CREATE OR REPLACE VIEW")
+    if_not_exists = sql.count("CREATE VIEW IF NOT EXISTS")
+    assert create_or_replace + if_not_exists == 2
 
 
 def test_executions_has_dec145_topology_columns():
@@ -110,10 +114,20 @@ def test_views_reference_otel_tables():
 
 
 def test_views_surface_session_id():
-    """Session Inspector queries `ploston.events.session_id`."""
+    """Session Inspector queries `ploston.events.session_id`.
+
+    AELLogger writes context with the ``ael_`` prefix to avoid stdlib
+    LogRecord reserved-name collisions; the view strips the prefix.
+    """
     sql = (SCHEMA_DIR / "010_views.sql").read_text()
-    assert "LogAttributes['session_id']" in sql
+    assert "LogAttributes['ael_session_id']" in sql
     assert "AS session_id" in sql
+
+
+def test_events_view_uses_create_or_replace():
+    """View body must apply on every migration run (not just on fresh DB)."""
+    sql = (SCHEMA_DIR / "010_views.sql").read_text()
+    assert "CREATE OR REPLACE VIEW ploston.events" in sql
 
 
 def test_retention_substitution_clears_template():
@@ -154,4 +168,3 @@ def test_tool_calls_source_enum_values_documented():
     """Source widening: tool_step | code_block | direct (T-967)."""
     sql = (SCHEMA_DIR / "003_tool_calls.sql").read_text()
     assert "source" in sql
-

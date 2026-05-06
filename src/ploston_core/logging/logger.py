@@ -17,7 +17,12 @@ from ploston_core.logging.colors import (
     RESET,
     YELLOW,
 )
-from ploston_core.telemetry.context import direct_execution_id as _direct_execution_id
+from ploston_core.telemetry.context import (
+    direct_execution_id as _direct_execution_id,
+)
+from ploston_core.telemetry.context import (
+    direct_session_id as _direct_session_id,
+)
 from ploston_core.types import LogFormat, LogLevel
 
 
@@ -143,10 +148,14 @@ class AELLogger:
         if context:
             for k, v in context.items():
                 extra[f"ael_{k}"] = v
-        # Inject execution_id from ContextVar if present (Tier 3 — DEC-152)
+        # Inject execution_id and session_id from ContextVars if present
+        # (Tier 3 — DEC-152 for execution_id; S-304/M-082 for session_id).
         exec_id = _direct_execution_id.get()
         if exec_id:
             extra["ael_execution_id"] = exec_id
+        sess_id = _direct_session_id.get()
+        if sess_id:
+            extra["ael_session_id"] = sess_id
         self._stdlib_logger.log(stdlib_level, message, extra=extra)
 
     def _log_json(
