@@ -9,6 +9,7 @@ from ploston_core.types import LogLevel, StepOutput
 
 if TYPE_CHECKING:
     from ploston_core.logging import AELLogger
+    from ploston_core.telemetry.store import TelemetryCollector
 
 
 @dataclass
@@ -62,6 +63,11 @@ class RunnerContext:
     defaults_runner: str | None = None  # raw value from workflow.defaults.runner
     step_id: str | None = None  # for log correlation
     execution_id: str | None = None  # for log correlation
+    # S-304/M-082: bridge identity & per-conversation session id, plumbed
+    # so CODE_BLOCK tool_call rows can be attributed without the sandbox
+    # reaching into the http_transport ContextVar directly.
+    bridge_id: str | None = None
+    session_id: str | None = None
 
 
 @dataclass
@@ -228,6 +234,7 @@ class ToolCallInterface:
         tool_registry: Any | None = None,
         runner_registry: Any | None = None,
         runner_context: "RunnerContext | None" = None,
+        telemetry_collector: "TelemetryCollector | None" = None,  # S-304 / G3
     ):
         """Initialize tool call interface.
 
@@ -239,6 +246,9 @@ class ToolCallInterface:
             tool_registry: Optional ToolRegistry for CP-direct resolution in call_mcp
             runner_registry: Optional RunnerRegistry for runner inference in call_mcp
             runner_context: Optional RunnerContext for runner resolution in call_mcp
+            telemetry_collector: Optional persistent-store collector. When
+                provided, every nested tool call is recorded as a
+                ``tool_calls`` row with ``source=CODE_BLOCK`` (S-304/G3).
         """
         self._caller = tool_caller
         self._max_calls = max_calls
@@ -250,6 +260,9 @@ class ToolCallInterface:
         self._runner_context = runner_context
         self._step_id = runner_context.step_id if runner_context else None
         self._execution_id = runner_context.execution_id if runner_context else None
+        self._bridge_id = runner_context.bridge_id if runner_context else None
+        self._session_id = runner_context.session_id if runner_context else None
+        self._telemetry_collector = telemetry_collector
 
     async def call(
         self,
@@ -319,7 +332,12 @@ class ToolCallInterface:
                 },
             )
 
-        result = await self._caller.call(tool_name, params)
+        result = await self._invoke_tracked(
+            invoke_name=tool_name,
+            display_tool=tool_name,
+            params=params,
+            runner_id=runner_id,
+        )
 
         if self._logger:
             self._logger._log(
@@ -416,7 +434,12 @@ class ToolCallInterface:
                                 "execution_id": self._execution_id,
                             },
                         )
-                    cp_result = await self._caller.call(tool, params)
+                    cp_result = await self._invoke_tracked(
+                        invoke_name=tool,
+                        display_tool=f"{mcp}__{tool}",
+                        params=params,
+                        runner_id=None,
+                    )
                     # S-289 P1: surface transport-level errors as ToolError
                     _maybe_raise_tool_error(cp_result, tool=tool, mcp=mcp)
                     return normalize_mcp_response(cp_result)
@@ -471,7 +494,12 @@ class ToolCallInterface:
                         "execution_id": self._execution_id,
                     },
                 )
-            runner_result = await self._caller.call(canonical, params)
+            runner_result = await self._invoke_tracked(
+                invoke_name=canonical,
+                display_tool=canonical,
+                params=params,
+                runner_id=effective_runner,
+            )
             # S-289 P1: surface transport-level errors as ToolError
             _maybe_raise_tool_error(runner_result, tool=tool, mcp=mcp)
             return normalize_mcp_response(runner_result)
@@ -485,6 +513,44 @@ class ToolCallInterface:
                 "Use workflow_schema to see available tools."
             ),
         )
+
+    async def _invoke_tracked(
+        self,
+        *,
+        invoke_name: str,
+        display_tool: str,
+        params: dict[str, Any],
+        runner_id: str | None,
+    ) -> Any:
+        """Invoke ``self._caller`` while emitting a CODE_BLOCK tool_call row.
+
+        S-304/G3: nested tool calls from within sandboxed code blocks are
+        recorded as ``tool_calls`` rows under the parent step. Telemetry
+        failures never propagate.
+        """
+        from ploston_core.telemetry.store import (
+            ToolCallSource,
+            record_tool_call,
+        )
+
+        async with record_tool_call(
+            self._telemetry_collector,
+            execution_id=self._execution_id,
+            step_id=self._step_id or "",
+            tool_name=display_tool,
+            params=params,
+            source=ToolCallSource.CODE_BLOCK,
+            runner_id=runner_id,
+            bridge_id=self._bridge_id,
+            session_id=self._session_id,
+        ) as handle:
+            try:
+                result = await self._caller.call(invoke_name, params)
+            except Exception as exc:
+                handle.set_error(exc)
+                raise
+            handle.set_result(result)
+            return result
 
 
 # ─────────────────────────────────────────────────────────────────

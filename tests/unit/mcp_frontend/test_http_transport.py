@@ -468,3 +468,67 @@ class TestBridgeRunnerHeader:
             },
         )
         assert captured.get("runner_name") == "new-runner"
+
+    def test_session_id_explicit_header_wins(self, client, message_handler):
+        """S-304/M-082: explicit X-MCP-Session-ID becomes BridgeContext.session_id."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["session_id"] = ctx.session_id if ctx else None
+            return {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+        message_handler.side_effect = capture_handler
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={
+                "X-Bridge-ID": "bridge-123",
+                "X-Bridge-Session-Start": "2026-05-02T01:00:00",
+                "X-MCP-Session-ID": "explicit-conv-id",
+            },
+        )
+        assert captured.get("session_id") == "explicit-conv-id"
+
+    def test_session_id_composite_fallback(self, client, message_handler):
+        """S-304/M-082: without X-MCP-Session-ID, session_id = bridge_id@session_start."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["session_id"] = ctx.session_id if ctx else None
+            return {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+        message_handler.side_effect = capture_handler
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={
+                "X-Bridge-ID": "bridge-xyz",
+                "X-Bridge-Session-Start": "2026-05-02T01:00:00",
+            },
+        )
+        assert captured.get("session_id") == "bridge-xyz@2026-05-02T01:00:00"
+
+    def test_session_id_bridge_only_fallback(self, client, message_handler):
+        """S-304/M-082: with neither header pair, session_id falls back to bridge_id."""
+        from ploston_core.mcp_frontend.http_transport import bridge_context
+
+        captured = {}
+
+        async def capture_handler(body):
+            ctx = bridge_context.get()
+            captured["session_id"] = ctx.session_id if ctx else None
+            return {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+        message_handler.side_effect = capture_handler
+        client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={"X-Bridge-ID": "lone-bridge"},
+        )
+        assert captured.get("session_id") == "lone-bridge"

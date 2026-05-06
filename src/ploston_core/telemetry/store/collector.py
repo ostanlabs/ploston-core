@@ -64,6 +64,7 @@ class TelemetryCollector:
         session_id: str | None = None,
         runner_id: str | None = None,  # DEC-145
         bridge_session_id: str | None = None,  # DEC-145
+        execution_id: str | None = None,  # S-304: caller-supplied id (engine reuses its own)
     ) -> str:
         """Start tracking a new execution.
 
@@ -78,11 +79,15 @@ class TelemetryCollector:
             session_id: Session identifier
             runner_id: Runner that handled tool calls
             bridge_session_id: Bridge process that initiated execution
+            execution_id: Optional caller-supplied execution id. When None,
+                a uuid4 is generated. The engine reuses its own ``exec-XXXX``
+                id so persistent rows align with ``ExecutionResult.execution_id``.
 
         Returns:
             Execution ID
         """
-        execution_id = str(uuid.uuid4())
+        if execution_id is None:
+            execution_id = str(uuid.uuid4())
         now = datetime.now(UTC)
 
         record = ExecutionRecord(
@@ -239,6 +244,9 @@ class TelemetryCollector:
         tool_name: str,
         params: dict[str, Any] | None = None,
         source: ToolCallSource = ToolCallSource.TOOL_STEP,
+        runner_id: str | None = None,
+        bridge_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Start tracking a tool call.
 
@@ -248,6 +256,9 @@ class TelemetryCollector:
             tool_name: Tool being called
             params: Tool parameters (will be redacted)
             source: Where the call originated
+            runner_id: Runner that handled the call (T-967, DEC-145)
+            bridge_id: Bridge process that initiated the call (T-967)
+            session_id: Bridge session id for distributed correlation (T-967)
 
         Returns:
             Call ID
@@ -260,16 +271,22 @@ class TelemetryCollector:
         if not step:
             return ""
 
+        redacted_params = self._redactor.redact(params) if params else None
+
         call_id = str(uuid.uuid4())
         call = ToolCallRecord(
             call_id=call_id,
             tool_name=tool_name,
             started_at=datetime.now(UTC),
-            params=self._redactor.redact(params) if params else None,
+            params=redacted_params,
             execution_id=execution_id,
             step_id=step_id,
             source=source,
             sequence=len(step.tool_calls),
+            params_bytes=_byte_size(redacted_params),
+            runner_id=runner_id,
+            bridge_id=bridge_id,
+            session_id=session_id,
         )
 
         step.tool_calls.append(call)
@@ -306,7 +323,9 @@ class TelemetryCollector:
 
         now = datetime.now(UTC)
         call.completed_at = now
-        call.result = self._redactor.redact(result) if result else None
+        redacted_result = self._redactor.redact(result) if result else None
+        call.result = redacted_result
+        call.response_bytes = _byte_size(redacted_result)
         call.error = error
 
         if call.started_at:

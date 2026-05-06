@@ -25,6 +25,7 @@ from .types import (
     ToolCallRecord,
     ToolCallSource,
 )
+from .wrappers import record_tool_call, synthetic_direct_step
 
 __all__ = [
     # Enums
@@ -53,4 +54,7 @@ __all__ = [
     "SQLiteTelemetryStore",
     "TelemetryCollector",
     "RetentionManager",
+    # S-304 wrappers
+    "record_tool_call",
+    "synthetic_direct_step",
 ]

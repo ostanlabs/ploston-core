@@ -511,6 +511,7 @@ class PlostApplication:
             runner_registry=self.runner_registry,
             tool_registry=self.tool_registry,
             max_tool_calls=self.config.python_exec.max_tool_calls,
+            telemetry_collector=self.telemetry_collector,  # S-304 / G1+G2+G3
         )
 
         # 12. MCP Frontend
@@ -590,6 +591,7 @@ class PlostApplication:
                 mcp_manager=self.mcp_manager,
                 redis_store=self.redis_config_store,
                 telemetry_store=self.telemetry_store,
+                telemetry_collector=self.telemetry_collector,  # S-304 / G6
             )
 
         # Create workflow CRUD tools provider
@@ -602,6 +604,7 @@ class PlostApplication:
             workflow_engine=self.workflow_engine,
             tool_invoker=self.tool_invoker,
             schema_store=self.schema_store,  # F-088 · T-890
+            telemetry_collector=self.telemetry_collector,  # S-304 / G5
         )
         # M-081: wire authoring-DX meters once telemetry is available.
         telemetry = get_telemetry()

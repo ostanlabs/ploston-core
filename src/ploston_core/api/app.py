@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from ploston_core.redis_config import RedisConfigStore
     from ploston_core.registry import ToolRegistry
     from ploston_core.runner_management import RunnerRegistry
-    from ploston_core.telemetry.store import TelemetryStore
+    from ploston_core.telemetry.store import TelemetryCollector, TelemetryStore
     from ploston_core.workflow import WorkflowEngine, WorkflowRegistry
 
 
@@ -54,6 +54,7 @@ def create_rest_app(
     mcp_manager: "MCPClientManager | None" = None,
     redis_store: "RedisConfigStore | None" = None,
     telemetry_store: "TelemetryStore | None" = None,
+    telemetry_collector: "TelemetryCollector | None" = None,
 ) -> FastAPI:
     """Create FastAPI application with all routes.
 
@@ -100,6 +101,7 @@ def create_rest_app(
     app.state.mcp_manager = mcp_manager
     app.state.redis_store = redis_store
     app.state.telemetry_store = telemetry_store
+    app.state.telemetry_collector = telemetry_collector
 
     # Add middleware (order matters - first added is outermost)
     # Request ID middleware (always enabled)

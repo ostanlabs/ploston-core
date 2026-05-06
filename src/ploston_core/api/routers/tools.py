@@ -16,6 +16,17 @@ from ploston_core.api.models import (
     ToolSummary,
 )
 from ploston_core.errors import AELError
+from ploston_core.telemetry.store.types import (
+    ErrorRecord as TelemetryErrorRecord,
+)
+from ploston_core.telemetry.store.types import (
+    ExecutionStatus as TelemetryExecutionStatus,
+)
+from ploston_core.telemetry.store.types import ExecutionType, ToolCallSource
+from ploston_core.telemetry.store.wrappers import (
+    record_tool_call,
+    synthetic_direct_step,
+)
 from ploston_core.types import ToolSource as InternalToolSource
 from ploston_core.types import ToolStatus as InternalToolStatus
 
@@ -269,9 +280,78 @@ async def call_tool(
 ) -> ToolCallResponse:
     """Call a tool directly (for testing/debugging)."""
     invoker = request.app.state.tool_invoker
+    collector = getattr(request.app.state, "telemetry_collector", None)
+
+    # S-304/M-082: REST clients aren't MCP clients; honour explicit headers if
+    # set (proxies, smoke tests) but otherwise leave session_id NULL.
+    _rest_bridge_id = request.headers.get("X-Bridge-ID")
+    _rest_session_id = request.headers.get("X-MCP-Session-ID")
+
+    # S-304 / G6 — record DIRECT execution + synthetic step + tool_call row
+    execution_id: str | None = None
+    if collector is not None:
+        try:
+            execution_id = await collector.start_execution(
+                execution_type=ExecutionType.DIRECT,
+                tool_name=tool_name,
+                source="rest",
+                session_id=_rest_session_id,
+                bridge_session_id=_rest_bridge_id,
+            )
+        except Exception:
+            pass  # Telemetry never blocks the user's call
 
     try:
-        result = await invoker.invoke(tool_name, call_request.params)
+        async with synthetic_direct_step(
+            collector,
+            execution_id=execution_id,
+            tool_name=tool_name,
+        ) as _step_id:
+            async with record_tool_call(
+                collector,
+                execution_id=execution_id,
+                step_id=_step_id,
+                tool_name=tool_name,
+                params=call_request.params,
+                source=ToolCallSource.DIRECT,
+                bridge_id=_rest_bridge_id,
+                session_id=_rest_session_id,
+            ) as _call_handle:
+                result = await invoker.invoke(tool_name, call_request.params)
+                if result.success:
+                    _call_handle.set_result(result.output)
+                elif result.error is not None:
+                    _call_handle.set_error(
+                        TelemetryErrorRecord(
+                            code=getattr(result.error, "code", "UNKNOWN"),
+                            category="tool",
+                            message=getattr(result.error, "message", str(result.error)),
+                        )
+                    )
+
+        if collector is not None and execution_id is not None:
+            try:
+                if result.success:
+                    await collector.end_execution(
+                        execution_id=execution_id,
+                        status=TelemetryExecutionStatus.COMPLETED,
+                    )
+                else:
+                    await collector.end_execution(
+                        execution_id=execution_id,
+                        status=TelemetryExecutionStatus.FAILED,
+                        error=TelemetryErrorRecord(
+                            code=getattr(result.error, "code", "UNKNOWN")
+                            if result.error
+                            else "UNKNOWN",
+                            category="tool",
+                            message=getattr(result.error, "message", str(result.error))
+                            if result.error
+                            else "unknown",
+                        ),
+                    )
+            except Exception:
+                pass
 
         if not result.success:
             raise HTTPException(
@@ -285,4 +365,17 @@ async def call_tool(
             result=result.output,
         )
     except AELError as e:
+        if collector is not None and execution_id is not None:
+            try:
+                await collector.end_execution(
+                    execution_id=execution_id,
+                    status=TelemetryExecutionStatus.FAILED,
+                    error=TelemetryErrorRecord(
+                        code=e.code,
+                        category="tool",
+                        message=str(e),
+                    ),
+                )
+            except Exception:
+                pass
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())

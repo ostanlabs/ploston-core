@@ -43,10 +43,32 @@ class BridgeContext:
     queue_drops: int = 0
     session_start: str | None = None
     runner_name: str | None = None  # DEC-157/DEC-159: X-Ploston-Runner header
+    session_id: str | None = None  # S-304/M-082: per-conversation session id
 
 
 #: Per-request bridge context.  Set in ``_handle_mcp_request``.
 bridge_context: ContextVar[BridgeContext | None] = ContextVar("bridge_context", default=None)
+
+
+def _compute_session_id(
+    explicit: str | None, bridge_id: str | None, session_start: str | None
+) -> str | None:
+    """S-304/M-082: derive session_id for telemetry.
+
+    Priority:
+    1. Explicit ``X-MCP-Session-ID`` header (per-conversation when client sets it).
+    2. Composite ``f"{bridge_id}@{session_start}"`` — stable per bridge process
+       run, rolls when the bridge restarts.
+    3. ``bridge_id`` alone if no session_start known.
+
+    Returns None when no signal is available.
+    """
+    if explicit:
+        return explicit
+    if bridge_id and session_start:
+        return f"{bridge_id}@{session_start}"
+    return bridge_id
+
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +184,18 @@ class HTTPTransport:
             _runner_name = request.headers.get("X-Ploston-Runner") or request.headers.get(
                 "X-Bridge-Runner"
             )
+            _session_start = request.headers.get("X-Bridge-Session-Start")
             ctx = BridgeContext(
                 bridge_id=_bridge_id,
                 bridge_expose=request.headers.get("X-Bridge-Expose"),
                 queue_drops=_drops,
-                session_start=request.headers.get("X-Bridge-Session-Start"),
+                session_start=_session_start,
                 runner_name=_runner_name,
+                session_id=_compute_session_id(
+                    request.headers.get("X-MCP-Session-ID"),
+                    _bridge_id,
+                    _session_start,
+                ),
             )
             bridge_context.set(ctx)
 

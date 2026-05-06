@@ -1,5 +1,6 @@
 """Unit tests for mode-aware MCPFrontend."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -503,3 +504,120 @@ class TestRunnerToolRouting:
 
             assert result["isError"] is True
             assert "File not found" in result["content"][0]["text"]
+
+    async def test_runner_envelope_passthrough_mcp_blocks(self, frontend_with_runner):
+        """Forward-compat: when runner already emits a list of typed
+        content blocks, CP passes them through unchanged. Also the
+        original regression for response_bytes=0 in tool_calls telemetry."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            mock_send.return_value = {
+                "status": "success",
+                "result": {
+                    "content": [{"type": "text", "text": "envelope contents"}],
+                    "error": None,
+                },
+            }
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {"path": "/tmp/x"}}
+            )
+
+            assert result["isError"] is False
+            assert result["content"] == [{"type": "text", "text": "envelope contents"}]
+
+    async def test_runner_envelope_unwrapped_success_dict_content(self, frontend_with_runner):
+        """S-305: runner returns inner ``content`` as a raw dict
+        (production shape for obsidian-mcp et al.). CP must JSON-encode
+        it into a single MCP text block so strict TS-SDK clients can
+        ``r.content.map(...)``."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            payload = {
+                "workspace": "docs_repo",
+                "doc_name": "status/ENGINEERING_STATUS.md",
+                "content": "## Heading\nbody",
+            }
+            mock_send.return_value = {
+                "status": "success",
+                "result": {"content": payload, "error": None},
+            }
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__obsidian-mcp__read_docs", "arguments": {}}
+            )
+
+            assert result["isError"] is False
+            assert isinstance(result["content"], list)
+            assert len(result["content"]) == 1
+            assert result["content"][0]["type"] == "text"
+            assert json.loads(result["content"][0]["text"]) == payload
+
+    async def test_runner_envelope_unwrapped_success_string_content(self, frontend_with_runner):
+        """S-305: runner returns inner ``content`` as a bare string.
+        CP must wrap it as a single MCP text block without re-encoding."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            mock_send.return_value = {
+                "status": "success",
+                "result": {"content": "hello world", "error": None},
+            }
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {}}
+            )
+
+            assert result["isError"] is False
+            assert result["content"] == [{"type": "text", "text": "hello world"}]
+
+    async def test_runner_envelope_unwrapped_error(self, frontend_with_runner):
+        """Runner returns ``{status:success, result:{content,error:"..."}}``
+        for MCP-tool-level errors — CP must surface the nested error."""
+        with (
+            patch(
+                "ploston_core.mcp_frontend.server.send_tool_call_to_runner",
+                new_callable=AsyncMock,
+            ) as mock_send,
+            patch(
+                "ploston_core.mcp_frontend.server.is_runner_connected",
+                return_value=True,
+            ),
+        ):
+            mock_send.return_value = {
+                "status": "success",
+                "result": {
+                    "content": None,
+                    "error": "boom from runner",
+                },
+            }
+
+            result = await frontend_with_runner._handle_tools_call(
+                {"name": "mac__fs__read_file", "arguments": {"path": "/tmp/x"}}
+            )
+
+            assert result["isError"] is True
+            assert "boom from runner" in result["content"][0]["text"]

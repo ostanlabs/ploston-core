@@ -15,6 +15,24 @@ from ploston_core.telemetry import (
     instrument_workflow,
     record_tool_result,
 )
+from ploston_core.telemetry.store import (
+    ErrorRecord,
+    TelemetryCollector,
+    ToolCallSource,
+    record_tool_call,
+)
+from ploston_core.telemetry.store import (
+    ExecutionStatus as TelemetryExecutionStatus,
+)
+from ploston_core.telemetry.store import (
+    ExecutionType as TelemetryExecutionType,
+)
+from ploston_core.telemetry.store import (
+    StepStatus as TelemetryStepStatus,
+)
+from ploston_core.telemetry.store import (
+    StepType as TelemetryStepType,
+)
 from ploston_core.template import TemplateEngine
 from ploston_core.types import (
     ExecutionStatus,
@@ -125,6 +143,7 @@ class WorkflowEngine:
         runner_registry: Any = None,  # RunnerRegistry (optional)
         tool_registry: Any = None,  # ToolRegistry (optional, for call_mcp CP-first)
         max_tool_calls: int = 10,  # from config.python_exec.max_tool_calls
+        telemetry_collector: TelemetryCollector | None = None,  # S-304
     ):
         """Initialize workflow engine.
 
@@ -140,6 +159,9 @@ class WorkflowEngine:
             runner_registry: Optional runner registry for tool name resolution
             tool_registry: Optional tool registry for call_mcp CP-direct resolution
             max_tool_calls: Max tool calls per code step (sandbox rate limit)
+            telemetry_collector: Optional persistent-store collector (S-304).
+                When provided, the engine writes ``executions`` /
+                ``steps`` / ``tool_calls`` rows for every workflow run.
         """
         self._workflow_registry = workflow_registry
         self._tool_invoker = tool_invoker
@@ -152,6 +174,7 @@ class WorkflowEngine:
         self._runner_registry = runner_registry
         self._tool_registry = tool_registry
         self._max_tool_calls = max_tool_calls
+        self._telemetry_collector = telemetry_collector
 
     async def execute(
         self,
@@ -224,6 +247,14 @@ class WorkflowEngine:
                 {"execution_id": execution_id, "workflow": workflow.name},
             )
 
+        # S-304 / G1 — open persistent execution row (best-effort)
+        await self._telemetry_start_execution(
+            execution_id=execution_id,
+            workflow=workflow,
+            inputs=inputs,
+            bridge_session_id=bridge_session_id,
+        )
+
         # Execute REQUEST_RECEIVED plugin hook
         current_inputs = inputs
         if self._plugin_registry:
@@ -245,6 +276,13 @@ class WorkflowEngine:
                 self.validate_inputs(workflow, current_inputs)
             except Exception as e:
                 record_tool_result(telemetry_result, success=False, error_code="INPUT_INVALID")
+                # S-304 / G1 — close persistent row on early validation failure
+                await self._telemetry_end_execution(
+                    execution_id=execution_id,
+                    status=ExecutionStatus.FAILED,
+                    outputs=None,
+                    error=e,
+                )
                 return ExecutionResult(
                     execution_id=execution_id,
                     workflow_id=workflow.name,
@@ -346,6 +384,14 @@ class WorkflowEngine:
             # Record token savings metrics (T-397)
             if self._token_estimator and status == ExecutionStatus.COMPLETED:
                 self._token_estimator.record_workflow_savings(result)
+
+            # S-304 / G1 — close persistent execution row (best-effort)
+            await self._telemetry_end_execution(
+                execution_id=execution_id,
+                status=status,
+                outputs=final_outputs,
+                error=error,
+            )
 
             return result
 
@@ -577,6 +623,13 @@ class WorkflowEngine:
                     skip_reason=f"when condition not met: {step.when}",
                 )
 
+        # S-304 / G2 — open persistent step row (best-effort)
+        await self._telemetry_start_step(
+            execution_id=context.execution_id,
+            step=step,
+            params=current_params,
+        )
+
         # Instrument step execution with telemetry
         async with instrument_step(context.workflow.name, step.id) as telemetry_result:
             try:
@@ -591,6 +644,14 @@ class WorkflowEngine:
                 completed_at = datetime.now()
                 duration_ms = int((time.time() - start_time) * 1000)
                 record_tool_result(telemetry_result, success=True)
+                # S-304 / G2 — close persistent step row on success
+                await self._telemetry_end_step(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    status=StepStatus.COMPLETED,
+                    tool_result=output,
+                    error=None,
+                )
 
                 # Execute STEP_AFTER plugin hook
                 final_output = output
@@ -636,6 +697,15 @@ class WorkflowEngine:
                     record_tool_result(
                         telemetry_result, success=False, error_code="TOOL_UNAVAILABLE"
                     )
+                    # S-304 / G2 — close persistent step row as SKIPPED
+                    await self._telemetry_end_step(
+                        execution_id=context.execution_id,
+                        step_id=step.id,
+                        status=StepStatus.SKIPPED,
+                        tool_result=None,
+                        error=e,
+                        skip_reason=(f"Tool '{step.tool}' not registered (on_missing_tool: skip)"),
+                    )
                     return StepResult(
                         step_id=step.id,
                         status=StepStatus.SKIPPED,
@@ -646,6 +716,14 @@ class WorkflowEngine:
                     )
 
                 record_tool_result(telemetry_result, success=False, error_code=type(e).__name__)
+                # S-304 / G2 — close persistent step row as FAILED
+                await self._telemetry_end_step(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    status=StepStatus.FAILED,
+                    tool_result=None,
+                    error=e,
+                )
 
                 # Execute STEP_AFTER plugin hook for failure
                 if self._plugin_registry:
@@ -899,12 +977,28 @@ class WorkflowEngine:
                 {},
             )
 
-        # Invoke tool
-        result = await self._tool_invoker.invoke(
+        # Invoke tool — S-304 / G2 wraps with record_tool_call(TOOL_STEP)
+        bridge_id, runner_id, session_id = self._extract_bridge_runner_session()
+        async with record_tool_call(
+            self._telemetry_collector,
+            execution_id=context.execution_id,
+            step_id=step.id,
             tool_name=invoke_name,
             params=rendered_params,
-            timeout_seconds=step_config.timeout_seconds,
-        )
+            source=ToolCallSource.TOOL_STEP,
+            runner_id=runner_id,
+            bridge_id=bridge_id,
+            session_id=session_id,
+        ) as call_handle:
+            result = await self._tool_invoker.invoke(
+                tool_name=invoke_name,
+                params=rendered_params,
+                timeout_seconds=step_config.timeout_seconds,
+            )
+            if result.success:
+                call_handle.set_result(result.output)
+            else:
+                call_handle.set_error(result.error)
 
         if not result.success:
             raise result.error if result.error else create_error("TOOL_FAILED", tool_name=step.tool)
@@ -1056,6 +1150,8 @@ class WorkflowEngine:
             ),
             step_id=step.id,
             execution_id=context.execution_id,
+            bridge_id=getattr(bridge_ctx, "bridge_id", None) if bridge_ctx else None,
+            session_id=getattr(bridge_ctx, "session_id", None) if bridge_ctx else None,
         )
 
         tool_interface = ToolCallInterface(
@@ -1065,6 +1161,7 @@ class WorkflowEngine:
             tool_registry=self._tool_registry,
             runner_registry=self._runner_registry,
             runner_context=runner_ctx,
+            telemetry_collector=self._telemetry_collector,  # S-304 / G3
         )
 
         # Build workflow metadata for sandbox context
@@ -1210,3 +1307,192 @@ class WorkflowEngine:
             on_error=on_error,
             retry=retry,
         )
+
+    # ─────────────────────────────────────────────────────────────────
+    # S-304 — Persistent telemetry helpers (G1/G2)
+    # All failures are swallowed; observability never breaks workflows.
+    # ─────────────────────────────────────────────────────────────────
+
+    def _extract_bridge_runner_session(
+        self,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Pull bridge_id / runner_id / session_id from bridge_context if any.
+
+        Returns:
+            (bridge_id, runner_id, session_id) — any or all may be None.
+        """
+        try:
+            from ploston_core.mcp_frontend.http_transport import bridge_context
+
+            ctx = bridge_context.get()
+            if not ctx:
+                return None, None, None
+            return (
+                getattr(ctx, "bridge_id", None),
+                getattr(ctx, "runner_name", None),
+                getattr(ctx, "session_id", None),
+            )
+        except Exception:
+            return None, None, None
+
+    async def _telemetry_start_execution(
+        self,
+        *,
+        execution_id: str,
+        workflow: WorkflowDefinition,
+        inputs: dict[str, Any],
+        bridge_session_id: str | None,
+    ) -> None:
+        if self._telemetry_collector is None:
+            return
+        bridge_id, runner_id, session_id = self._extract_bridge_runner_session()
+        try:
+            await self._telemetry_collector.start_execution(
+                execution_type=TelemetryExecutionType.WORKFLOW,
+                workflow_id=workflow.name,
+                workflow_version=getattr(workflow, "version", None),
+                inputs=inputs,
+                source="workflow",
+                runner_id=runner_id,
+                bridge_session_id=bridge_session_id or bridge_id,
+                session_id=session_id,
+                execution_id=execution_id,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger._log(
+                    LogLevel.WARNING,
+                    "engine",
+                    f"telemetry start_execution failed: {e}",
+                    {"execution_id": execution_id},
+                )
+
+    async def _telemetry_end_execution(
+        self,
+        *,
+        execution_id: str,
+        status: ExecutionStatus,
+        outputs: dict[str, Any] | None,
+        error: BaseException | None,
+    ) -> None:
+        if self._telemetry_collector is None:
+            return
+        err_record: ErrorRecord | None = None
+        if error is not None:
+            err_record = ErrorRecord(
+                code=getattr(error, "code", type(error).__name__),
+                category=getattr(error, "category", "workflow"),
+                message=str(error),
+            )
+        try:
+            await self._telemetry_collector.end_execution(
+                execution_id=execution_id,
+                status=_map_status(status),
+                outputs=outputs,
+                error=err_record,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger._log(
+                    LogLevel.WARNING,
+                    "engine",
+                    f"telemetry end_execution failed: {e}",
+                    {"execution_id": execution_id},
+                )
+
+    async def _telemetry_start_step(
+        self,
+        *,
+        execution_id: str,
+        step: Any,
+        params: dict[str, Any] | None,
+    ) -> None:
+        if self._telemetry_collector is None:
+            return
+        is_code = step.step_type != StepType.TOOL
+        step_type = TelemetryStepType.CODE if is_code else TelemetryStepType.TOOL
+        try:
+            await self._telemetry_collector.start_step(
+                execution_id=execution_id,
+                step_id=step.id,
+                step_type=step_type,
+                tool_name=None if is_code else getattr(step, "tool", None),
+                tool_params=None if is_code else params,
+                code=getattr(step, "code", None) if is_code else None,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger._log(
+                    LogLevel.WARNING,
+                    "engine",
+                    f"telemetry start_step failed: {e}",
+                    {"execution_id": execution_id, "step_id": step.id},
+                )
+
+    async def _telemetry_end_step(
+        self,
+        *,
+        execution_id: str,
+        step_id: str,
+        status: StepStatus,
+        tool_result: Any | None,
+        error: BaseException | None,
+        skip_reason: str | None = None,
+    ) -> None:
+        if self._telemetry_collector is None:
+            return
+        err_record: ErrorRecord | None = None
+        if error is not None:
+            err_record = ErrorRecord(
+                code=getattr(error, "code", type(error).__name__),
+                category=getattr(error, "category", "step"),
+                message=str(error),
+            )
+        result_payload: dict[str, Any] | None
+        if tool_result is None:
+            result_payload = None
+        elif isinstance(tool_result, dict):
+            result_payload = tool_result
+        else:
+            result_payload = {"value": tool_result}
+        try:
+            await self._telemetry_collector.end_step(
+                execution_id=execution_id,
+                step_id=step_id,
+                status=_map_step_status(status),
+                tool_result=result_payload,
+                error=err_record,
+                skip_reason=skip_reason,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger._log(
+                    LogLevel.WARNING,
+                    "engine",
+                    f"telemetry end_step failed: {e}",
+                    {"execution_id": execution_id, "step_id": step_id},
+                )
+
+
+def _map_status(status: ExecutionStatus) -> TelemetryExecutionStatus:
+    """Map engine ExecutionStatus → telemetry-store ExecutionStatus."""
+    mapping = {
+        ExecutionStatus.PENDING: TelemetryExecutionStatus.PENDING,
+        ExecutionStatus.RUNNING: TelemetryExecutionStatus.RUNNING,
+        ExecutionStatus.COMPLETED: TelemetryExecutionStatus.COMPLETED,
+        ExecutionStatus.FAILED: TelemetryExecutionStatus.FAILED,
+        ExecutionStatus.CANCELLED: TelemetryExecutionStatus.CANCELLED,
+    }
+    return mapping.get(status, TelemetryExecutionStatus.FAILED)
+
+
+def _map_step_status(status: StepStatus) -> TelemetryStepStatus:
+    """Map engine StepStatus → telemetry-store StepStatus."""
+    mapping = {
+        StepStatus.PENDING: TelemetryStepStatus.PENDING,
+        StepStatus.RUNNING: TelemetryStepStatus.RUNNING,
+        StepStatus.COMPLETED: TelemetryStepStatus.COMPLETED,
+        StepStatus.FAILED: TelemetryStepStatus.FAILED,
+        StepStatus.SKIPPED: TelemetryStepStatus.SKIPPED,
+    }
+    return mapping.get(status, TelemetryStepStatus.FAILED)
