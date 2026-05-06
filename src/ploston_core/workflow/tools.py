@@ -189,6 +189,19 @@ WORKFLOW_MGMT_TOOL_NAMES = frozenset(
     }
 )
 
+# Subset of WORKFLOW_MGMT_TOOL_NAMES that *dispatch* into other tools and
+# therefore appear as wrapper rows in the Session/Call Inspector dashboards.
+# The Grafana SQL hard-codes this list (`tool_name IN ('workflow_call_tool',
+# 'workflow_run')`) to label rows as 'wrapper' vs 'direct'. Keep this set in
+# sync with the SQL in
+# `packages/ploston-cli/src/ploston_cli/bootstrap/assets/docker/observability/grafana/dashboards/{session,call}-inspector.json`.
+WORKFLOW_DISPATCHER_TOOL_NAMES = frozenset(
+    {
+        "workflow_call_tool",
+        "workflow_run",
+    }
+)
+
 # Backward-compat alias (deprecated)
 WORKFLOW_CRUD_TOOL_NAMES = WORKFLOW_MGMT_TOOL_NAMES
 
@@ -1265,6 +1278,7 @@ class WorkflowToolsProvider:
         tool_invoker: Any | None = None,
         schema_store: Any | None = None,
         on_tools_changed: Callable[[], Awaitable[None]] | None = None,
+        telemetry_collector: Any | None = None,
     ) -> None:
         from .authoring_metrics import WorkflowAuthoringMetrics
         from .registry import WorkflowRegistry
@@ -1278,6 +1292,7 @@ class WorkflowToolsProvider:
         # outputSchema in workflow_tool_schema responses.
         self._schema_store = schema_store
         self._on_tools_changed = on_tools_changed
+        self._telemetry_collector = telemetry_collector  # S-304 / G5
         # M-081 Measurement Plan: instruments are no-ops until ``set_meter``
         # is called by Application during telemetry wire-up.
         self._authoring_metrics = WorkflowAuthoringMetrics(meter=None)
@@ -2886,8 +2901,72 @@ class WorkflowToolsProvider:
                 "hint": "Call workflow_list_tools to list available tools by MCP server.",
             }
 
+        # S-304 / G5 — record inner tool call as DIRECT child under the
+        # parent workflow_call_tool execution (set by MCPFrontend._execute_tool).
+        from ploston_core.telemetry.context import direct_execution_id
+        from ploston_core.telemetry.store.types import (
+            ErrorRecord as TelemetryErrorRecord,
+        )
+        from ploston_core.telemetry.store.types import ToolCallSource
+        from ploston_core.telemetry.store.wrappers import (
+            record_tool_call,
+            synthetic_direct_step,
+        )
+
+        _parent_exec_id = direct_execution_id.get()
+        _display_tool = f"{mcp}__{tool}"
+        # S-304/M-082: pull bridge identity & session id from the request-scoped
+        # bridge_context so child tool_call rows carry per-conversation labels.
+        _bridge_id: str | None = None
+        _session_id: str | None = None
         try:
-            result = await self._tool_invoker.invoke(invoke_name, params)
+            from ploston_core.mcp_frontend.http_transport import bridge_context
+
+            _bctx = bridge_context.get()
+            if _bctx is not None:
+                _bridge_id = getattr(_bctx, "bridge_id", None)
+                _session_id = getattr(_bctx, "session_id", None)
+        except Exception:
+            pass
+        try:
+            async with synthetic_direct_step(
+                self._telemetry_collector,
+                execution_id=_parent_exec_id,
+                tool_name=_display_tool,
+            ) as _step_id:
+                async with record_tool_call(
+                    self._telemetry_collector,
+                    execution_id=_parent_exec_id,
+                    step_id=_step_id,
+                    tool_name=_display_tool,
+                    params=params,
+                    source=ToolCallSource.DIRECT,
+                    runner_id=runner_name,
+                    bridge_id=_bridge_id,
+                    session_id=_session_id,
+                ) as _call_handle:
+                    try:
+                        result = await self._tool_invoker.invoke(invoke_name, params)
+                    except Exception as _exc:
+                        _call_handle.set_error(_exc)
+                        raise
+                    if result.success:
+                        # Strip runner transport envelope so telemetry records
+                        # the inner payload (response_bytes>0). Mirrors the
+                        # unwrap in MCPFrontend._execute_runner_tool — same
+                        # regression: runner returns
+                        # ``{"status":"success","result":{"content":...}}``
+                        # but downstream wants the inner content.
+                        _telemetry_payload = normalize_mcp_response(result.output)
+                        _call_handle.set_result(_telemetry_payload)
+                    elif result.error is not None:
+                        _call_handle.set_error(
+                            TelemetryErrorRecord(
+                                code=getattr(result.error, "code", "UNKNOWN"),
+                                category="tool",
+                                message=getattr(result.error, "message", str(result.error)),
+                            )
+                        )
         except AELError as e:
             return {
                 "success": False,
