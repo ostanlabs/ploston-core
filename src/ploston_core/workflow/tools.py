@@ -784,9 +784,10 @@ WORKFLOW_PATCH_TOOL = {
         "and the draft is dropped; on failure the same `draft_id` comes "
         "back updated.\n"
         "- After `workflow_run` fails on a registered workflow, pass "
-        "`name` + a new `version` plus ops derived from the engine's "
+        "`name` plus ops derived from the engine's "
         "`error_metadata.suggested_fix` (or your own diagnosis) to repair "
-        "it in place.\n\n"
+        "it in place. Versioning is automatic — you don't need to supply "
+        "a `version`.\n\n"
         "Each operation is one of five shapes:\n"
         "- `{op:'replace', step_id, old, new}` — str_replace inside a "
         "single code step's `code` block (the `old` substring must be "
@@ -821,9 +822,11 @@ WORKFLOW_PATCH_TOOL = {
         "workflow stays at its current version and a new draft is "
         "returned under `draft_id` so the agent can keep iterating.\n\n"
         "Two modes:\n"
-        "- Registered workflow: pass `name` and `version`. The new "
-        "`version` must differ from the current version. The response "
-        "includes `previous_version` so the agent can track what changed.\n"
+        "- Registered workflow: pass `name` (and optionally "
+        "`operations`/`patches`). Versioning is automatic — the server "
+        "bumps patch/minor/major based on the scope of the changes. "
+        "The response includes `previous_version` so the agent can "
+        "track what changed.\n"
         "- Draft: pass `draft_id` returned by `workflow_create` (or by a "
         "previous failed live patch). The patched YAML is re-validated; "
         "on success it is registered (and the draft dropped); on failure "
@@ -848,9 +851,11 @@ WORKFLOW_PATCH_TOOL = {
             "version": {
                 "type": "string",
                 "description": (
-                    "New version string for the patched workflow "
-                    "(e.g. '2.1.0'). Required when patching a registered "
-                    "workflow; ignored in draft mode."
+                    "Optional version override. If omitted, the server "
+                    "auto-bumps the version based on the scope of the "
+                    "changes (patch for single-step edits, minor for "
+                    "multi-edit or set ops, major for structural changes). "
+                    "Ignored in draft mode."
                 ),
             },
             "draft_id": {
@@ -1120,6 +1125,106 @@ _PATCH_PAYLOAD_BLOB_LIMIT = 4096
 # Below this ratio the closest_match hint has no signal and is omitted.
 _PATCH_CLOSEST_MATCH_MIN_RATIO = 0.6
 
+# When a replace op's 'old' misses but the closest match is whitespace-only
+# with a ratio at or above this threshold, auto-correct and proceed instead
+# of failing.  This covers the common case where an agent gets the content
+# right but the indentation wrong (YAML block-scalar indent drift).
+_PATCH_WHITESPACE_AUTOFIX_MIN_RATIO = 0.8
+
+# Common escape sequences that LLMs emit when they double-encode a JSON
+# string value (e.g. ``\"`` instead of ``"``).  Applied in order; each
+# pair is ``(escaped_form, canonical_form)``.
+_PATCH_ESCAPE_PAIRS: list[tuple[str, str]] = [
+    ('\\"', '"'),
+    ("\\'", "'"),
+    ("\\\\", "\\"),
+    ("\\n", "\n"),
+    ("\\t", "\t"),
+]
+
+
+def _compute_auto_version(
+    previous_version: str | None,
+    ops: list[dict[str, Any]],
+) -> str:
+    """Compute the next version based on the scope of the patch operations.
+
+    Rules:
+    - **Patch** (0.0.+1): single code-edit op (replace / replace_lines)
+      within a single step.
+    - **Minor** (0.+1.0): multiple code-edit ops within the *same* step,
+      OR ``set`` ops that don't touch outputs.
+    - **Major** (+1.0.0): ops touching *multiple* steps, OR output-level
+      changes (``set`` on ``outputs.*``, ``add_step``, ``remove_step``).
+    """
+    if not previous_version:
+        previous_version = "0.0.0"
+
+    # Parse current version — tolerate leading ``v`` and missing segments.
+    cleaned = previous_version.lstrip("v")
+    parts = cleaned.split(".")
+    try:
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        major, minor, patch = 0, 0, 0
+
+    # Classify ops ─────────────────────────────────────────────────────
+    is_major = False
+    step_ids: set[str] = set()
+    code_edit_count = 0
+
+    for op in ops:
+        op_type = op.get("op", "replace")
+
+        if op_type in ("replace", "replace_lines"):
+            code_edit_count += 1
+            sid = op.get("step_id", "")
+            if sid:
+                step_ids.add(sid)
+
+        elif op_type == "set":
+            path = op.get("path", "")
+            if path.startswith("outputs"):
+                is_major = True
+            # ``set`` on anything else is at least minor-level.
+
+        elif op_type in ("add_step", "remove_step"):
+            is_major = True
+
+    # Multi-step code edits ⇒ major.
+    if len(step_ids) > 1:
+        is_major = True
+
+    if is_major:
+        return f"{major + 1}.0.0"
+
+    # Minor: multiple code edits in same step, or any ``set`` op.
+    has_set = any(o.get("op") == "set" for o in ops)
+    if code_edit_count > 1 or has_set:
+        return f"{major}.{minor + 1}.0"
+
+    # Patch: single code-edit op within a single step.
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _unescape_old(text: str) -> str | None:
+    """Attempt to reverse common JSON/LLM double-encoding artifacts.
+
+    Returns the un-escaped string only when *at least one substitution*
+    was applied (i.e. the text actually contained escape artifacts).
+    Returns ``None`` when the text was already clean — the caller should
+    skip the normalised-match branch in that case.
+    """
+    out = text
+    changed = False
+    for escaped, canonical in _PATCH_ESCAPE_PAIRS:
+        if escaped in out:
+            out = out.replace(escaped, canonical)
+            changed = True
+    return out if changed else None
+
 
 def _truncate_for_payload(text: str, *, limit: int = _PATCH_PAYLOAD_BLOB_LIMIT) -> str:
     """Cap ``text`` at ``limit`` bytes (UTF-8) for safe inclusion in errors."""
@@ -1192,6 +1297,7 @@ def _find_closest_match(attempted_old: str, code_str: str) -> dict[str, Any] | N
 
     return {
         "text": _truncate_for_payload(span_text),
+        "raw_text": span_text,
         "line_range": [best_start + 1, best_start + best_size],
         "match_ratio": round(best_ratio, 3),
         "differences": differences,
@@ -1235,7 +1341,11 @@ def _build_line_range_invalid_payload(
 
 
 def _build_old_not_found_payload(
-    *, step_id: str, code_str: str, attempted_old: str
+    *,
+    step_id: str,
+    code_str: str,
+    attempted_old: str,
+    attempted_new: str | None = None,
 ) -> dict[str, Any]:
     """Build the structured ``data`` payload for a ``replace`` op that missed.
 
@@ -1243,8 +1353,12 @@ def _build_old_not_found_payload(
     and ``attempted_old`` (capped). When a usable fuzzy hit exists, also
     includes ``closest_match`` with ``text``, ``line_range``,
     ``match_ratio``, and a ``differences`` classifier
-    ("whitespace_only"|"content"). The classifier is informational only —
-    no auto-suggested-fix is emitted; the agent decides how to repair.
+    ("whitespace_only"|"content").
+
+    When a closest match is found and ``attempted_new`` is provided, a
+    ``suggested_fix`` is emitted — a ready-to-use ``replace`` op that the
+    agent can pass straight back to ``workflow_patch``. This mirrors the
+    pattern used in validation errors and minimises retry friction.
     """
     payload: dict[str, Any] = {
         "step_id": step_id,
@@ -1253,7 +1367,16 @@ def _build_old_not_found_payload(
     }
     closest = _find_closest_match(attempted_old, code_str)
     if closest is not None:
-        payload["closest_match"] = closest
+        # Strip internal raw_text — only the truncated 'text' goes to the agent.
+        payload["closest_match"] = {k: v for k, v in closest.items() if k != "raw_text"}
+        # Emit a ready-to-use suggested_fix so the agent can retry in one call.
+        if attempted_new is not None:
+            payload["suggested_fix"] = {
+                "op": "replace",
+                "step_id": step_id,
+                "old": closest["raw_text"],
+                "new": attempted_new,
+            }
     return payload
 
 
@@ -2093,8 +2216,6 @@ class WorkflowToolsProvider:
             name = entry.name or ""
         previous_version: str | None = None
         if not is_draft_mode:
-            if not version:
-                raise create_error("PARAM_INVALID", tool_name="workflow_patch")
             assert isinstance(name, str)
             name = _sanitize_workflow_name(name)
             existing = self._registry.get(name)
@@ -2102,18 +2223,12 @@ class WorkflowToolsProvider:
                 raise create_error("WORKFLOW_NOT_FOUND", workflow_id=name)
 
             previous_version = getattr(existing, "version", None)
-            # Spec P4a: same-version patches on a live workflow are
-            # rejected. Drafts are exempt — see the version semantics
-            # section.
-            if previous_version and version == previous_version:
-                raise create_error(
-                    "INPUT_INVALID",
-                    detail=(
-                        f"version '{version}' must differ from the current "
-                        f"version of '{name}' ({previous_version}). Use a new "
-                        "version string (e.g., bump the patch number)."
-                    ),
-                )
+
+            # Auto-version: compute the next version from op scope.
+            # If the agent explicitly provides a version we still accept
+            # it (backward compat) but it's no longer required.
+            if not version:
+                version = _compute_auto_version(previous_version, ops)
 
             stored_yaml = existing.yaml_content
             if not stored_yaml:
@@ -2295,16 +2410,50 @@ class WorkflowToolsProvider:
 
         code_str = str(code)
         occurrences = code_str.count(old)
+
+        # ── Auto-fix layer 1: escape normalization ──
+        # LLMs sometimes double-encode strings, producing literal
+        # backslash-quote (``\"``) where the canonical code has plain
+        # ``"``.  Try un-escaping both ``old`` and ``new`` and re-match.
         if occurrences == 0:
-            raise create_error(
-                "INPUT_INVALID",
-                detail=f"'old' substring not found in step '{step_id}' code",
-                data=_build_old_not_found_payload(
-                    step_id=step_id,
-                    code_str=code_str,
-                    attempted_old=str(old),
-                ),
-            )
+            unescaped_old = _unescape_old(str(old))
+            if unescaped_old is not None:
+                ue_count = code_str.count(unescaped_old)
+                if ue_count == 1:
+                    # Also un-escape ``new`` so the replacement text is
+                    # consistent with the code's quoting style.
+                    old = unescaped_old
+                    unescaped_new = _unescape_old(str(new))
+                    if unescaped_new is not None:
+                        new = unescaped_new
+                    occurrences = 1
+
+        # ── Auto-fix layer 2: whitespace normalization ──
+        # Covers the common case where the agent gets the content right
+        # but the indentation wrong (YAML block-scalar indent drift).
+        if occurrences == 0:
+            closest = _find_closest_match(str(old), code_str)
+            if (
+                closest is not None
+                and closest["differences"] == "whitespace_only"
+                and closest["match_ratio"] >= _PATCH_WHITESPACE_AUTOFIX_MIN_RATIO
+            ):
+                canonical = closest["raw_text"]
+                # Verify the canonical text is unique before replacing.
+                if code_str.count(canonical) == 1:
+                    old = canonical
+                    occurrences = 1
+            if occurrences == 0:
+                raise create_error(
+                    "INPUT_INVALID",
+                    detail=f"'old' substring not found in step '{step_id}' code",
+                    data=_build_old_not_found_payload(
+                        step_id=step_id,
+                        code_str=code_str,
+                        attempted_old=str(old),
+                        attempted_new=str(new),
+                    ),
+                )
         if occurrences > 1:
             raise create_error(
                 "INPUT_INVALID",
@@ -3004,6 +3153,12 @@ class WorkflowToolsProvider:
 
         Executes a workflow via WorkflowEngine.execute() — same path as
         direct MCP workflow calls for telemetry consistency (DEC-171).
+
+        When invoked through ``_execute_workflow_mgmt_tool``, the
+        ``direct_execution_id`` ContextVar is already set.  We pass it to
+        the engine as ``parent_execution_id`` so the engine's internal
+        step/tool_call rows share the same execution_id, grouping them
+        under the ``workflow_run`` wrapper in the session timeline.
         """
         name = arguments.get("name")
         if not name:
@@ -3015,8 +3170,17 @@ class WorkflowToolsProvider:
                 message="workflow_run is unavailable: WorkflowEngine not configured",
             )
 
+        # Read the caller's execution_id (set by _execute_workflow_mgmt_tool).
+        from ploston_core.telemetry.context import direct_execution_id
+
+        parent_exec_id = direct_execution_id.get(None)
+
         inputs = arguments.get("inputs") or {}
-        result = await self._workflow_engine.execute(name, inputs)
+        result = await self._workflow_engine.execute(
+            name,
+            inputs,
+            parent_execution_id=parent_exec_id,
+        )
 
         # S-271 / T-864: emit the centralized MCP response shape so step-level
         # telemetry (debug_log, duration_ms, per-step status) is surfaced to

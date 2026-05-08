@@ -36,6 +36,7 @@ from ploston_core.workflow.tools import (
     WORKFLOW_SCHEMA_TOOL,
     WORKFLOW_TOOL_SCHEMA_TOOL,
     WorkflowToolsProvider,
+    _compute_auto_version,
 )
 
 
@@ -1010,23 +1011,23 @@ class TestWorkflowPatchSetOpAndVersionSemantics:
         assert result["validation"]["valid"] is True
 
     @pytest.mark.asyncio
-    async def test_same_version_rejected_for_live_patch(self, real_provider):
-        from ploston_core.errors import AELError
-
+    async def test_auto_version_bump_when_version_omitted(self, real_provider):
+        """When ``version`` is not provided, the server auto-bumps."""
         await real_provider.call("workflow_create", {"yaml_content": _LIVE_YAML_FOR_PATCH})
 
-        with pytest.raises(AELError) as exc_info:
-            await real_provider.call(
-                "workflow_patch",
-                {
-                    "name": "dx_p4a_live",
-                    "version": "1.0.0",  # same as current
-                    "operations": [{"op": "set", "path": "inputs.lookback.default", "value": 5}],
-                },
-            )
-        # ``detail`` carries the human message; ``str()`` returns the
-        # short ``message`` only, so look at the structured detail field.
-        assert "must differ" in (exc_info.value.detail or "").lower()
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_p4a_live",
+                # No version — should auto-bump from 1.0.0.
+                "operations": [{"op": "set", "path": "inputs.lookback.default", "value": 5}],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+        # ``set`` op → minor bump: 1.0.0 → 1.1.0
+        assert result["version"] == "1.1.0"
+        assert result["previous_version"] == "1.0.0"
 
     @pytest.mark.asyncio
     async def test_failed_live_patch_keeps_live_unchanged_creates_draft(
@@ -1238,6 +1239,17 @@ _PATCH_REPLACE_YAML = (
     "      result = {'x': x, 'y': y}\n"
 )
 
+_PATCH_REPLACE_YAML_WITH_QUOTES = (
+    "name: dx_replace_quotes\n"
+    'version: "1.0.0"\n'
+    "description: Code with double-quoted strings for escape-normalization tests.\n"
+    "steps:\n"
+    "  - id: filter\n"
+    "    code: |\n"
+    '      items = [i for i in data if i.get("status") in ALLOWED]\n'
+    "      result = {'count': len(items)}\n"
+)
+
 
 class TestWorkflowPatchOldNotFound:
     """``workflow_patch`` ``replace`` op surfaces structured context when
@@ -1299,35 +1311,31 @@ class TestWorkflowPatchOldNotFound:
         assert data.get("attempted_old") == "totally absent line"
 
     @pytest.mark.asyncio
-    async def test_whitespace_drift_classified_as_whitespace_only(self, real_provider):
-        from ploston_core.errors import AELError
-
+    async def test_whitespace_drift_auto_fixed(self, real_provider):
+        """Whitespace-only mismatch with high ratio is auto-corrected."""
         await real_provider.call("workflow_create", {"yaml_content": _PATCH_REPLACE_YAML})
-        with pytest.raises(AELError) as exc_info:
-            await real_provider.call(
-                "workflow_patch",
-                {
-                    "name": "dx_replace_target",
-                    "version": "1.0.1",
-                    "operations": [
-                        {
-                            "op": "replace",
-                            "step_id": "compute",
-                            # Same tokens as ``y = x * 2`` but with two
-                            # leading spaces — exact substring won't match
-                            # because the canonical code has no leading
-                            # whitespace inside the YAML block scalar body.
-                            "old": "  y = x * 2",
-                            "new": "y = x * 3",
-                        }
-                    ],
-                },
-            )
-        closest = (exc_info.value.data or {}).get("closest_match")
-        assert closest is not None, "expected a closest_match hint"
-        assert closest["differences"] == "whitespace_only"
-        assert closest["match_ratio"] >= 0.6
-        assert closest["line_range"] == [2, 2]
+        # Should succeed — the auto-fix detects whitespace-only drift and
+        # substitutes the canonical text before replacing.
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_replace_target",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "replace",
+                        "step_id": "compute",
+                        # Same tokens as ``y = x * 2`` but with two
+                        # leading spaces — exact substring won't match
+                        # because the canonical code has no leading
+                        # whitespace inside the YAML block scalar body.
+                        "old": "  y = x * 2",
+                        "new": "y = x * 3",
+                    }
+                ],
+            },
+        )
+        assert _parse(raw)["status"] == "patched"
 
     @pytest.mark.asyncio
     async def test_content_drift_classified_as_content(self, real_provider):
@@ -1355,6 +1363,16 @@ class TestWorkflowPatchOldNotFound:
         closest = (exc_info.value.data or {}).get("closest_match")
         assert closest is not None
         assert closest["differences"] == "content"
+        # raw_text must not leak into the agent-facing payload.
+        assert "raw_text" not in closest
+        # suggested_fix must be present so the agent can retry.
+        fix = (exc_info.value.data or {}).get("suggested_fix")
+        assert fix is not None, "expected a suggested_fix for content drift"
+        assert fix["op"] == "replace"
+        assert fix["step_id"] == "compute"
+        assert fix["new"] == "y = x * 3"
+        # The fix's 'old' must be the canonical code, not the agent's input.
+        assert "y = x * 2" in fix["old"]
 
     @pytest.mark.asyncio
     async def test_unrelated_old_omits_closest_match(self, real_provider):
@@ -1381,6 +1399,66 @@ class TestWorkflowPatchOldNotFound:
         data = exc_info.value.data or {}
         assert "step_code" in data
         assert "closest_match" not in data
+        assert "suggested_fix" not in data
+
+    # ── Escape-normalization auto-fix tests ──
+
+    @pytest.mark.asyncio
+    async def test_escaped_quotes_auto_fixed(self, real_provider):
+        """Backslash-escaped double quotes in ``old`` are normalised to
+        plain quotes before matching — patch succeeds silently."""
+        await real_provider.call(
+            "workflow_create", {"yaml_content": _PATCH_REPLACE_YAML_WITH_QUOTES}
+        )
+        raw = await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_replace_quotes",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "replace",
+                        "step_id": "filter",
+                        # Agent sends escaped quotes — the canonical
+                        # code has plain double-quotes.
+                        "old": 'items = [i for i in data if i.get(\\"status\\") in ALLOWED]',
+                        "new": 'items = [i for i in data if i.get(\\"status\\") in PERMITTED]',
+                    }
+                ],
+            },
+        )
+        result = _parse(raw)
+        assert result["status"] == "patched"
+
+    @pytest.mark.asyncio
+    async def test_escaped_quotes_new_also_unescaped(self, real_provider):
+        """When ``old`` is un-escaped, ``new`` is also un-escaped so the
+        replacement text uses plain quotes consistent with the code."""
+        await real_provider.call(
+            "workflow_create", {"yaml_content": _PATCH_REPLACE_YAML_WITH_QUOTES}
+        )
+        await real_provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_replace_quotes",
+                "version": "1.0.1",
+                "operations": [
+                    {
+                        "op": "replace",
+                        "step_id": "filter",
+                        "old": 'items = [i for i in data if i.get(\\"status\\") in ALLOWED]',
+                        "new": 'items = [i for i in data if i.get(\\"state\\") in ALLOWED]',
+                    }
+                ],
+            },
+        )
+        # Retrieve the workflow and verify the replacement used plain
+        # quotes (i.e. ``new`` was also un-escaped).
+        get_raw = await real_provider.call("workflow_get", {"name": "dx_replace_quotes"})
+        wf = _parse(get_raw)
+        yaml_text = wf["yaml"]
+        assert 'i.get("state")' in yaml_text
+        assert '\\"' not in yaml_text
 
 
 # ── S-291 (P3): per-error-type roundtrip coverage ─────────────────
@@ -1758,3 +1836,89 @@ class TestAuthoringMetrics:
         am.record_suggested_fix(accepted=True, kind="x")
         am.record_suggested_fix(accepted=False, kind="x")
         assert am.is_enabled is False
+
+
+# ─────────────────────────────────────────────────────────────────
+# _compute_auto_version unit tests
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestComputeAutoVersion:
+    """Unit tests for the auto-versioning logic."""
+
+    # ── Patch bump (0.0.+1): single replace within one step ──
+
+    def test_single_replace_bumps_patch(self):
+        ops = [{"op": "replace", "step_id": "s1", "old": "x", "new": "y"}]
+        assert _compute_auto_version("1.0.0", ops) == "1.0.1"
+
+    def test_single_replace_lines_bumps_patch(self):
+        ops = [{"op": "replace_lines", "step_id": "s1", "start_line": 1, "new": "z"}]
+        assert _compute_auto_version("2.3.4", ops) == "2.3.5"
+
+    # ── Minor bump (0.+1.0): multiple code edits same step, or set ops ──
+
+    def test_multiple_replaces_same_step_bumps_minor(self):
+        ops = [
+            {"op": "replace", "step_id": "s1", "old": "a", "new": "b"},
+            {"op": "replace", "step_id": "s1", "old": "c", "new": "d"},
+        ]
+        assert _compute_auto_version("1.0.0", ops) == "1.1.0"
+
+    def test_set_op_bumps_minor(self):
+        ops = [{"op": "set", "path": "defaults.timeout", "value": 60}]
+        assert _compute_auto_version("1.0.0", ops) == "1.1.0"
+
+    def test_set_description_bumps_minor(self):
+        ops = [{"op": "set", "path": "description", "value": "new desc"}]
+        assert _compute_auto_version("0.1.0", ops) == "0.2.0"
+
+    def test_replace_plus_set_non_output_bumps_minor(self):
+        ops = [
+            {"op": "replace", "step_id": "s1", "old": "x", "new": "y"},
+            {"op": "set", "path": "defaults.timeout", "value": 30},
+        ]
+        assert _compute_auto_version("1.0.0", ops) == "1.1.0"
+
+    # ── Major bump (+1.0.0): multi-step, add/remove step, output changes ──
+
+    def test_replaces_across_multiple_steps_bumps_major(self):
+        ops = [
+            {"op": "replace", "step_id": "s1", "old": "a", "new": "b"},
+            {"op": "replace", "step_id": "s2", "old": "c", "new": "d"},
+        ]
+        assert _compute_auto_version("1.0.0", ops) == "2.0.0"
+
+    def test_add_step_bumps_major(self):
+        ops = [{"op": "add_step", "step": {"id": "new", "code": "x = 1"}}]
+        assert _compute_auto_version("1.2.3", ops) == "2.0.0"
+
+    def test_remove_step_bumps_major(self):
+        ops = [{"op": "remove_step", "step_id": "old"}]
+        assert _compute_auto_version("1.0.0", ops) == "2.0.0"
+
+    def test_set_on_outputs_bumps_major(self):
+        ops = [{"op": "set", "path": "outputs.result.from", "value": "steps.s2.output"}]
+        assert _compute_auto_version("1.0.0", ops) == "2.0.0"
+
+    # ── Edge cases ──
+
+    def test_none_previous_version(self):
+        ops = [{"op": "replace", "step_id": "s1", "old": "x", "new": "y"}]
+        assert _compute_auto_version(None, ops) == "0.0.1"
+
+    def test_empty_previous_version(self):
+        ops = [{"op": "replace", "step_id": "s1", "old": "x", "new": "y"}]
+        assert _compute_auto_version("", ops) == "0.0.1"
+
+    def test_v_prefix_stripped(self):
+        ops = [{"op": "replace", "step_id": "s1", "old": "x", "new": "y"}]
+        assert _compute_auto_version("v1.2.3", ops) == "1.2.4"
+
+    def test_two_segment_version(self):
+        ops = [{"op": "replace", "step_id": "s1", "old": "x", "new": "y"}]
+        assert _compute_auto_version("1.2", ops) == "1.2.1"
+
+    def test_malformed_version_falls_back_to_zero(self):
+        ops = [{"op": "set", "path": "defaults.timeout", "value": 1}]
+        assert _compute_auto_version("garbage", ops) == "0.1.0"

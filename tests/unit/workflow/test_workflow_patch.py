@@ -210,16 +210,20 @@ class TestWorkflowPatch:
         assert body["version"] == "9.9.9"
 
     @pytest.mark.asyncio
-    async def test_version_required(self, provider):
-        with pytest.raises(AELError) as exc:
-            await provider.call(
-                "workflow_patch",
-                {
-                    "name": "dx_patch",
-                    "patches": [{"step_id": "greet", "old": "Hi, ", "new": "Hello, "}],
-                },
-            )
-        assert exc.value.code == "PARAM_INVALID"
+    async def test_version_auto_bumped_when_omitted(self, provider):
+        """When version is omitted, the server auto-bumps instead of raising."""
+        raw = await provider.call(
+            "workflow_patch",
+            {
+                "name": "dx_patch",
+                "patches": [{"step_id": "greet", "old": "Hi, ", "new": "Hello, "}],
+            },
+        )
+        body = _parse(raw)
+        assert body["status"] == "patched"
+        # Single replace within one step → patch bump: 1.0.0 → 1.0.1
+        assert body["version"] == "1.0.1"
+        assert body["previous_version"] == "1.0"
 
     @pytest.mark.asyncio
     async def test_tool_preview_returned(self, provider):
