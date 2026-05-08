@@ -1484,9 +1484,26 @@ class WorkflowToolsProvider:
         return response
 
     async def _notify_tools_changed(self) -> None:
-        """Fire the on_tools_changed callback if registered."""
+        """Fire the on_tools_changed callback if registered.
+
+        Non-fatal: notification failures are logged but never propagate.
+        A failed notification only means the bridge won't immediately
+        re-list tools; the next ``tools/list`` call will still return
+        the updated list.  Propagating the error would abort the
+        response-construction path of workflow_create / workflow_patch /
+        workflow_delete and surface a misleading "Tool execution failed"
+        even though the mutation was applied successfully.
+        """
         if self._on_tools_changed:
-            await self._on_tools_changed()
+            try:
+                await self._on_tools_changed()
+            except Exception:
+                import logging
+
+                logging.getLogger("ploston.workflow.tools").debug(
+                    "tools/list_changed notification failed (non-fatal)",
+                    exc_info=True,
+                )
 
     # ── Handlers ──────────────────────────────────────────────────
 
@@ -1973,7 +1990,18 @@ class WorkflowToolsProvider:
         self._registry.register_from_yaml(yaml_content, persist=True)
         await self._notify_tools_changed()
 
-        tool_preview, warnings = self._build_tool_preview(workflow)
+        # Response construction — non-critical after successful registration.
+        tool_preview: dict[str, Any] | None = None
+        warnings: list[str] = []
+        try:
+            tool_preview, warnings = self._build_tool_preview(workflow)
+        except Exception:
+            import logging
+
+            logging.getLogger("ploston.workflow.tools").warning(
+                "Post-create preview construction failed (workflow was registered)",
+                exc_info=True,
+            )
         # Surface any structured advisories collected during validation
         # (e.g. missing-await warnings) on the success path too.
         validation_warnings: list[dict[str, Any]] = []
@@ -2358,14 +2386,32 @@ class WorkflowToolsProvider:
         self._registry.register_from_yaml(patched_yaml, persist=True)
         await self._notify_tools_changed()
 
+        # ── Response construction ──
+        # Everything below is non-critical: the patch has already been
+        # persisted.  Wrap the preview/metrics in try/except so a late
+        # failure (e.g. in _build_tool_preview) never masks the success.
         from .parser import parse_workflow_yaml
 
-        workflow = parse_workflow_yaml(patched_yaml)
-        tool_preview, warnings = self._build_tool_preview(workflow)
+        tool_preview: dict[str, Any] | None = None
+        warnings: list[str] = []
+        patched_version = ""
+        patched_name = name
+        try:
+            workflow = parse_workflow_yaml(patched_yaml)
+            tool_preview, warnings = self._build_tool_preview(workflow)
+            patched_version = workflow.version
+            patched_name = workflow.name
+        except Exception:
+            import logging
+
+            logging.getLogger("ploston.workflow.tools").warning(
+                "Post-patch preview construction failed (patch was applied)",
+                exc_info=True,
+            )
         self._authoring_metrics.record_workflow_patch(target="live", status="patched")
         return {
-            "name": workflow.name,
-            "version": workflow.version,
+            "name": patched_name,
+            "version": patched_version,
             "previous_version": previous_version,
             "status": "patched",
             "patches_applied": patches_applied,
@@ -2765,15 +2811,31 @@ class WorkflowToolsProvider:
             self._registry.draft_store.pop(draft_id)
             self._registry.register_from_yaml(patched_yaml, persist=True)
             await self._notify_tools_changed()
+
+            # Response construction — non-critical after successful registration.
             from .parser import parse_workflow_yaml
 
-            workflow = parse_workflow_yaml(patched_yaml)
-            tool_preview, warnings = self._build_tool_preview(workflow)
+            tool_preview: dict[str, Any] | None = None
+            warnings: list[str] = []
+            patched_version = ""
+            patched_name = ""
+            try:
+                workflow = parse_workflow_yaml(patched_yaml)
+                tool_preview, warnings = self._build_tool_preview(workflow)
+                patched_version = workflow.version
+                patched_name = workflow.name
+            except Exception:
+                import logging
+
+                logging.getLogger("ploston.workflow.tools").warning(
+                    "Post-patch preview construction failed (draft promoted)",
+                    exc_info=True,
+                )
             self._authoring_metrics.record_workflow_patch(target="draft", status="patched")
             self._authoring_metrics.record_draft_promoted()
             return {
-                "name": workflow.name,
-                "version": workflow.version,
+                "name": patched_name,
+                "version": patched_version,
                 "status": "patched",
                 "patches_applied": patches_applied,
                 "tool_preview": tool_preview,

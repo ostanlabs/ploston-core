@@ -337,6 +337,17 @@ class TestWorkflowToolsNotification:
         await provider.call("workflow_list", {})
         cb.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_notification_failure_is_nonfatal(self):
+        """Notification callback failure must not prevent a successful response."""
+        cb = AsyncMock(side_effect=RuntimeError("SSE channel broken"))
+        provider = self._make_provider(cb)
+        result = await provider.call("workflow_create", {"yaml_content": VALID_WORKFLOW_YAML})
+        parsed = json.loads(result["content"][0]["text"])
+        # The workflow was created despite the notification failure.
+        assert parsed["status"] == "created"
+        cb.assert_awaited_once()
+
 
 class TestBuildAvailableTools:
     """Verify _build_available_tools handles str and dict tool entries."""
