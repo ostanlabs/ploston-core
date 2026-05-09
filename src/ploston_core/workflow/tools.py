@@ -402,6 +402,8 @@ _OUTPUT_SCHEMA_WORKFLOW_PATCH = {
     "properties": {
         "name": {"type": "string"},
         "version": {"type": "string"},
+        # Present on live-workflow patches to show what version was replaced.
+        "previous_version": {"type": ["string", "null"]},
         # S-291 P3: ``draft`` is the response when a draft patch is still
         # invalid; ``patched`` is the registered-or-promoted case.
         "status": {"type": "string", "enum": ["patched", "draft"]},
@@ -422,7 +424,10 @@ _OUTPUT_SCHEMA_WORKFLOW_PATCH = {
             "required": ["valid", "errors", "warnings"],
             "additionalProperties": False,
         },
+        # True when a draft was promoted to a registered workflow.
         "promoted_from_draft": {"type": "boolean"},
+        # True when validation failed and the live workflow was NOT modified.
+        "live_workflow_unchanged": {"type": "boolean"},
     },
     "required": [
         "name",
@@ -786,8 +791,11 @@ WORKFLOW_PATCH_TOOL = {
         "- After `workflow_run` fails on a registered workflow, pass "
         "`name` plus ops derived from the engine's "
         "`error_metadata.suggested_fix` (or your own diagnosis) to repair "
-        "it in place. Versioning is automatic — you don't need to supply "
-        "a `version`.\n\n"
+        "it in place.\n\n"
+        "Versioning is handled by the server — do not supply a `version`. "
+        "The server auto-bumps the version (patch/minor/major) based on "
+        "the scope of the edit and returns `previous_version` so you can "
+        "track what changed.\n\n"
         "Each operation is one of five shapes:\n"
         "- `{op:'replace', step_id, old, new}` — str_replace inside a "
         "single code step's `code` block (the `old` substring must be "
@@ -822,11 +830,8 @@ WORKFLOW_PATCH_TOOL = {
         "workflow stays at its current version and a new draft is "
         "returned under `draft_id` so the agent can keep iterating.\n\n"
         "Two modes:\n"
-        "- Registered workflow: pass `name` (and optionally "
-        "`operations`/`patches`). Versioning is automatic — the server "
-        "bumps patch/minor/major based on the scope of the changes. "
-        "The response includes `previous_version` so the agent can "
-        "track what changed.\n"
+        "- Registered workflow: pass `name` and `operations` (or "
+        "`patches`). Do not pass `version` — the server handles it.\n"
         "- Draft: pass `draft_id` returned by `workflow_create` (or by a "
         "previous failed live patch). The patched YAML is re-validated; "
         "on success it is registered (and the draft dropped); on failure "
@@ -3112,7 +3117,7 @@ class WorkflowToolsProvider:
                 "hint": "Call workflow_list_tools to list available tools by MCP server.",
             }
 
-        # S-304 / G5 — record inner tool call as DIRECT child under the
+        # S-304 / G5 — record inner tool call as WRAPPED child under the
         # parent workflow_call_tool execution (set by MCPFrontend._execute_tool).
         from ploston_core.telemetry.context import direct_execution_id
         from ploston_core.telemetry.store.types import (
@@ -3151,7 +3156,7 @@ class WorkflowToolsProvider:
                     step_id=_step_id,
                     tool_name=_display_tool,
                     params=params,
-                    source=ToolCallSource.DIRECT,
+                    source=ToolCallSource.WRAPPED,
                     runner_id=runner_name,
                     bridge_id=_bridge_id,
                     session_id=_session_id,

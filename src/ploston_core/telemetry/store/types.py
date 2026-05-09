@@ -50,6 +50,8 @@ class ToolCallSource(str, Enum):
     TOOL_STEP = "tool_step"  # From a tool step in workflow
     CODE_BLOCK = "code_block"  # From within python_exec code
     DIRECT = "direct"  # Direct tool call outside any workflow (T-967)
+    WRAPPER = "wrapper"  # Dispatcher wrapper (workflow_call_tool, workflow_run)
+    WRAPPED = "wrapped"  # Inner tool call dispatched by a wrapper
 
 
 # ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
-"""Tests for MCP response envelope normalization (S-270, T-857)."""
+"""Tests for MCP response envelope normalization (S-270, T-857)
+and multi-content-entry extraction."""
 
 from ploston_core.engine.normalize import normalize_mcp_response
+from ploston_core.mcp.connection import MCPConnection
 
 
 def test_n01_status_result_content_triple_wrap():
@@ -118,3 +120,218 @@ def test_content_error_non_null_envelope_left_alone_by_normalizer():
     as-is so direct callers can still see the error shape."""
     raw = {"content": None, "error": "tool blew up"}
     assert normalize_mcp_response(raw) == raw
+
+
+# ─── Multi-content-entry support ─────────────────────────────────────────────
+
+
+def test_n13_multi_text_entries_joined():
+    """Multiple text entries in the content array should all be joined."""
+    raw = [
+        {"type": "text", "text": "message one"},
+        {"type": "text", "text": "message two"},
+    ]
+    assert normalize_mcp_response(raw) == "message one\nmessage two"
+
+
+def test_n14_text_plus_embedded_resource_text():
+    """TextContent + EmbeddedResource (text) — both should be extracted."""
+    raw = [
+        {"type": "text", "text": "successfully downloaded text file (SHA: abc123)"},
+        {
+            "type": "resource",
+            "resource": {
+                "uri": "repo://owner/repo/contents/file.yml",
+                "text": "name: ci\non: push\njobs: {}",
+                "mimeType": "text/yaml",
+            },
+        },
+    ]
+    result = normalize_mcp_response(raw)
+    assert "successfully downloaded" in result
+    assert "name: ci" in result
+
+
+def test_n15_text_plus_embedded_resource_binary():
+    """TextContent + binary EmbeddedResource — binary gets a placeholder."""
+    raw = [
+        {"type": "text", "text": "successfully downloaded binary file"},
+        {
+            "type": "resource",
+            "resource": {
+                "uri": "repo://owner/repo/contents/logo.png",
+                "blob": "iVBORw0KGgo=",
+                "mimeType": "image/png",
+            },
+        },
+    ]
+    result = normalize_mcp_response(raw)
+    assert "successfully downloaded binary file" in result
+    assert "[binary content:" in result
+    assert "image/png" in result
+
+
+def test_n16_single_text_entry_still_parses_json():
+    """Single text entry with JSON is still parsed — backward compat."""
+    raw = [{"type": "text", "text": '{"items": [1, 2]}'}]
+    assert normalize_mcp_response(raw) == {"items": [1, 2]}
+
+
+def test_n17_non_text_type_only_passthrough():
+    """Content array with only non-text types is returned as-is."""
+    raw = [{"type": "image", "data": "abc123", "mimeType": "image/png"}]
+    assert normalize_mcp_response(raw) == raw
+
+
+def test_n18_embedded_resource_with_empty_resource_passthrough():
+    """EmbeddedResource with empty resource dict — gracefully handled."""
+    raw = [
+        {"type": "text", "text": "file info"},
+        {"type": "resource", "resource": {}},
+    ]
+    result = normalize_mcp_response(raw)
+    assert result == "file info"
+
+
+# ─── _extract_text_from_item (MCPConnection static helper) ───────────────────
+
+
+class _FakeTextContent:
+    """Simulates mcp.types.TextContent."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.type = "text"
+
+
+class _FakeEmbeddedResource:
+    """Simulates mcp.types.EmbeddedResource with a text resource."""
+
+    def __init__(self, text: str | None = None, blob: str | None = None, mime: str = "text/plain"):
+        self.type = "resource"
+        self.resource = type(
+            "Resource",
+            (),
+            {
+                "text": text,
+                "blob": blob,
+                "mimeType": mime,
+                "uri": "repo://owner/repo/file.txt",
+            },
+        )()
+
+
+class _FakeResourceLink:
+    """Simulates mcp.types.ResourceLink."""
+
+    def __init__(self, uri: str, name: str = "", mime: str = ""):
+        self.type = "resource_link"
+        self.uri = uri
+        self.name = name
+        self.mimeType = mime
+
+
+class _FakeImageContent:
+    """Simulates mcp.types.ImageContent."""
+
+    def __init__(self, data: str, mime: str = "image/png"):
+        self.type = "image"
+        self.data = data
+        self.mimeType = mime
+
+
+def test_extract_text_content():
+    item = _FakeTextContent("hello world")
+    assert MCPConnection._extract_text_from_item(item) == "hello world"
+
+
+def test_extract_embedded_resource_text():
+    item = _FakeEmbeddedResource(text="file contents here")
+    result = MCPConnection._extract_text_from_item(item)
+    assert result == "file contents here"
+
+
+def test_extract_embedded_resource_binary():
+    item = _FakeEmbeddedResource(blob="iVBORw0KGgo=", mime="image/png")
+    result = MCPConnection._extract_text_from_item(item)
+    assert "[binary content:" in result
+    assert "image/png" in result
+
+
+def test_extract_embedded_resource_empty():
+    """EmbeddedResource with None text and None blob."""
+    item = _FakeEmbeddedResource(text=None, blob=None)
+    result = MCPConnection._extract_text_from_item(item)
+    assert result is None
+
+
+def test_extract_resource_link():
+    item = _FakeResourceLink(uri="https://example.com/file.zip", name="file.zip")
+    result = MCPConnection._extract_text_from_item(item)
+    assert "resource link" in result
+    assert "file.zip" in result
+    assert "https://example.com/file.zip" in result
+
+
+def test_extract_image_content():
+    item = _FakeImageContent(data="base64data" * 100, mime="image/jpeg")
+    result = MCPConnection._extract_text_from_item(item)
+    assert "[image content:" in result
+    assert "image/jpeg" in result
+
+
+def test_extract_dict_text():
+    item = {"type": "text", "text": "dict text"}
+    assert MCPConnection._extract_text_from_item(item) == "dict text"
+
+
+def test_extract_bare_string():
+    assert MCPConnection._extract_text_from_item("bare string") == "bare string"
+
+
+def test_extract_unknown_type_returns_none():
+    assert MCPConnection._extract_text_from_item(12345) is None
+    assert MCPConnection._extract_text_from_item({"type": "unknown"}) is None
+
+
+# ─── _extract_fastmcp_content integration ────────────────────────────────────
+
+
+class _FakeCallToolResult:
+    """Simulates FastMCP CallToolResult."""
+
+    def __init__(self, content: list, is_error: bool = False):
+        self.content = content
+        self.isError = is_error
+
+
+def test_extract_fastmcp_text_plus_embedded_resource():
+    """Full integration: TextContent + EmbeddedResource → joined text."""
+    conn = MCPConnection.__new__(MCPConnection)
+    result = _FakeCallToolResult(
+        [
+            _FakeTextContent("downloaded file (SHA: abc)"),
+            _FakeEmbeddedResource(text="actual: file: content"),
+        ]
+    )
+    extracted = conn._extract_fastmcp_content(result)
+    assert "downloaded file" in extracted
+    assert "actual: file: content" in extracted
+
+
+def test_extract_fastmcp_single_json_still_parsed():
+    """Backward compat: single TextContent with JSON → parsed dict."""
+    conn = MCPConnection.__new__(MCPConnection)
+    result = _FakeCallToolResult(
+        [
+            _FakeTextContent('{"items": [1, 2, 3]}'),
+        ]
+    )
+    extracted = conn._extract_fastmcp_content(result)
+    assert extracted == {"items": [1, 2, 3]}
+
+
+def test_extract_fastmcp_empty_result():
+    conn = MCPConnection.__new__(MCPConnection)
+    assert conn._extract_fastmcp_content(None) == ""
+    assert conn._extract_fastmcp_content("") == ""

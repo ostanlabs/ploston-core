@@ -190,3 +190,64 @@ async def test_mr09_handle_run_surfaces_execution_telemetry():
     assert resp["execution"]["steps"]["analyze"]["debug_log"] == ["computed 3 items"]
     assert resp["execution"]["duration_ms"] == 5000
     assert resp["workflow_version"] == "1.0.0"
+
+
+# ── Workflow-run telemetry grouping: parent_execution_id propagation ──
+
+
+@pytest.mark.asyncio
+async def test_handle_run_passes_parent_execution_id_from_contextvar():
+    """When direct_execution_id ContextVar is set, _handle_run passes it
+    as parent_execution_id to the engine, grouping workflow internal calls
+    under the wrapper's execution in the session timeline."""
+    from ploston_core.telemetry.context import direct_execution_id
+    from ploston_core.workflow.tools import WorkflowToolsProvider
+
+    result = _build_result(steps=[_step("s1")], outputs={"ok": True})
+
+    engine = MagicMock()
+    engine.execute = AsyncMock(return_value=result)
+
+    provider = WorkflowToolsProvider(
+        workflow_registry=MagicMock(),
+        workflow_engine=engine,
+    )
+
+    token = direct_execution_id.set("exec-parent-abc123")
+    try:
+        resp = await provider._handle_run({"name": "my_wf", "inputs": {"x": 1}})
+    finally:
+        direct_execution_id.reset(token)
+
+    # Verify parent_execution_id was forwarded
+    engine.execute.assert_called_once_with(
+        "my_wf",
+        {"x": 1},
+        parent_execution_id="exec-parent-abc123",
+    )
+    assert resp["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_handle_run_no_contextvar_passes_none():
+    """Without the ContextVar set, parent_execution_id defaults to None
+    so the engine creates its own execution row."""
+    from ploston_core.workflow.tools import WorkflowToolsProvider
+
+    result = _build_result(steps=[], outputs={})
+
+    engine = MagicMock()
+    engine.execute = AsyncMock(return_value=result)
+
+    provider = WorkflowToolsProvider(
+        workflow_registry=MagicMock(),
+        workflow_engine=engine,
+    )
+
+    await provider._handle_run({"name": "wf2", "inputs": {}})
+
+    engine.execute.assert_called_once_with(
+        "wf2",
+        {},
+        parent_execution_id=None,
+    )

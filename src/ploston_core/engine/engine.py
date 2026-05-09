@@ -182,6 +182,7 @@ class WorkflowEngine:
         inputs: dict[str, Any],
         timeout_seconds: int | None = None,
         bridge_session_id: str | None = None,  # DEC-145
+        parent_execution_id: str | None = None,
     ) -> ExecutionResult:
         """
         Execute a workflow.
@@ -191,6 +192,11 @@ class WorkflowEngine:
             inputs: Workflow inputs
             timeout_seconds: Optional timeout override (seconds)
             bridge_session_id: Bridge process that initiated execution (DEC-145)
+            parent_execution_id: When set (e.g. by ``workflow_run``), the engine
+                reuses this execution_id for all step/tool_call records instead
+                of creating its own ``workflow`` execution row.  This groups the
+                workflow's internal tool calls under the caller's execution in
+                the session timeline.
 
         Returns:
             ExecutionResult with outputs or error
@@ -206,12 +212,20 @@ class WorkflowEngine:
         # Execute with timeout if specified
         if timeout_seconds:
             return await with_timeout(
-                self.execute_workflow(workflow, inputs, bridge_session_id=bridge_session_id),
+                self.execute_workflow(
+                    workflow,
+                    inputs,
+                    bridge_session_id=bridge_session_id,
+                    parent_execution_id=parent_execution_id,
+                ),
                 timeout_seconds,
             )
         else:
             return await self.execute_workflow(
-                workflow, inputs, bridge_session_id=bridge_session_id
+                workflow,
+                inputs,
+                bridge_session_id=bridge_session_id,
+                parent_execution_id=parent_execution_id,
             )
 
     async def execute_workflow(
@@ -219,6 +233,7 @@ class WorkflowEngine:
         workflow: WorkflowDefinition,
         inputs: dict[str, Any],
         bridge_session_id: str | None = None,  # DEC-145
+        parent_execution_id: str | None = None,
     ) -> ExecutionResult:
         """
         Execute a workflow definition directly.
@@ -229,11 +244,20 @@ class WorkflowEngine:
             workflow: Workflow definition
             inputs: Workflow inputs
             bridge_session_id: Bridge process that initiated execution (DEC-145)
+            parent_execution_id: When supplied by ``workflow_run``, the engine
+                piggybacks on the caller's execution_id for all step and
+                tool_call telemetry rows.  No separate ``workflow`` execution
+                row is created — the caller's ``direct`` row is the canonical
+                record.
 
         Returns:
             ExecutionResult
         """
-        execution_id = generate_execution_id()
+        # When a parent owns the execution (workflow_run path), reuse its id
+        # so every tool_call row shares the same execution_id and groups in
+        # the session timeline.  Otherwise generate a fresh one.
+        _owns_execution = parent_execution_id is None
+        execution_id = parent_execution_id or generate_execution_id()
         started_at = datetime.now()
 
         if self._logger:
@@ -247,13 +271,25 @@ class WorkflowEngine:
                 {"execution_id": execution_id, "workflow": workflow.name},
             )
 
-        # S-304 / G1 — open persistent execution row (best-effort)
-        await self._telemetry_start_execution(
-            execution_id=execution_id,
-            workflow=workflow,
-            inputs=inputs,
-            bridge_session_id=bridge_session_id,
-        )
+        # S-304 / G1 — open persistent execution row (best-effort).
+        # Skip when the caller already owns the execution row (workflow_run).
+        if _owns_execution:
+            await self._telemetry_start_execution(
+                execution_id=execution_id,
+                workflow=workflow,
+                inputs=inputs,
+                bridge_session_id=bridge_session_id,
+            )
+        else:
+            # Enrich the parent's execution record with workflow metadata so
+            # the Workflow Executions panel can display workflow_id,
+            # step_count and tool_call_count (computed at end_execution).
+            if self._telemetry_collector:
+                self._telemetry_collector.enrich_execution(
+                    execution_id,
+                    workflow_id=workflow.name,
+                    workflow_version=workflow.version,
+                )
 
         # Execute REQUEST_RECEIVED plugin hook
         current_inputs = inputs
@@ -276,13 +312,16 @@ class WorkflowEngine:
                 self.validate_inputs(workflow, current_inputs)
             except Exception as e:
                 record_tool_result(telemetry_result, success=False, error_code="INPUT_INVALID")
-                # S-304 / G1 — close persistent row on early validation failure
-                await self._telemetry_end_execution(
-                    execution_id=execution_id,
-                    status=ExecutionStatus.FAILED,
-                    outputs=None,
-                    error=e,
-                )
+                # S-304 / G1 — close persistent row on early validation failure.
+                # Skip when the caller owns the execution (workflow_run) — the
+                # MCPFrontend wrapper will close it.
+                if _owns_execution:
+                    await self._telemetry_end_execution(
+                        execution_id=execution_id,
+                        status=ExecutionStatus.FAILED,
+                        outputs=None,
+                        error=e,
+                    )
                 return ExecutionResult(
                     execution_id=execution_id,
                     workflow_id=workflow.name,
@@ -385,13 +424,15 @@ class WorkflowEngine:
             if self._token_estimator and status == ExecutionStatus.COMPLETED:
                 self._token_estimator.record_workflow_savings(result)
 
-            # S-304 / G1 — close persistent execution row (best-effort)
-            await self._telemetry_end_execution(
-                execution_id=execution_id,
-                status=status,
-                outputs=final_outputs,
-                error=error,
-            )
+            # S-304 / G1 — close persistent execution row (best-effort).
+            # Skip when the caller owns the execution (workflow_run).
+            if _owns_execution:
+                await self._telemetry_end_execution(
+                    execution_id=execution_id,
+                    status=status,
+                    outputs=final_outputs,
+                    error=error,
+                )
 
             return result
 

@@ -264,6 +264,36 @@ class MCPFrontend:
         except AELError as e:
             if is_notification:
                 return None
+            # MCP spec: tool execution errors are reported inside
+            # ``result`` with ``isError: true``, NOT as JSON-RPC
+            # protocol errors.  Protocol errors (``{"error": ...}``)
+            # are reserved for infrastructure failures (unknown method,
+            # invalid JSON, server crash).  Returning a JSON-RPC error
+            # for a business-logic failure (bad input, not found, …)
+            # causes some MCP clients to surface "Tool execution failed"
+            # without relaying the structured payload to the LLM.
+            if method == "tools/call":
+                error_payload: dict[str, Any] = {
+                    "code": e.code,
+                    "message": e.message,
+                }
+                if e.detail:
+                    error_payload["detail"] = e.detail
+                if e.suggestion:
+                    error_payload["suggestion"] = e.suggestion
+                if e.data:
+                    error_payload["data"] = e.data
+                error_payload["retryable"] = e.retryable
+                return self._success_response(
+                    msg_id,
+                    {
+                        "content": [
+                            {"type": "text", "text": json.dumps(error_payload)},
+                        ],
+                        "isError": True,
+                    },
+                )
+            # Non-tools/call methods: keep JSON-RPC protocol error.
             error_data: dict[str, Any] = {"code": e.code}
             if e.detail:
                 error_data["detail"] = e.detail
@@ -282,11 +312,32 @@ class MCPFrontend:
                 return None
             # Log full traceback server-side for debugging
             logger.exception("Unhandled exception in MCP message handler")
-            # Return structured error so agents/users can report it
             import traceback
 
             tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
             short_tb = "".join(tb_lines[-3:]).strip()  # last 3 frames
+            # MCP spec: same principle — tool-call unhandled exceptions
+            # should be ``isError: true`` inside ``result``.
+            if method == "tools/call":
+                error_payload_exc: dict[str, Any] = {
+                    "code": "INTERNAL_ERROR",
+                    "message": f"Internal server error: {type(e).__name__}: {e}",
+                    "detail": (
+                        f"An unexpected error occurred while processing the request. "
+                        f"Error type: {type(e).__name__}, message: {e}"
+                    ),
+                    "traceback_tail": short_tb,
+                    "retryable": False,
+                }
+                return self._success_response(
+                    msg_id,
+                    {
+                        "content": [
+                            {"type": "text", "text": json.dumps(error_payload_exc)},
+                        ],
+                        "isError": True,
+                    },
+                )
             return self._error_response(
                 msg_id,
                 500,
@@ -441,6 +492,13 @@ class MCPFrontend:
         name = params.get("name")
         arguments = params.get("arguments", {})
 
+        try:
+            logger.info(
+                f"[trace] cp<-bridge name={name} arguments={json.dumps(arguments, default=str)}"
+            )
+        except Exception:
+            pass
+
         if not name:
             raise create_error("PARAM_INVALID", message="Tool name is required")
 
@@ -553,43 +611,186 @@ class MCPFrontend:
         workflow_id: str,
         inputs: dict[str, Any],
     ) -> dict[str, Any]:
-        """Execute workflow and return MCP response.
+        """Execute a registered workflow (bare-name MCP tool) with full telemetry.
+
+        Produces a single ``source='direct'`` row in ``tool_calls`` for the
+        workflow tool itself (e.g. ``ostanlabs_cascade_diagnose``), exactly
+        like ``_execute_tool`` does for regular tools.  The execution_id is
+        forwarded to the engine as ``parent_execution_id`` so inner
+        step/tool_call rows share the same execution — but those inner
+        rows keep their ``tool_step``/``code_block`` source, allowing
+        the Session Inspector to show only the opaque wrapper line
+        (``source='direct'``) while the Workflow Execution Logs dashboard
+        shows the inner detail.
 
         Args:
-            workflow_id: Workflow ID
+            workflow_id: Workflow ID (bare name, e.g. ``ostanlabs_cascade_diagnose``)
             inputs: Workflow inputs
 
         Returns:
             MCP response
         """
+        execution_id: str | None = None
+        ctx_token = None
+        sess_token = None
+
         # DEC-145: capture bridge session from ContextVar set by HTTPTransport (F-061)
         _bctx = bridge_context.get(None)
         bridge_session_id = _bctx.bridge_id if _bctx else None
+        _sess_for_logger = _bctx.session_id if _bctx else None
+        _bridge_id = _bctx.bridge_id if _bctx else None
+        if _sess_for_logger:
+            sess_token = direct_session_id.set(_sess_for_logger)
 
-        result = await self._workflow_engine.execute(
-            workflow_id, inputs, bridge_session_id=bridge_session_id
-        )
+        # Start telemetry execution record
+        if self._telemetry_collector:
+            try:
+                execution_id = await self._telemetry_collector.start_execution(
+                    execution_type=ExecutionType.DIRECT,
+                    tool_name=workflow_id,
+                    source="mcp",
+                    session_id=_sess_for_logger,
+                    bridge_session_id=_bridge_id,
+                )
+                ctx_token = direct_execution_id.set(execution_id)
+            except Exception:
+                pass  # Telemetry is non-critical
 
-        if result.status == ExecutionStatus.COMPLETED:
-            return {
-                "content": [
+        try:
+            start_ms = int(time.time() * 1000)
+
+            if self._logger:
+                self._logger._log(
+                    LogLevel.INFO,
+                    "direct",
+                    f"Direct workflow call: {workflow_id}",
                     {
-                        "type": "text",
-                        "text": json.dumps(result.outputs),
-                    }
-                ],
-                "isError": False,
-            }
-        else:
-            return {
-                "content": [
+                        "source": "workflow",
+                        "event": "direct_tool_called",
+                        "tool_name": workflow_id,
+                    },
+                )
+
+            # Wrap with synthetic_direct_step + record_tool_call to produce
+            # the single source='direct' row in tool_calls, matching what
+            # _execute_tool does for regular tools.
+            response: dict[str, Any] = {}
+            invoke_error: BaseException | None = None
+            async with synthetic_direct_step(
+                self._telemetry_collector,
+                execution_id=execution_id,
+                tool_name=workflow_id,
+            ) as _step_id:
+                async with record_tool_call(
+                    self._telemetry_collector,
+                    execution_id=execution_id,
+                    step_id=_step_id,
+                    tool_name=workflow_id,
+                    params=inputs,
+                    source=ToolCallSource.DIRECT,
+                    bridge_id=_bridge_id,
+                    session_id=_sess_for_logger,
+                ) as _call_handle:
+                    try:
+                        result = await self._workflow_engine.execute(
+                            workflow_id,
+                            inputs,
+                            bridge_session_id=bridge_session_id,
+                            parent_execution_id=execution_id,
+                        )
+                    except Exception as _exc:
+                        invoke_error = _exc
+                        _call_handle.set_error(_exc)
+                        raise
+
+                    success = result.status == ExecutionStatus.COMPLETED
+                    if success:
+                        response = {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(result.outputs),
+                                }
+                            ],
+                            "isError": False,
+                        }
+                        _call_handle.set_result(result.outputs)
+                    else:
+                        err_msg = result.error.message if result.error else "Workflow failed"
+                        response = {
+                            "content": [{"type": "text", "text": err_msg}],
+                            "isError": True,
+                        }
+                        _call_handle.set_error(
+                            TelemetryErrorRecord(
+                                code=getattr(result.error, "code", "WORKFLOW_FAILED"),
+                                category="workflow",
+                                message=err_msg,
+                            )
+                        )
+
+            duration_ms = int(time.time() * 1000) - start_ms
+
+            if self._logger:
+                level = LogLevel.INFO if success else LogLevel.ERROR
+                event = "direct_tool_completed" if success else "direct_tool_failed"
+                self._logger._log(
+                    level,
+                    "direct",
+                    f"Direct workflow {'completed' if success else 'failed'} "
+                    f"({duration_ms}ms): {workflow_id}",
                     {
-                        "type": "text",
-                        "text": result.error.message if result.error else "Workflow failed",
-                    }
-                ],
-                "isError": True,
-            }
+                        "source": "workflow",
+                        "event": event,
+                        "tool_name": workflow_id,
+                        "duration_ms": duration_ms,
+                    },
+                )
+
+            # Close telemetry execution record
+            if self._telemetry_collector and execution_id:
+                try:
+                    if success:
+                        await self._telemetry_collector.end_execution(
+                            execution_id=execution_id,
+                            status=TelemetryExecutionStatus.COMPLETED,
+                        )
+                    else:
+                        await self._telemetry_collector.end_execution(
+                            execution_id=execution_id,
+                            status=TelemetryExecutionStatus.FAILED,
+                            error=TelemetryErrorRecord(
+                                code=getattr(result.error, "code", "WORKFLOW_FAILED"),
+                                category="workflow",
+                                message=(
+                                    result.error.message if result.error else "Workflow failed"
+                                ),
+                            ),
+                        )
+                except Exception:
+                    pass
+
+            return response
+        except Exception as exc:
+            if self._telemetry_collector and execution_id and invoke_error is not None:
+                try:
+                    await self._telemetry_collector.end_execution(
+                        execution_id=execution_id,
+                        status=TelemetryExecutionStatus.FAILED,
+                        error=TelemetryErrorRecord(
+                            code=getattr(exc, "code", "INTERNAL"),
+                            category="workflow",
+                            message=str(exc),
+                        ),
+                    )
+                except Exception:
+                    pass
+            raise
+        finally:
+            if ctx_token is not None:
+                direct_execution_id.reset(ctx_token)
+            if sess_token is not None:
+                direct_session_id.reset(sess_token)
 
     async def _execute_tool(
         self,
@@ -772,13 +973,17 @@ class MCPFrontend:
                             outputs={"output": str(result.output)[:500]} if result.output else None,
                         )
                     else:
+                        _cp_err = result.error
+                        _cp_err_parts = [_cp_err.message if _cp_err else "unknown"]
+                        if _cp_err and getattr(_cp_err, "detail", None):
+                            _cp_err_parts.append(str(_cp_err.detail))
                         await self._telemetry_collector.end_execution(
                             execution_id=execution_id,
                             status=TelemetryExecutionStatus.FAILED,
                             error=TelemetryErrorRecord(
-                                code=result.error.code if result.error else "UNKNOWN",
+                                code=_cp_err.code if _cp_err else "UNKNOWN",
                                 category="tool",
-                                message=result.error.message if result.error else "unknown",
+                                message=" — ".join(_cp_err_parts),
                             ),
                         )
                 except Exception:
@@ -835,9 +1040,18 @@ class MCPFrontend:
         ``_handle_call_tool``, which no-ops when ``direct_execution_id``
         is unset.
 
+        Telemetry tool names are prefixed with ``ploston-authoring__`` so
+        dashboard SQL that splits on ``__`` can extract ``mcp_server``.
+        Dispatcher tools (``workflow_call_tool``, ``workflow_run``) use
+        ``ToolCallSource.WRAPPER`` so they are excluded from session
+        dashboard aggregations (token counts, tool call counts) — the
+        inner tool calls they dispatch record their own DIRECT rows.
+
         Success is inferred from the MCP-format response: ``isError``
         must be ``False`` for COMPLETED, otherwise FAILED.
         """
+        from ploston_core.workflow.tools import WORKFLOW_DISPATCHER_TOOL_NAMES
+
         execution_id: str | None = None
         ctx_token = None
         sess_token = None
@@ -848,11 +1062,18 @@ class MCPFrontend:
         if _sess_for_logger:
             sess_token = direct_session_id.set(_sess_for_logger)
 
+        # Prefix tool name for telemetry so dashboard __-splitting derives
+        # mcp_server = "ploston-authoring".  The bare name is still used for
+        # the actual provider.call() invocation.
+        _telemetry_tool_name = f"ploston-authoring__{tool_name}"
+        _is_dispatcher = tool_name in WORKFLOW_DISPATCHER_TOOL_NAMES
+        _source = ToolCallSource.WRAPPER if _is_dispatcher else ToolCallSource.DIRECT
+
         if self._telemetry_collector:
             try:
                 execution_id = await self._telemetry_collector.start_execution(
                     execution_type=ExecutionType.DIRECT,
-                    tool_name=tool_name,
+                    tool_name=_telemetry_tool_name,
                     source="mcp",
                     session_id=_sess_for_logger,
                     bridge_session_id=_bridge_id,
@@ -863,7 +1084,7 @@ class MCPFrontend:
 
         try:
             start_ms = int(time.time() * 1000)
-            bridge, short_tool = _split_tool_name(tool_name)
+            bridge, short_tool = _split_tool_name(_telemetry_tool_name)
 
             if self._logger:
                 self._logger._log(
@@ -883,15 +1104,15 @@ class MCPFrontend:
             async with synthetic_direct_step(
                 self._telemetry_collector,
                 execution_id=execution_id,
-                tool_name=tool_name,
+                tool_name=_telemetry_tool_name,
             ) as _step_id:
                 async with record_tool_call(
                     self._telemetry_collector,
                     execution_id=execution_id,
                     step_id=_step_id,
-                    tool_name=tool_name,
+                    tool_name=_telemetry_tool_name,
                     params=arguments,
-                    source=ToolCallSource.DIRECT,
+                    source=_source,
                     bridge_id=_bridge_id,
                     session_id=_sess_for_logger,
                 ) as _call_handle:
@@ -903,18 +1124,44 @@ class MCPFrontend:
                         raise
                     if response.get("isError"):
                         _err_text = ""
+                        _err_code = "TOOL_ERROR"
                         for _item in response.get("content") or []:
                             if isinstance(_item, dict) and _item.get("type") == "text":
                                 _err_text = str(_item.get("text") or "")
                                 break
+                        # The content text may be a JSON-serialised error
+                        # payload (e.g. from workflow_patch).  Try to
+                        # extract structured fields for a richer telemetry
+                        # message.
+                        if _err_text:
+                            try:
+                                _parsed = json.loads(_err_text)
+                                if isinstance(_parsed, dict):
+                                    _err_code = str(
+                                        _parsed.get("code")
+                                        or _parsed.get("error_code")
+                                        or _err_code
+                                    )
+                                    _detail = _parsed.get("detail") or _parsed.get("message") or ""
+                                    if _detail:
+                                        _err_text = str(_detail)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                         _call_handle.set_error(
                             TelemetryErrorRecord(
-                                code="TOOL_ERROR",
+                                code=_err_code,
                                 category="tool",
                                 message=_err_text or "workflow management tool failed",
                             )
                         )
                     else:
+                        # Store the full response for all workflow mgmt tools.
+                        # For dispatchers (wrapper), this captures the actual
+                        # agent-facing payload so response_bytes reflects real
+                        # token cost.  Inner (wrapped) calls record their own
+                        # rows separately — dashboard SQL handles the
+                        # accounting: tokens from wrapper+direct, call counts
+                        # from wrapped+direct.
                         _call_handle.set_result(response.get("structuredContent") or response)
 
             duration_ms = int(time.time() * 1000) - start_ms
@@ -1171,12 +1418,23 @@ class MCPFrontend:
                                 }
                         # Treat MCP-format isError or output-format error as failure
                         _is_err = bool(result.get("isError")) or bool(result.get("error"))
+                        _runner_err_msg = ""
                         if _is_err:
+                            # Extract the most informative error message
+                            # available.  Prefer the top-level ``error`` key
+                            # (output-format).  Fall back to the first text
+                            # content block (MCP-format ``isError`` path).
+                            _runner_err_msg = str(result.get("error") or "")
+                            if not _runner_err_msg:
+                                for _blk in result.get("content") or []:
+                                    if isinstance(_blk, dict) and _blk.get("type") == "text":
+                                        _runner_err_msg = str(_blk.get("text") or "")
+                                        break
                             _call_handle.set_error(
                                 TelemetryErrorRecord(
                                     code="TOOL_FAILED",
                                     category="tool",
-                                    message=str(result.get("error") or "runner returned error"),
+                                    message=_runner_err_msg or "runner returned error",
                                 )
                             )
                         else:
@@ -1191,6 +1449,9 @@ class MCPFrontend:
                     # Runner returned MCP format directly
                     is_error = result.get("isError", False)
                     record_tool_result(telemetry_result, success=not is_error)
+                    # Reuse _runner_err_msg extracted above (always
+                    # defined; empty when there was no error).
+                    _mcp_err_detail = _runner_err_msg
                     if self._logger:
                         if is_error:
                             self._logger._log(
@@ -1204,7 +1465,7 @@ class MCPFrontend:
                                     "bridge": bridge,
                                     "runner_id": runner.name,
                                     "duration_ms": duration_ms,
-                                    "error": "runner returned error",
+                                    "error": _mcp_err_detail or "runner returned error",
                                     "error_type": "TOOL_FAILED",
                                 },
                             )
@@ -1264,7 +1525,7 @@ class MCPFrontend:
                                     error=TelemetryErrorRecord(
                                         code="TOOL_FAILED",
                                         category="tool",
-                                        message="runner returned error",
+                                        message=_mcp_err_detail or "runner returned error",
                                     ),
                                 )
                             else:

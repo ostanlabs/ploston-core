@@ -111,6 +111,29 @@ class TelemetryCollector:
 
         return execution_id
 
+    def enrich_execution(
+        self,
+        execution_id: str,
+        *,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+    ) -> None:
+        """Enrich an active execution record with workflow metadata.
+
+        Called by the workflow engine when piggybacking on a parent
+        execution (``workflow_run`` path).  The parent's ``direct``
+        execution record was created by the MCPFrontend and lacks
+        workflow-specific fields; this fills them in so the final
+        ``save_execution`` persists a complete row.
+        """
+        record = self._active_executions.get(execution_id)
+        if not record:
+            return
+        if workflow_id is not None:
+            record.workflow_id = workflow_id
+        if workflow_version is not None:
+            record.workflow_version = workflow_version
+
     async def end_execution(
         self,
         execution_id: str,

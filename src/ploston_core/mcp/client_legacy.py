@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from fastmcp.client.client import CallToolResult
-from mcp.types import TextContent
 
 try:
     from fastmcp import Client, FastMCP
@@ -23,6 +22,9 @@ logger = logging.getLogger(__name__)
 def convert_textcontent_list(content_list: list[Any]) -> str:
     """Convert MCP content list to plain text string.
 
+    Handles all MCP content types: TextContent, EmbeddedResource,
+    ResourceLink, ImageContent, legacy dict-based content, and bare strings.
+
     Args:
         content_list: List of content items from MCP response
 
@@ -32,14 +34,14 @@ def convert_textcontent_list(content_list: list[Any]) -> str:
     if not content_list:
         return ""
 
+    # Re-use the shared extraction helper from MCPConnection.
+    from ploston_core.mcp.connection import MCPConnection
+
     result = []
     for item in content_list:
-        if isinstance(item, TextContent):
-            result.append(item.text)
-        elif isinstance(item, dict) and item.get("type") == "text":
-            result.append(item.get("text", ""))
-        elif isinstance(item, str):
-            result.append(item)
+        extracted = MCPConnection._extract_text_from_item(item)
+        if extracted is not None:
+            result.append(extracted)
 
     return "\n".join(result)
 

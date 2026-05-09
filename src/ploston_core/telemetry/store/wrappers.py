@@ -41,11 +41,32 @@ class _ToolCallHandle:
         if err is None or isinstance(err, ErrorRecord):
             self.error = err  # type: ignore[assignment]
             return
-        # Coerce arbitrary exception into ErrorRecord shape
+        # Coerce arbitrary exception into ErrorRecord shape.
+        # For AELError (and similar structured errors) the short
+        # ``message`` is often generic ("Invalid tool input") while the
+        # ``detail`` carries actionable context.  Concatenate them so
+        # the ClickHouse ``error_message`` column is useful in
+        # dashboards without requiring a drill-down.
+        base_msg = getattr(err, "message", None) or str(err)
+        detail = getattr(err, "detail", None)
+        suggestion = getattr(err, "suggestion", None)
+        parts = [base_msg]
+        if detail:
+            parts.append(str(detail))
+        if suggestion:
+            parts.append(f"Suggestion: {suggestion}")
+        full_message = " — ".join(parts)
+
+        category_raw = getattr(err, "category", "tool")
+        # ErrorCategory is a str enum; coerce to plain string for
+        # ErrorRecord which expects ``str``.
+        category_str = category_raw.value if hasattr(category_raw, "value") else str(category_raw)
+
         self.error = ErrorRecord(
             code=getattr(err, "code", type(err).__name__),
-            category=getattr(err, "category", "tool"),
-            message=str(err),
+            category=category_str,
+            message=full_message,
+            detail=str(detail) if detail else None,
         )
 
 

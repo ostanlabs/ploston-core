@@ -62,13 +62,46 @@ def normalize_mcp_response(raw: Any) -> Any:
         ):
             raw = raw["content"]
 
-    # Shape 3: [{"type": "text", "text": "<json|str>"}] → parse JSON if possible
+    # Shape 3: [{"type": "text", "text": "<json|str>"}, ...] → join all text
+    # entries and parse JSON if possible.  Previous versions only read raw[0],
+    # silently dropping additional content entries (EmbeddedResource payloads
+    # serialised as dicts, extra TextContent items, etc.).
     if isinstance(raw, list) and raw and isinstance(raw[0], dict):
-        if raw[0].get("type") == "text":
-            text_val = raw[0].get("text", "")
+        text_parts: list[str] = []
+        non_text_parts: list[dict[str, Any]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            entry_type = entry.get("type")
+            if entry_type == "text":
+                text_parts.append(entry.get("text", ""))
+            elif entry_type == "resource":
+                # EmbeddedResource serialised as dict — extract nested text/blob.
+                resource = entry.get("resource") or {}
+                if isinstance(resource, dict):
+                    if resource.get("text") is not None:
+                        text_parts.append(str(resource["text"]))
+                    elif resource.get("blob") is not None:
+                        mime = resource.get("mimeType", "application/octet-stream")
+                        blob = resource["blob"]
+                        size = len(blob) if isinstance(blob, (str, bytes)) else 0
+                        text_parts.append(f"[binary content: {size} bytes, mime: {mime}]")
+                    else:
+                        non_text_parts.append(entry)
+                else:
+                    non_text_parts.append(entry)
+            else:
+                non_text_parts.append(entry)
+
+        if text_parts:
+            joined = "\n".join(text_parts)
             try:
-                return json.loads(text_val)
+                return json.loads(joined)
             except (json.JSONDecodeError, TypeError):
-                return text_val
+                return joined
+
+        # No text entries found — fall through and return raw as-is.
+        if non_text_parts:
+            return raw
 
     return raw

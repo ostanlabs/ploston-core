@@ -9,6 +9,7 @@ These endpoints are used by runners to connect to the control plane.
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -208,6 +209,14 @@ async def send_tool_call_to_runner(
             "arguments": arguments or {},
         },
     }
+
+    try:
+        logger.info(
+            f"[trace] cp->runner runner_id={runner_id} id={request_id} "
+            f"tool={tool_name} arguments={json.dumps(arguments or {}, default=str)}"
+        )
+    except Exception:
+        pass
 
     await conn.websocket.send_json(request)
 

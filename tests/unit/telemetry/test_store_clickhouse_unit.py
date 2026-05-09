@@ -105,6 +105,14 @@ def test_tool_call_source_direct_value() -> None:
     assert ToolCallSource.DIRECT.value == "direct"
 
 
+def test_tool_call_source_wrapper_value() -> None:
+    assert ToolCallSource.WRAPPER.value == "wrapper"
+
+
+def test_tool_call_source_wrapped_value() -> None:
+    assert ToolCallSource.WRAPPED.value == "wrapped"
+
+
 def test_serialize_execution_columns_match_ddl() -> None:
     rec = _sample_record()
     row = serialize_execution(rec, redactor=None)

@@ -5,6 +5,8 @@ including automatic handling of notifications like tools/list_changed.
 """
 
 import asyncio
+import json
+import logging
 import shlex
 import time
 from collections.abc import Callable
@@ -31,6 +33,8 @@ from ploston_core.logging.logger import AELLogger
 from ploston_core.types import ConnectionStatus, LogLevel, MCPTransport
 
 from .types import MCPCallResult, ServerStatus, ToolSchema
+
+_trace_logger = logging.getLogger(__name__)
 
 # Type alias for tool change callback
 # Callback receives: server_name, list of tools
@@ -563,6 +567,13 @@ class MCPConnection:
         start_time = time.time()
 
         try:
+            try:
+                _trace_logger.info(
+                    f"[trace] runner->mcp server={self.name} tool={tool_name} "
+                    f"arguments={json.dumps(arguments, default=str)}"
+                )
+            except Exception:
+                pass
             # Use FastMCP client to call tool
             result = await self._client.call_tool(tool_name, arguments)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -602,10 +613,77 @@ class MCPConnection:
             self._log(LogLevel.ERROR, f"Tool call failed: {e}")
             raise
 
+    @staticmethod
+    def _extract_text_from_item(item: Any) -> str | None:
+        """Extract text from a single MCP content item.
+
+        Handles all MCP content types:
+        - TextContent: has .text directly
+        - EmbeddedResource: has .resource.text (text) or .resource.blob (binary)
+        - ResourceLink: has .uri (URL reference to content)
+        - ImageContent: has .data (base64-encoded image)
+        - dict with type=="text": legacy dict-based content
+        - str: bare string
+
+        Returns:
+            Extracted text string, or None if the item type is unrecognised.
+        """
+        # TextContent — has a top-level .text attribute.
+        # Guard against EmbeddedResource which also has .text via __str__
+        # by checking .resource first.
+        if hasattr(item, "resource"):
+            # EmbeddedResource — nested under .resource
+            resource = item.resource
+            if resource is not None:
+                # Text resource (e.g. file contents)
+                if hasattr(resource, "text") and resource.text is not None:
+                    return str(resource.text)
+                # Binary resource (e.g. PNG, PDF) — return size/mime hint
+                if hasattr(resource, "blob") and resource.blob is not None:
+                    mime = getattr(resource, "mimeType", None) or "application/octet-stream"
+                    blob = resource.blob
+                    size = len(blob) if isinstance(blob, (str, bytes)) else 0
+                    return f"[binary content: {size} bytes, mime: {mime}]"
+            return None
+
+        if hasattr(item, "text"):
+            return str(item.text)
+
+        # ResourceLink — URL reference to content too large to inline
+        if hasattr(item, "uri") and hasattr(item, "name"):
+            name = getattr(item, "name", "") or ""
+            uri = getattr(item, "uri", "") or ""
+            mime = getattr(item, "mimeType", None) or ""
+            parts = [f"[resource link: {name}"] if name else ["[resource link"]
+            if uri:
+                parts.append(f"url={uri}")
+            if mime:
+                parts.append(f"mime={mime}")
+            return " ".join(parts) + "]"
+
+        # ImageContent — base64-encoded image
+        if hasattr(item, "data") and hasattr(item, "mimeType"):
+            mime = getattr(item, "mimeType", "image/unknown")
+            data = getattr(item, "data", "") or ""
+            size = len(data) if isinstance(data, (str, bytes)) else 0
+            return f"[image content: {size} bytes (base64), mime: {mime}]"
+
+        # Legacy dict-based content
+        if isinstance(item, dict) and item.get("type") == "text":
+            return item.get("text", "")
+
+        # Bare string
+        if isinstance(item, str):
+            return item
+
+        return None
+
     def _extract_fastmcp_content(self, result: Any) -> Any:
         """Extract content from FastMCP call_tool result.
 
-        Tries to parse JSON content when possible, otherwise returns text.
+        Handles all MCP content types (TextContent, EmbeddedResource,
+        ResourceLink, ImageContent) and tries to parse JSON content when
+        possible.
 
         Args:
             result: FastMCP call_tool result (CallToolResult object)
@@ -627,23 +705,17 @@ class MCPConnection:
             if isinstance(content_list, list):
                 text_parts = []
                 for item in content_list:
-                    if hasattr(item, "text"):
-                        text_parts.append(item.text)
-                    elif hasattr(item, "type") and item.type == "text":
-                        text_parts.append(getattr(item, "text", ""))
-                    elif isinstance(item, str):
-                        text_parts.append(item)
+                    extracted = self._extract_text_from_item(item)
+                    if extracted is not None:
+                        text_parts.append(extracted)
                 text_content = "\n".join(text_parts)
         # Handle list directly (legacy support)
         elif isinstance(result, list):
             text_parts = []
             for item in result:
-                if hasattr(item, "text"):
-                    text_parts.append(item.text)
-                elif hasattr(item, "type") and item.type == "text":
-                    text_parts.append(getattr(item, "text", ""))
-                elif isinstance(item, str):
-                    text_parts.append(item)
+                extracted = self._extract_text_from_item(item)
+                if extracted is not None:
+                    text_parts.append(extracted)
             text_content = "\n".join(text_parts)
         # Single item
         elif hasattr(result, "text"):
