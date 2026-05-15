@@ -125,7 +125,11 @@ async def run_migrations(
     the client onto it for the remaining statements.
     """
     bootstrap_client: AsyncClient = await clickhouse_connect.get_async_client(
-        host=host, port=port, username=username, password=password, secure=secure,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        secure=secure,
     )
     try:
         await bootstrap_client.command(f"CREATE DATABASE IF NOT EXISTS {database}")
@@ -133,21 +137,20 @@ async def run_migrations(
         await bootstrap_client.close()
 
     client: AsyncClient = await clickhouse_connect.get_async_client(
-        host=host, port=port, database=database,
-        username=username, password=password, secure=secure,
+        host=host,
+        port=port,
+        database=database,
+        username=username,
+        password=password,
+        secure=secure,
     )
     try:
         # OTEL exporter stubs first — VIEWs in 010_views.sql depend on them.
         for ddl in (_OTEL_LOGS_DDL, _OTEL_TRACES_DDL):
-            await client.command(
-                ddl.format(database=database, retention_days=retention_days)
-            )
+            await client.command(ddl.format(database=database, retention_days=retention_days))
         for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
-            sql = sql_file.read_text().replace(
-                "{{retention_days}}", str(retention_days)
-            )
+            sql = sql_file.read_text().replace("{{retention_days}}", str(retention_days))
             for stmt in _split_statements(sql):
                 await client.command(stmt)
     finally:
         await client.close()
-

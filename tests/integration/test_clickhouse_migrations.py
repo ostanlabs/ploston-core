@@ -41,15 +41,21 @@ def clickhouse_container() -> AsyncIterator[tuple[str, int, str, str]]:
 
 async def _client(host: str, port: int, username: str, password: str):
     return await clickhouse_connect.get_async_client(
-        host=host, port=port, database="ploston",
-        username=username, password=password,
+        host=host,
+        port=port,
+        database="ploston",
+        username=username,
+        password=password,
     )
 
 
 async def _migrate(host: str, port: int, username: str, password: str, retention_days: int = 7):
     await run_migrations(
-        host=host, port=port, retention_days=retention_days,
-        username=username, password=password,
+        host=host,
+        port=port,
+        retention_days=retention_days,
+        username=username,
+        password=password,
     )
 
 
@@ -107,19 +113,32 @@ async def test_tool_calls_has_expected_columns(migrated):
     client = await _client(host, port, user, pwd)
     try:
         result = await client.query(
-            "SELECT name FROM system.columns WHERE database = 'ploston' "
-            "AND table = 'tool_calls'"
+            "SELECT name FROM system.columns WHERE database = 'ploston' AND table = 'tool_calls'"
         )
         actual = {row[0] for row in result.result_rows}
     finally:
         await client.close()
     expected = {
-        "execution_id", "step_id", "call_id", "tool_name",
-        "started_at", "completed_at", "duration_ms",
-        "params", "params_bytes", "result", "response_bytes",
-        "error_code", "error_category", "error_message",
-        "source", "runner_id", "bridge_id", "session_id",
-        "sequence", "inserted_at",
+        "execution_id",
+        "step_id",
+        "call_id",
+        "tool_name",
+        "started_at",
+        "completed_at",
+        "duration_ms",
+        "params",
+        "params_bytes",
+        "result",
+        "response_bytes",
+        "error_code",
+        "error_category",
+        "error_message",
+        "source",
+        "runner_id",
+        "bridge_id",
+        "session_id",
+        "sequence",
+        "inserted_at",
     }
     assert expected.issubset(actual), expected - actual
 
@@ -130,9 +149,7 @@ async def test_migrations_are_idempotent(migrated):
     await _migrate(host, port, user, pwd, retention_days=7)  # second pass
     client = await _client(host, port, user, pwd)
     try:
-        result = await client.query(
-            "SELECT count() FROM system.tables WHERE database = 'ploston'"
-        )
+        result = await client.query("SELECT count() FROM system.tables WHERE database = 'ploston'")
         # 3 owned + 2 views + 2 OTEL stubs = 7
         assert result.result_rows[0][0] == 7
     finally:
@@ -154,4 +171,3 @@ async def test_retention_substituted_into_engine_full(migrated):
         assert "{{" not in engine_full
     finally:
         await client.close()
-
