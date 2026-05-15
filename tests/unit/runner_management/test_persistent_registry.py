@@ -290,6 +290,63 @@ class TestSyncFromConfig:
         runner = registry.get_by_name("existing")
         assert "filesystem" in runner.mcps
 
+    @pytest.mark.asyncio
+    async def test_updates_token_on_existing_runner(self, registry, mock_config_store):
+        """sync_from_config updates token hash when token changes."""
+        await registry.create_async("existing", mcps={"github": {"command": "docker"}})
+        mock_config_store.publish_config.reset_mock()
+
+        config = {
+            "existing": {
+                "token": "tok-new",
+                "mcp_servers": {"github": {"command": "docker"}},
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["created"] is False
+        assert results["existing"]["updated"] is True
+        assert registry.get_by_token("tok-new") is not None
+
+    @pytest.mark.asyncio
+    async def test_no_update_when_token_unchanged(self, registry, mock_config_store):
+        """sync_from_config skips update when token is the same."""
+        _runner, token = await registry.create_async(
+            "existing", mcps={"github": {"command": "docker"}}
+        )
+        mock_config_store.publish_config.reset_mock()
+
+        config = {
+            "existing": {
+                "token": token,
+                "mcp_servers": {"github": {"command": "docker"}},
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["updated"] is False
+        mock_config_store.publish_config.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_updates_token_and_mcps_together(self, registry, mock_config_store):
+        """sync_from_config handles simultaneous token + mcps change."""
+        await registry.create_async("existing", mcps={"github": {"command": "docker"}})
+        mock_config_store.publish_config.reset_mock()
+
+        config = {
+            "existing": {
+                "token": "tok-new",
+                "mcp_servers": {"github": {"command": "npx"}},
+            }
+        }
+        results = await registry.sync_from_config(config)
+
+        assert results["existing"]["updated"] is True
+        runner = registry.get_by_name("existing")
+        assert runner.mcps == {"github": {"command": "npx"}}
+        assert registry.get_by_token("tok-new") is not None
+        assert registry.get_by_token("tok-old") is None
+
 
 class TestConvertMcpServersToMcps:
     """Tests for the static helper _convert_mcp_servers_to_mcps."""

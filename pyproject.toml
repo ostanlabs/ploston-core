@@ -50,7 +50,7 @@ dependencies = [
     "python-multipart>=0.0.26", # CVE-2026-40347 / CVE-2026-24486
     "pygments>=2.20.0", # CVE-2026-4539
     "python-dotenv>=1.2.2", # CVE-2026-28684 (symlink-follow in set_key/unset_key); transitive via fastmcp + pydantic-settings
-    "clickhouse-connect>=0.7.0",
+    "clickhouse-connect[async]>=0.7.0",
 ]
 
 [project.optional-dependencies]

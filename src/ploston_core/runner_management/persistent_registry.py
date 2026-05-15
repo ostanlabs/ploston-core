@@ -18,6 +18,7 @@ from .registry import (
     Runner,
     RunnerRegistry,
     RunnerStatus,
+    hash_token,
 )
 
 if TYPE_CHECKING:
@@ -292,15 +293,32 @@ class PersistentRunnerRegistry(RunnerRegistry):
             # Check if runner already exists
             existing = self.get_by_name(name)
             if existing:
+                changed = False
+
                 # Update mcps if they changed
                 if existing.mcps != mcps:
                     existing.mcps = mcps
+                    changed = True
+
+                # Update token hash if a new token was provided and differs
+                config_token = definition.get("token")
+                if config_token:
+                    new_hash = hash_token(config_token)
+                    if new_hash != existing.token_hash:
+                        # Remove old hash mapping
+                        self._token_to_id.pop(existing.token_hash, None)
+                        existing.token_hash = new_hash
+                        self._token_to_id[new_hash] = existing.id
+                        changed = True
+                        logger.info(f"Updated token for runner '{name}'")
+
+                if changed:
                     await self._persist_runner(existing)
                     results[name] = {"created": False, "updated": True, "token": None}
-                    logger.info(f"Updated MCPs for runner '{name}'")
+                    logger.info(f"Updated runner '{name}'")
                 else:
                     results[name] = {"created": False, "updated": False, "token": None}
-                    logger.debug(f"Runner '{name}' already exists, MCPs unchanged")
+                    logger.debug(f"Runner '{name}' already exists, unchanged")
                 continue
 
             # Get token from config if provided (from CLI's init --import)
