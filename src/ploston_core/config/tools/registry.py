@@ -165,7 +165,7 @@ Use ${VAR} syntax for secrets (e.g., ${KAFKA_SASL_PASSWORD}).""",
                 "scope": {
                     "type": "string",
                     "enum": ["project", "user"],
-                    "description": "Where to write config: project (./ael-config.yaml) or user (~/.ael/config.yaml)",
+                    "description": "Where to write config: project (./ploston-config.yaml) or user (~/.ploston/config.yaml)",
                 },
                 "path": {
                     "type": "string",

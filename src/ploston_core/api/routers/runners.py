@@ -67,7 +67,7 @@ async def create_runner(
         status_code=400,
         detail=(
             "Runners must be defined in the config file. "
-            "Add the runner to the 'runners' section in ael-config.yaml, "
+            "Add the runner to the 'runners' section in ploston-config.yaml, "
             "then use 'ploston runner get-token <name>' to get the connection token."
         ),
     )

@@ -140,8 +140,8 @@ class ConfigLoader:
 
         Resolution order if path not specified:
         1. PLOSTON_CONFIG_PATH or AEL_CONFIG_PATH environment variable
-        2. ./ael-config.yaml
-        3. ~/.ael/config.yaml
+        2. ./ploston-config.yaml (or ./ael-config.yaml for backward compatibility)
+        3. ~/.ploston/config.yaml (or ~/.ael/config.yaml for backward compatibility)
         4. If use_defaults=True and no file found, use default configuration
 
         Args:
@@ -422,15 +422,21 @@ class ConfigLoader:
         if env_path:
             return Path(env_path)
 
-        # 2. ./ael-config.yaml
-        local_path = Path("ael-config.yaml")
+        # 2. ./ploston-config.yaml (preferred) or ./ael-config.yaml (backward compat)
+        local_path = Path("ploston-config.yaml")
         if local_path.exists():
             return local_path
+        legacy_local_path = Path("ael-config.yaml")
+        if legacy_local_path.exists():
+            return legacy_local_path
 
-        # 3. ~/.ael/config.yaml
-        home_path = Path.home() / ".ael" / "config.yaml"
+        # 3. ~/.ploston/config.yaml (preferred) or ~/.ael/config.yaml (backward compat)
+        home_path = Path.home() / ".ploston" / "config.yaml"
         if home_path.exists():
             return home_path
+        legacy_home_path = Path.home() / ".ael" / "config.yaml"
+        if legacy_home_path.exists():
+            return legacy_home_path
 
         # Not found - use local path as default
         return local_path

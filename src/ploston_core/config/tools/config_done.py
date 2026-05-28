@@ -135,7 +135,7 @@ async def handle_config_done(
             logger.warning(f"Failed to push config to connected runners: {e}")
 
     # Step 4: Write config to file
-    target_path = write_location or "./ael-config.yaml"
+    target_path = write_location or "./ploston-config.yaml"
     try:
         staged_config.set_target_path(target_path)
         staged_config.write()

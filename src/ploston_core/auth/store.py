@@ -5,7 +5,7 @@ Stores principal data in Redis:
 - Last used timestamps
 - Rate limit counters
 
-Principal definitions come from config file (ael-config.yaml).
+Principal definitions come from config file (ploston-config.yaml).
 Redis stores the runtime data (key hashes, usage tracking).
 """
 
@@ -67,7 +67,7 @@ class PrincipalStore:
         """Load principals from config and bootstrap keys if needed.
 
         Args:
-            principals_config: Dict of principal name -> config from ael-config.yaml
+            principals_config: Dict of principal name -> config from ploston-config.yaml
 
         Returns:
             List of newly generated API keys (for display to admin)

@@ -42,7 +42,7 @@ class AELPlugin:
         """Initialize the plugin.
 
         Args:
-            config: Plugin-specific configuration from ael-config.yaml
+            config: Plugin-specific configuration from ploston-config.yaml
         """
         self.config = config or {}
 

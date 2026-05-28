@@ -32,7 +32,7 @@ async def handle_config_location(
     if not scope and not custom_path:
         return {
             "current_source": source,
-            "write_target": current_location or source or "./ael-config.yaml",
+            "write_target": current_location or source or "./ploston-config.yaml",
             "available_scopes": ["project", "user"],
         }
 
@@ -40,9 +40,9 @@ async def handle_config_location(
     if custom_path:
         new_location = custom_path
     elif scope == "project":
-        new_location = "./ael-config.yaml"
+        new_location = "./ploston-config.yaml"
     elif scope == "user":
-        new_location = str(Path.home() / ".ael" / "config.yaml")
+        new_location = str(Path.home() / ".ploston" / "config.yaml")
     else:
         return {
             "error": f"Invalid scope: {scope}",

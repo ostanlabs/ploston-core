@@ -37,7 +37,7 @@ class TestHandleConfigLocation:
             mock_config_loader,
         )
 
-        assert result["write_target"] == "./ael-config.yaml"
+        assert result["write_target"] == "./ploston-config.yaml"
         assert "new_location" in result
 
     @pytest.mark.asyncio
@@ -49,7 +49,7 @@ class TestHandleConfigLocation:
             mock_config_loader,
         )
 
-        assert ".ael" in result["write_target"]
+        assert ".ploston" in result["write_target"]
         assert "config.yaml" in result["write_target"]
 
     @pytest.mark.asyncio
