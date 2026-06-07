@@ -112,6 +112,11 @@ uv run pytest tests/unit/ -v --cov=ploston_core --cov-report=term-missing
 | [`ploston`](https://github.com/ostanlabs/ploston) | OSS distribution (core + CLI) |
 | [`ploston-cli`](https://github.com/ostanlabs/ploston-cli) | Command-line interface |
 
+## Architecture decisions
+
+The design decisions behind Ploston are recorded as ADRs:
+https://docs.ploston.ai/adr/
+
 ## License
 
 Apache-2.0 - see [LICENSE](LICENSE) for details.
