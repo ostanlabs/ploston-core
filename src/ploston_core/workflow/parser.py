@@ -1,5 +1,6 @@
 """YAML workflow parsing."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,8 @@ from .types import (
     WorkflowDefaults,
     WorkflowDefinition,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def parse_workflow_yaml(
@@ -52,13 +55,29 @@ def parse_workflow_yaml(
     version = data.get("version", "1.0.0")
     description = data.get("description")
 
-    # Parse packages config
+    # Parse packages config.
+    #
+    # DEPRECATED: `packages.profile` / `packages.additional` are still parsed so
+    # existing configs (e.g. ploston-config.yaml shipping `default_profile:
+    # standard`) keep loading, but they have NO runtime effect — the sandbox
+    # import allowlist is fixed and does not consult these fields. We keep
+    # parsing them and emit a deprecation warning instead of dropping them.
     packages = None
     if "packages" in data:
         pkg_data = data["packages"]
         packages = PackagesConfig(
             profile=pkg_data.get("profile", "standard"),
             additional=pkg_data.get("additional", []),
+        )
+        logger.warning(
+            "Workflow %r declares a `packages` block (profile=%r, additional=%r), "
+            "but `packages.profile`/`packages.additional` are DEPRECATED and have "
+            "no runtime effect: the sandbox import allowlist is fixed and ignores "
+            "these fields. They are parsed only for backward compatibility and may "
+            "be removed in a future release.",
+            workflow_name,
+            packages.profile,
+            packages.additional,
         )
 
     # Parse defaults

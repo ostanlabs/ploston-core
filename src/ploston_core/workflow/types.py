@@ -81,7 +81,16 @@ class StepDefinition:
 
 @dataclass
 class PackagesConfig:
-    """Python packages configuration for code steps."""
+    """Python packages configuration for code steps.
+
+    .. deprecated::
+        ``profile`` and ``additional`` are DEPRECATED and currently have **no
+        runtime effect**. The sandbox import allowlist is fixed and does not
+        consult these fields. They are still parsed for backward compatibility
+        (existing configs ship ``default_profile: standard``) and the parser
+        emits a deprecation warning when a ``packages`` block is present. These
+        fields may be removed in a future release.
+    """
 
     profile: str = "standard"
     additional: list[str] = field(default_factory=list)
