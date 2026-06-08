@@ -2281,7 +2281,7 @@ class WorkflowToolsProvider:
             data = yaml_rt.load(yaml_content)
         except Exception as exc:
             raise create_error(
-                "INTERNAL",
+                "INTERNAL_ERROR",
                 message=f"Stored YAML for workflow '{name}' could not be parsed: {exc}",
             ) from exc
 
@@ -3074,7 +3074,7 @@ class WorkflowToolsProvider:
 
         if self._tool_invoker is None:
             raise create_error(
-                "INTERNAL",
+                "INTERNAL_ERROR",
                 message="workflow_call_tool is unavailable: ToolInvoker not configured",
             )
 
@@ -3233,7 +3233,7 @@ class WorkflowToolsProvider:
 
         if not self._workflow_engine:
             raise create_error(
-                "INTERNAL",
+                "INTERNAL_ERROR",
                 message="workflow_run is unavailable: WorkflowEngine not configured",
             )
 

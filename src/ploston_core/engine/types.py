@@ -249,8 +249,10 @@ async def with_timeout[T](coro: Awaitable[T], timeout_seconds: int) -> T:
     try:
         return await asyncio.wait_for(coro, timeout=timeout_seconds)
     except TimeoutError as err:
+        # WORKFLOW_TIMEOUT is the registered code (CR-5: EXECUTION_TIMEOUT was never
+        # registered and surfaced as a raw ValueError "Unknown error code").
         raise create_error(
-            "EXECUTION_TIMEOUT",
+            "WORKFLOW_TIMEOUT",
             timeout_seconds=timeout_seconds,
         ) from err
 

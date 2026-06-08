@@ -46,22 +46,38 @@ class ErrorRegistry:
             cause: Optional cause error
 
         Returns:
-            AELError instance
-
-        Raises:
-            ValueError: If error code not found
+            AELError instance. An unknown ``code`` degrades to a structured
+            ``INTERNAL_ERROR`` (never raises ``ValueError``) per the
+            ERROR_REGISTRY_FULL_SPEC safe-fallback contract; the repo-wide
+            ``test_all_used_error_codes_are_registered`` guard is what keeps an
+            unregistered code from silently slipping into production.
         """
-        template = self.get_template(code)
-        if not template:
-            msg = f"Unknown error code: {code}"
-            raise ValueError(msg)
-
         context = context or {}
+
+        template = self.get_template(code)
+        unknown_code: str | None = None
+        if not template:
+            # Safe fallback: degrade unknown codes to INTERNAL_ERROR instead of
+            # crashing the caller with ValueError (Area A / CR-5).
+            unknown_code = code
+            template = self.get_template("INTERNAL_ERROR")
+            if not template:  # INTERNAL_ERROR must always be registered
+                return AELError(
+                    code="INTERNAL_ERROR",
+                    category=ErrorCategory.SYSTEM,
+                    message=f"Unknown error code: {code}",
+                    http_status=500,
+                    cause=cause,
+                )
 
         # Interpolate templates
         message = self._interpolate(template.message_template, context)
         detail = self._interpolate(template.detail_template, context)
         suggestion = self._interpolate(template.suggestion_template, context)
+
+        if unknown_code is not None:
+            # Preserve the original (unregistered) code in the detail for debugging.
+            detail = f"Unknown error code: {unknown_code}"
 
         # Ensure message is not None
         if message is None:
