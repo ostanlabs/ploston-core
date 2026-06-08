@@ -11,6 +11,7 @@ These endpoints are used by runners to connect to the control plane.
 import asyncio
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -112,10 +113,23 @@ async def get_ca_certificate(request: Request) -> PlainTextResponse:
 
     No authentication required.
 
-    Note: In production, this should return the actual CA certificate
-    used for TLS. For now, returns a placeholder message.
+    Serves the live EmbeddedCA cert (CR-2) when one is attached to
+    app.state.embedded_ca, falling back to a pre-rendered PEM string in
+    app.state.ca_certificate. Runners download this to verify the CP server
+    cert during the mTLS handshake.
     """
-    # Check if CA cert is configured in app state
+    # Prefer the live EmbeddedCA (CR-2): always serves the real CA PEM.
+    embedded_ca = getattr(request.app.state, "embedded_ca", None)
+    if embedded_ca is not None:
+        try:
+            return PlainTextResponse(
+                content=embedded_ca.get_ca_cert_pem().decode(),
+                media_type="application/x-pem-file",
+            )
+        except Exception as e:  # CA not initialized yet
+            logger.warning(f"[ws] embedded CA present but not serving cert: {e}")
+
+    # Fallback: a pre-rendered PEM string in app state.
     ca_cert = getattr(request.app.state, "ca_certificate", None)
 
     if ca_cert:
@@ -142,10 +156,46 @@ class RunnerConnection:
     connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending_requests: dict[int, asyncio.Future] = field(default_factory=dict)
     next_request_id: int = 1
+    # H-7: unique per physical connection so a reconnect's cleanup of the OLD
+    # socket does not tear down the NEW (live) connection.
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
 # Global connection tracking (per-process)
 _runner_connections: dict[str, RunnerConnection] = {}
+
+
+def _cleanup_runner_connection(
+    runner_registry: Any,
+    runner_id: str,
+    conn: RunnerConnection,
+) -> None:
+    """Tear down a runner connection, but ONLY if it is still the live one.
+
+    H-7: connections are keyed by runner_id. On reconnect, the new socket
+    replaces the old entry in _runner_connections. When the old socket's
+    finally-block runs, it must NOT pop/disconnect the new connection. We only
+    clean up when the stored connection IS this exact session.
+    """
+    current = _runner_connections.get(runner_id)
+    if current is not conn:
+        # A newer connection (reconnect) has already taken over — leave it alone.
+        logger.info(
+            f"Stale connection cleanup ignored for runner '{conn.runner_name}' "
+            f"(session={conn.session_id}); a newer session is live"
+        )
+        # Still cancel this stale socket's own pending requests.
+        for future in conn.pending_requests.values():
+            if not future.done():
+                future.cancel()
+        return
+
+    _runner_connections.pop(runner_id, None)
+    runner_registry.set_disconnected(runner_id)
+    logger.info(f"Runner '{conn.runner_name}' disconnected")
+    for future in conn.pending_requests.values():
+        if not future.done():
+            future.cancel()
 
 
 async def _send_response(websocket: WebSocket, msg_id: int | None, result: Any) -> None:
@@ -328,6 +378,7 @@ async def runner_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
 
     runner_id: str | None = None
+    this_conn: RunnerConnection | None = None  # H-7: our own session handle
 
     try:
         while True:
@@ -358,13 +409,14 @@ async def runner_websocket(websocket: WebSocket) -> None:
                     await _send_error(websocket, msg_id, -32001, "Token/name mismatch")
                     continue
 
-                # Register connection
+                # Register connection (H-7: keep our own session handle)
                 runner_id = runner.id
-                _runner_connections[runner_id] = RunnerConnection(
+                this_conn = RunnerConnection(
                     runner_id=runner.id,
                     runner_name=runner.name,
                     websocket=websocket,
                 )
+                _runner_connections[runner_id] = this_conn
                 runner_registry.set_connected(runner_id)
 
                 logger.info(f"Runner '{name}' connected (id={runner_id})")
@@ -528,12 +580,7 @@ async def runner_websocket(websocket: WebSocket) -> None:
     except Exception as e:
         logger.exception(f"WebSocket error: {e}")
     finally:
-        # Cleanup on disconnect
-        if runner_id:
-            conn = _runner_connections.pop(runner_id, None)
-            if conn:
-                runner_registry.set_disconnected(runner_id)
-                logger.info(f"Runner '{conn.runner_name}' disconnected")
-                # Cancel pending requests
-                for future in conn.pending_requests.values():
-                    future.cancel()
+        # Cleanup on disconnect (H-7: session-scoped — never tear down a newer
+        # reconnect that has already taken over this runner_id).
+        if runner_id and this_conn is not None:
+            _cleanup_runner_connection(runner_registry, runner_id, this_conn)

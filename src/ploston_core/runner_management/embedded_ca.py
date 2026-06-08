@@ -10,14 +10,41 @@ Implements S-183: Embedded CA & TLS
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import ssl
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _temp_pem_files(**pems: bytes) -> Iterator[dict[str, str]]:
+    """Write PEM blobs to temp files (0600) and yield their paths.
+
+    ssl.SSLContext.load_* APIs require filesystem paths, so we materialise
+    short-lived temp files and remove them on exit.
+    """
+    paths: dict[str, str] = {}
+    try:
+        for name, data in pems.items():
+            fd, path = tempfile.mkstemp(suffix=f"-{name}.pem")
+            os.write(fd, data)
+            os.close(fd)
+            os.chmod(path, 0o600)
+            paths[name] = path
+        yield paths
+    finally:
+        for path in paths.values():
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+
 
 # Optional cryptography import
 try:
@@ -375,6 +402,73 @@ class EmbeddedCA:
         cert_pem = server_cert.public_bytes(serialization.Encoding.PEM)
 
         return key_pem, cert_pem
+
+    def build_server_ssl_context(
+        self,
+        hostname: str = "localhost",
+        alt_names: list[str] | None = None,
+    ) -> ssl.SSLContext:
+        """Build a server-side mTLS SSLContext for the runner WebSocket server.
+
+        Implements CR-2: the CP presents a CA-signed server cert, and REQUIRES
+        + verifies a runner client cert signed by the same CA (mutual TLS).
+
+        Args:
+            hostname: Primary hostname for the server certificate.
+            alt_names: Additional SANs (hostnames/IPs).
+
+        Returns:
+            ssl.SSLContext with verify_mode=CERT_REQUIRED and the CA loaded as
+            the client-cert trust store.
+        """
+        if not self._ca_key or not self._ca_cert:
+            raise RuntimeError("CA not initialized")
+
+        key_pem, cert_pem = self.generate_server_cert(hostname, alt_names)
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        # Require + verify the runner's client certificate (mTLS).
+        ctx.verify_mode = ssl.CERT_REQUIRED
+
+        with _temp_pem_files(cert=cert_pem, key=key_pem, ca=self.get_ca_cert_pem()) as paths:
+            ctx.load_cert_chain(certfile=paths["cert"], keyfile=paths["key"])
+            # Trust runner client certs signed by our CA.
+            ctx.load_verify_locations(cafile=paths["ca"])
+
+        return ctx
+
+    def build_client_ssl_context(
+        self,
+        ca_cert_pem: bytes | str,
+        client_cert_pem: bytes | str,
+        client_key_pem: bytes | str,
+    ) -> ssl.SSLContext:
+        """Build a client-side mTLS SSLContext for a runner.
+
+        Implements CR-2 (runner side): the runner verifies the CP server cert
+        against the downloaded CA and presents its own client cert.
+
+        Args:
+            ca_cert_pem: CA certificate PEM (downloaded from /runner/ca.crt).
+            client_cert_pem: The runner's client certificate PEM.
+            client_key_pem: The runner's client private key PEM.
+
+        Returns:
+            ssl.SSLContext configured for mutual TLS as the client.
+        """
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.check_hostname = False  # SAN may not match a dynamic CP hostname.
+
+        ca_b = ca_cert_pem.encode() if isinstance(ca_cert_pem, str) else ca_cert_pem
+        cert_b = client_cert_pem.encode() if isinstance(client_cert_pem, str) else client_cert_pem
+        key_b = client_key_pem.encode() if isinstance(client_key_pem, str) else client_key_pem
+
+        with _temp_pem_files(cert=cert_b, key=key_b, ca=ca_b) as paths:
+            ctx.load_verify_locations(cafile=paths["ca"])
+            ctx.load_cert_chain(certfile=paths["cert"], keyfile=paths["key"])
+
+        return ctx
 
     def needs_renewal(self, days_before_expiry: int = 30) -> bool:
         """Check if CA certificate needs renewal.

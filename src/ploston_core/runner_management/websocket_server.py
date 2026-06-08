@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -46,6 +47,8 @@ class RunnerConnection:
     connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending_requests: dict[int, asyncio.Future] = field(default_factory=dict)
     next_request_id: int = 1
+    # H-7: unique per physical connection (see _disconnect_runner).
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
 class RunnerWebSocketServer:
@@ -63,6 +66,7 @@ class RunnerWebSocketServer:
         registry: RunnerRegistry,
         host: str = "0.0.0.0",
         port: int = 8022,
+        ssl: Any = None,
     ) -> None:
         """Initialize the server.
 
@@ -70,6 +74,9 @@ class RunnerWebSocketServer:
             registry: Runner registry for authentication and tracking
             host: Host to bind to
             port: Port to listen on
+            ssl: Optional ssl.SSLContext for mTLS (CR-2). When provided, runners
+                must present a client cert signed by the CP's CA. When None,
+                plaintext is used (localhost dev only, per DEC-118).
         """
         if websockets is None:
             raise ImportError("websockets package required: pip install websockets")
@@ -77,6 +84,7 @@ class RunnerWebSocketServer:
         self._registry = registry
         self._host = host
         self._port = port
+        self._ssl = ssl
         self._connections: dict[str, RunnerConnection] = {}  # runner_id -> connection
         self._server: Any = None
         self._running = False
@@ -96,8 +104,10 @@ class RunnerWebSocketServer:
             self._handle_connection,
             self._host,
             self._port,
+            ssl=self._ssl,
         )
-        logger.info(f"Runner WebSocket server started on ws://{self._host}:{self._port}")
+        scheme = "wss" if self._ssl is not None else "ws"
+        logger.info(f"Runner WebSocket server started on {scheme}://{self._host}:{self._port}")
 
     async def stop(self) -> None:
         """Stop the WebSocket server."""
@@ -141,7 +151,9 @@ class RunnerWebSocketServer:
             )
         finally:
             if runner_id:
-                await self._disconnect_runner(runner_id, reason="connection closed")
+                await self._disconnect_runner(
+                    runner_id, reason="connection closed", websocket=websocket
+                )
 
     async def _process_message(
         self,
@@ -211,7 +223,8 @@ class RunnerWebSocketServer:
             await self._send_error(websocket, msg_id, -32001, "Token/name mismatch")
             return None
 
-        # Register connection
+        # Register connection (a reconnect replaces any prior entry; H-7
+        # cleanup of the old socket is session-scoped in _disconnect_runner).
         self._connections[runner.id] = RunnerConnection(
             runner_id=runner.id,
             runner_name=runner.name,
@@ -295,8 +308,26 @@ class RunnerWebSocketServer:
             else:
                 future.set_result(data.get("result"))
 
-    async def _disconnect_runner(self, runner_id: str, reason: str = "unknown") -> None:
-        """Handle runner disconnection."""
+    async def _disconnect_runner(
+        self,
+        runner_id: str,
+        reason: str = "unknown",
+        websocket: ServerConnection | None = None,
+    ) -> None:
+        """Handle runner disconnection.
+
+        H-7: when a websocket is provided, only disconnect if the stored
+        connection IS that socket. A reconnect replaces the registry entry, so
+        the old socket's cleanup must not tear down the live new connection.
+        """
+        existing = self._connections.get(runner_id)
+        if websocket is not None and existing is not None and existing.websocket is not websocket:
+            # A newer connection has taken over this runner_id — leave it.
+            logger.info(
+                f"[ws] Stale disconnect ignored for runner={runner_id}; newer session is live"
+            )
+            return
+
         conn = self._connections.pop(runner_id, None)
         if conn:
             uptime = (datetime.now(UTC) - conn.connected_at).total_seconds()
