@@ -38,6 +38,10 @@ class RESTConfig:
     # Rate limiting
     rate_limiting_enabled: bool = False
     requests_per_minute: int = 100
+    # Hosts whose X-Forwarded-For header is trusted for client identification.
+    # Empty by default (strict): the direct connection IP is always used unless
+    # the immediate client is one of these proxies. Prevents XFF spoofing.
+    trusted_proxies: list[str] = field(default_factory=list)
 
     # CORS
     cors_enabled: bool = True

@@ -109,10 +109,14 @@ def create_rest_app(
 
     # CORS middleware
     if config.cors_enabled:
+        # CR-3: Never combine wildcard origins with credentials. The browser
+        # spec forbids it and the combination is a credential-leak hazard.
+        # Only allow credentials when explicit origins are configured.
+        allow_credentials = "*" not in config.cors_origins
         app.add_middleware(
             CORSMiddleware,
             allow_origins=config.cors_origins,
-            allow_credentials=True,
+            allow_credentials=allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -122,6 +126,7 @@ def create_rest_app(
         app.add_middleware(
             RateLimitMiddleware,
             requests_per_minute=config.requests_per_minute,
+            trusted_proxies=config.trusted_proxies,
         )
 
     # API key authentication middleware

@@ -1,5 +1,6 @@
 """Rate limiting middleware."""
 
+import hashlib
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         app,
         requests_per_minute: int = 100,
         exclude_paths: list[str] | None = None,
+        trusted_proxies: list[str] | None = None,
     ):
         """Initialize middleware.
 
@@ -31,28 +33,52 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             app: ASGI application
             requests_per_minute: Maximum requests per minute per client
             exclude_paths: Paths to exclude from rate limiting
+            trusted_proxies: Hosts whose X-Forwarded-For header is trusted. When
+                empty (default), X-Forwarded-For is ignored and the direct
+                connection IP is always used, preventing spoofing (H-4).
         """
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self.window_seconds = 60
-        self.exclude_paths = exclude_paths or ["/health", "/info"]
+        # H-6: exact-match set to prevent path-prefix bypass.
+        self.exclude_paths = set(exclude_paths or ["/health", "/info"])
+        self.trusted_proxies = set(trusted_proxies or [])
         self.clients: dict[str, RateLimitState] = defaultdict(RateLimitState)
 
     def _get_client_id(self, request: Request) -> str:
         """Get client identifier from request."""
-        # Use API key if available, otherwise use IP
+        # Use API key if available, otherwise use IP.
+        # H-8: key by a hash of the FULL api key, not the first 8 chars, to
+        # avoid bucket collisions between distinct keys sharing a prefix.
         api_key = request.headers.get("X-API-Key")
         if api_key:
-            return f"key:{api_key[:8]}"
+            digest = hashlib.sha256(api_key.encode()).hexdigest()
+            return f"key:{digest}"
 
-        # Use forwarded IP if behind proxy
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return f"ip:{forwarded.split(',')[0].strip()}"
-
-        # Use direct client IP
+        # Direct connection IP (default, spoof-proof).
         client = request.client
-        return f"ip:{client.host if client else 'unknown'}"
+        direct_host = client.host if client else "unknown"
+
+        # H-4: Only honor X-Forwarded-For when the direct peer is a trusted
+        # proxy. Otherwise the header is attacker-controlled and would let a
+        # client mint unlimited fresh buckets.
+        if direct_host in self.trusted_proxies:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                return f"ip:{forwarded.split(',')[0].strip()}"
+
+        return f"ip:{direct_host}"
+
+    def _evict_stale(self, now: float) -> None:
+        """Evict buckets whose window is empty to bound memory growth (H-4)."""
+        cutoff = now - self.window_seconds
+        stale = [
+            cid
+            for cid, state in self.clients.items()
+            if not any(t > cutoff for t in state.requests)
+        ]
+        for cid in stale:
+            del self.clients[cid]
 
     def _is_rate_limited(self, client_id: str) -> tuple[bool, int]:
         """Check if client is rate limited.
@@ -61,6 +87,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             Tuple of (is_limited, remaining_requests)
         """
         now = time.time()
+
+        # Sweep stale (empty-window) buckets before processing so abandoned
+        # clients do not accumulate unbounded memory.
+        self._evict_stale(now)
+
         state = self.clients[client_id]
 
         # Remove old requests outside window
@@ -78,9 +109,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Check rate limit before processing request."""
-        # Skip rate limiting for excluded paths
+        # Skip rate limiting for excluded paths (exact match only - H-6)
         path = request.url.path
-        if any(path.startswith(excluded) for excluded in self.exclude_paths):
+        if path in self.exclude_paths:
             return await call_next(request)
 
         client_id = self._get_client_id(request)

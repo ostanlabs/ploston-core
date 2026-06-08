@@ -20,19 +20,24 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.api_keys = {key.key: key for key in api_keys}
-        self.exclude_paths = exclude_paths or [
-            "/health",
-            "/info",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-        ]
+        # H-6: exact-match set (not prefix match) to prevent path-prefix bypass
+        # such as /docsanything or /healthx slipping past authentication.
+        self.exclude_paths = set(
+            exclude_paths
+            or [
+                "/health",
+                "/info",
+                "/docs",
+                "/redoc",
+                "/openapi.json",
+            ]
+        )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Check API key authentication."""
-        # Skip auth for excluded paths
+        # Skip auth for excluded paths (exact match only - H-6)
         path = request.url.path
-        if any(path.startswith(excluded) for excluded in self.exclude_paths):
+        if path in self.exclude_paths:
             return await call_next(request)
 
         # Get API key from header
