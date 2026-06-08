@@ -36,7 +36,7 @@ from ploston_core.telemetry.store.wrappers import (
 from ploston_core.types import ExecutionStatus, LogLevel, MCPTransport
 
 if TYPE_CHECKING:
-    from ploston.workflow import WorkflowRegistry
+    from ploston_core.workflow import WorkflowRegistry
 
 from .http_transport import HTTPTransport
 from .stdio import read_message, write_message

@@ -285,7 +285,7 @@ class ConfigToolRegistry:
         """
         handler = self._handlers.get(name)
         if not handler:
-            raise create_error("TOOL_NOT_FOUND", context={"tool_name": name})
+            raise create_error("TOOL_NOT_FOUND", tool_name=name)
         return await handler(arguments)
 
     async def _handle_config_get(self, arguments: dict[str, Any]) -> dict[str, Any]:

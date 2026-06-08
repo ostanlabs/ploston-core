@@ -9,6 +9,8 @@ from ploston_core.config.tools import (
     CONFIGURE_TOOL_SCHEMA,
     ConfigToolRegistry,
 )
+from ploston_core.errors import AELError, create_error
+from ploston_core.errors.registry import ErrorRegistry
 
 
 class TestConfigToolRegistry:
@@ -95,10 +97,54 @@ class TestConfigToolRegistry:
         assert "sections" in result
 
     @pytest.mark.asyncio
-    async def test_call_unknown_tool(self, registry):
-        """Call unknown tool raises error."""
-        with pytest.raises(Exception):
-            await registry.call("ael:unknown", {})
+    async def test_call_unknown_tool_raises_ael_error(self, registry):
+        """Call unknown tool raises AELError with TOOL_NOT_FOUND, not ValueError."""
+        with pytest.raises(AELError) as exc_info:
+            await registry.call("does_not_exist", {})
+        err = exc_info.value
+        assert err.code == "TOOL_NOT_FOUND"
+        assert not isinstance(err, ValueError)
+
+
+class TestToolNotFoundErrorTemplate:
+    """Tests for TOOL_NOT_FOUND error template registration and creation."""
+
+    def test_template_registered(self):
+        """TOOL_NOT_FOUND template is registered in ErrorRegistry."""
+        registry = ErrorRegistry()
+        assert registry.get_template("TOOL_NOT_FOUND") is not None
+
+    def test_create_error_returns_ael_error(self):
+        """create_error with TOOL_NOT_FOUND returns AELError, not ValueError."""
+        err = create_error("TOOL_NOT_FOUND", tool_name="github__foo")
+        assert isinstance(err, AELError)
+        assert not isinstance(err, ValueError)
+        assert err.code == "TOOL_NOT_FOUND"
+        assert err.http_status == 404
+        assert err.message == "Tool 'github__foo' not found"
+        assert err.tool_name == "github__foo"
+
+    def test_all_used_codes_are_registered(self):
+        """All error codes used at create_error call sites are registered."""
+        registry = ErrorRegistry()
+        registered = set(registry.list_codes())
+        # Curated list of codes used at create_error() call sites in ploston-core
+        used_codes = {
+            "CODE_RUNTIME",
+            "CONFIG_INVALID",
+            "INPUT_INVALID",
+            "PARAM_INVALID",
+            "STEP_FAILED",
+            "TEMPLATE_ERROR",
+            "TOOL_FAILED",
+            "TOOL_NOT_AVAILABLE",
+            "TOOL_NOT_FOUND",
+            "TOOL_TIMEOUT",
+            "TOOL_UNAVAILABLE",
+            "WORKFLOW_NOT_FOUND",
+        }
+        missing = used_codes - registered
+        assert not missing, f"Unregistered error codes used at create_error sites: {missing}"
 
 
 class TestConfigToolSchemas:

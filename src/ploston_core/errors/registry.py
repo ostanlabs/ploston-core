@@ -160,6 +160,16 @@ class ErrorRegistry:
             default_http_status=502,
         )
 
+        self._templates["TOOL_NOT_FOUND"] = ErrorTemplate(
+            code="TOOL_NOT_FOUND",
+            category=ErrorCategory.TOOL,
+            message_template="Tool '{tool_name}' not found",
+            detail_template="No handler is registered for the requested tool name",
+            suggestion_template="Check the tool name; call tools/list to see available tools",
+            default_retryable=False,
+            default_http_status=404,
+        )
+
         # EXECUTION Errors
         self._templates["CODE_SYNTAX"] = ErrorTemplate(
             code="CODE_SYNTAX",
@@ -199,6 +209,16 @@ class ErrorRegistry:
             suggestion_template="Remove dangerous imports or operations",
             default_retryable=False,
             default_http_status=403,
+        )
+
+        self._templates["STEP_FAILED"] = ErrorTemplate(
+            code="STEP_FAILED",
+            category=ErrorCategory.EXECUTION,
+            message_template="Step '{step_id}' failed",
+            detail_template="The workflow step did not complete successfully",
+            suggestion_template="Check the step configuration and tool output",
+            default_retryable=False,
+            default_http_status=500,
         )
 
         self._templates["TEMPLATE_ERROR"] = ErrorTemplate(
