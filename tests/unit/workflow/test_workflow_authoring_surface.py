@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ploston_core.errors import create_error
+from ploston_core.errors import AELError, create_error
 from ploston_core.invoker.types import ToolCallResult
 from ploston_core.registry.types import ToolDefinition
 from ploston_core.types import ToolSource, ToolStatus
@@ -307,10 +307,11 @@ class TestCallTool:
             tool_registry=mock_tool_registry,
             runner_registry=mock_runner_registry,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call(
                 "workflow_call_tool", {"mcp": "system", "tool": "python_exec", "params": {}}
             )
+        assert exc_info.value.code == "INTERNAL_ERROR"
 
     @pytest.mark.asyncio
     async def test_ct07_defaults_empty_params(
@@ -383,8 +384,9 @@ class TestToolSchemaBatch:
     @pytest.mark.asyncio
     async def test_tsb04_batch_validates_entries(self, provider):
         """TS-B04: Entries missing mcp or tool raise a structured error."""
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call("workflow_tool_schema", {"tools": [{"mcp": "system"}]})
+        assert exc_info.value.code == "PARAM_INVALID"
 
     def test_tool_schema_inputschema_includes_tools(self):
         """workflow_tool_schema's MCP inputSchema advertises the 'tools' batch field."""
@@ -944,13 +946,15 @@ class TestDeprecatedToolsRemoved:
     async def test_workflow_validate_dispatch_raises(self, real_provider):
         # Dispatcher must reject the unknown tool name rather than silently
         # routing to a stale handler.
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await real_provider.call("workflow_validate", {"yaml_content": "name: x"})
+        assert exc_info.value.code == "TOOL_NOT_AVAILABLE"
 
     @pytest.mark.asyncio
     async def test_workflow_update_dispatch_raises(self, real_provider):
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await real_provider.call("workflow_update", {"name": "x", "yaml_content": "name: x"})
+        assert exc_info.value.code == "TOOL_NOT_AVAILABLE"
 
     @pytest.mark.asyncio
     async def test_create_dry_run_returns_validation_envelope(self, real_registry, real_provider):

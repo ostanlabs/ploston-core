@@ -11,6 +11,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from ploston_core.errors import AELError
+
 
 def create_mock_tool_registry():
     """Create a mock tool registry."""
@@ -32,28 +34,16 @@ class TestSandboxFuzzing:
 
         sandbox = PythonExecSandbox()
 
-        # Should not crash, regardless of input
-        try:
-            # Note: execute is async, but we test sync behavior
-            import asyncio
+        # Should not crash, regardless of input.
+        # asyncio.run() drives the coroutine on a fresh event loop — using
+        # asyncio.get_event_loop() is fragile here because a prior async test
+        # may have closed the ambient loop (Python 3.12), which previously
+        # caused this harness to silently no-op.
+        import asyncio
 
-            result = asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
-            # If execution succeeds, result should have expected structure
-            assert hasattr(result, "success") or isinstance(result, dict)
-        except Exception as e:
-            # Exceptions are acceptable, but should be handled gracefully
-            assert isinstance(
-                e,
-                SyntaxError
-                | ValueError
-                | TypeError
-                | NameError
-                | AttributeError
-                | RuntimeError
-                | RecursionError
-                | MemoryError
-                | Exception,
-            )
+        result = asyncio.run(sandbox.execute(code))
+        # If execution succeeds, result should have expected structure.
+        assert hasattr(result, "success") or isinstance(result, dict)
 
     @given(st.binary(min_size=0, max_size=500))
     @settings(max_examples=50, deadline=5000)
@@ -68,12 +58,14 @@ class TestSandboxFuzzing:
         except Exception:
             return  # Skip if can't decode
 
-        try:
-            import asyncio
+        import asyncio
 
-            asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
-        except Exception:
-            pass  # Exceptions are acceptable
+        try:
+            result = asyncio.run(sandbox.execute(code))
+        except Exception as e:  # noqa: BLE001 — fuzz harness: any escape is a crash
+            pytest.fail(f"sandbox.execute crashed on binary-derived input: {e!r}")
+        # The sandbox must return a structured result, never silently None.
+        assert hasattr(result, "success") or isinstance(result, dict)
 
     @given(st.lists(st.text(min_size=1, max_size=50), min_size=1, max_size=10))
     @settings(max_examples=50, deadline=5000)
@@ -93,12 +85,13 @@ class TestSandboxFuzzing:
 
         if code_parts:
             code = "\n".join(code_parts)
-            try:
-                import asyncio
+            import asyncio
 
-                asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
-            except Exception:
-                pass
+            try:
+                result = asyncio.run(sandbox.execute(code))
+            except Exception as e:  # noqa: BLE001 — fuzz harness: any escape is a crash
+                pytest.fail(f"sandbox.execute crashed on random identifiers: {e!r}")
+            assert hasattr(result, "success") or isinstance(result, dict)
 
     @given(st.integers(min_value=0, max_value=100))
     @settings(max_examples=50, deadline=5000)
@@ -111,12 +104,13 @@ class TestSandboxFuzzing:
         # Build nested expression
         code = "x = " + "(" * min(depth, 50) + "1" + ")" * min(depth, 50)
 
-        try:
-            import asyncio
+        import asyncio
 
-            asyncio.get_event_loop().run_until_complete(sandbox.execute(code))
-        except Exception:
-            pass
+        try:
+            result = asyncio.run(sandbox.execute(code))
+        except Exception as e:  # noqa: BLE001 — fuzz harness: any escape is a crash
+            pytest.fail(f"sandbox.execute crashed on nested expression (depth={depth}): {e!r}")
+        assert hasattr(result, "success") or isinstance(result, dict)
 
 
 @pytest.mark.fuzz
@@ -253,9 +247,16 @@ class TestWorkflowFuzzing:
         workflow = {"name": "fuzz-test", "version": "1.0", "steps": steps, "output": "result"}
 
         try:
-            validator.validate(workflow)  # Result intentionally unused
-        except Exception:
-            pass
+            result = validator.validate(workflow)
+        except Exception as e:  # noqa: BLE001 — fuzz harness: classify escapes
+            # validate() takes a WorkflowDefinition; a raw dict is a type-contract
+            # violation that legitimately surfaces as AttributeError/TypeError/etc.
+            # Anything outside that set is a real crash and must fail the test.
+            assert isinstance(e, ValueError | TypeError | KeyError | AttributeError), (
+                f"unexpected exception from validator.validate: {e!r}"
+            )
+        else:
+            assert hasattr(result, "is_valid") or isinstance(result, bool | dict)
 
 
 @pytest.mark.fuzz
@@ -297,6 +298,12 @@ class TestTemplateFuzzing:
 
         try:
             result = engine.render(template, context)
-            assert isinstance(result, str)
-        except Exception:
+        except AELError:
+            # Documented contract: invalid/undefined templates raise
+            # AELError(TEMPLATE_ERROR). That is an acceptable outcome.
             pass
+        except Exception as e:  # noqa: BLE001 — fuzz harness: any other escape is a crash
+            pytest.fail(f"unexpected exception from template render: {e!r}")
+        else:
+            # render() returns a structured RenderResult, never a bare str.
+            assert hasattr(result, "value")

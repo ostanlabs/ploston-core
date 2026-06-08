@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ploston_core.errors import AELError
 from ploston_core.registry.types import ToolDefinition
 from ploston_core.types import ToolSource, ToolStatus
 from ploston_core.workflow.tools import (
@@ -187,14 +188,21 @@ class TestToolSchemaResolution:
     @pytest.mark.asyncio
     async def test_missing_mcp_param(self, provider):
         """U-39: Missing 'mcp' parameter raises error."""
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call("workflow_tool_schema", {"tool": "python_exec"})
+        assert exc_info.value.code == "PARAM_INVALID"
+        # NOTE: the handler passes message="'mcp' parameter is required" but
+        # create_error drops the custom message (see FINDING in task report); the
+        # surfaced message is the PARAM_INVALID template default. Asserting code
+        # is the load-bearing, currently-correct contract.
 
     @pytest.mark.asyncio
     async def test_missing_tool_param(self, provider):
         """U-40: Missing 'tool' parameter raises error."""
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call("workflow_tool_schema", {"mcp": "system"})
+        assert exc_info.value.code == "PARAM_INVALID"
+        # See FINDING: custom message is dropped by create_error; assert code.
 
     @pytest.mark.asyncio
     async def test_cp_takes_priority_over_runner(
@@ -357,8 +365,9 @@ class TestWorkflowGetDefinition:
         provider = WorkflowToolsProvider(
             workflow_registry=mock_workflow_registry,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call("workflow_get_definition", {"name": "nope"})
+        assert exc_info.value.code == "WORKFLOW_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_missing_name_param(self, mock_workflow_registry):
@@ -366,8 +375,10 @@ class TestWorkflowGetDefinition:
         provider = WorkflowToolsProvider(
             workflow_registry=mock_workflow_registry,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(AELError) as exc_info:
             await provider.call("workflow_get_definition", {})
+        assert exc_info.value.code == "PARAM_INVALID"
+        # See FINDING: custom message is dropped by create_error; assert code.
 
 
 class TestWorkflowNameSanitization:
