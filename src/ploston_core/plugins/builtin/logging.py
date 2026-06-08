@@ -4,6 +4,7 @@ This plugin logs all hook events for debugging and auditing.
 """
 
 import logging
+import re
 from typing import Any
 
 from ..base import AELPlugin
@@ -13,6 +14,27 @@ from ..types import (
     StepContext,
     StepResultContext,
 )
+
+# Keys whose values must never be written to logs (workflow inputs/params/outputs
+# routinely carry credentials/PII). Matched case-insensitively against key names.
+_SECRET_KEY_RE = re.compile(
+    r"(token|secret|password|passwd|credential|api[_-]?key|apikey|access[_-]?key|"
+    r"private[_-]?key|client[_-]?secret|auth)",
+    re.IGNORECASE,
+)
+_REDACTED = "***"
+
+
+def _redact(value: Any) -> Any:
+    """Return a copy of ``value`` with secret-keyed entries redacted (recursively)."""
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if _SECRET_KEY_RE.search(str(k)) else _redact(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(v) for v in value]
+    return value
 
 
 class LoggingPlugin(AELPlugin):
@@ -40,7 +62,7 @@ class LoggingPlugin(AELPlugin):
         """Log workflow execution request."""
         msg = f"[{context.execution_id}] Workflow request: {context.workflow_id}"
         if self._include_params:
-            msg += f" inputs={context.inputs}"
+            msg += f" inputs={_redact(context.inputs)}"
         self._logger.log(self._level, msg)
         return context
 
@@ -53,7 +75,7 @@ class LoggingPlugin(AELPlugin):
         if context.tool_name:
             msg += f" tool={context.tool_name}"
         if self._include_params:
-            msg += f" params={context.params}"
+            msg += f" params={_redact(context.params)}"
         self._logger.log(self._level, msg)
         return context
 
@@ -64,7 +86,7 @@ class LoggingPlugin(AELPlugin):
         if not context.success and context.error:
             msg += f" error={context.error}"
         if self._include_outputs and context.success:
-            msg += f" output={context.output}"
+            msg += f" output={_redact(context.output)}"
         self._logger.log(self._level, msg)
         return context
 
@@ -78,6 +100,6 @@ class LoggingPlugin(AELPlugin):
         if not context.success and context.error:
             msg += f" error={context.error}"
         if self._include_outputs and context.success:
-            msg += f" outputs={context.outputs}"
+            msg += f" outputs={_redact(context.outputs)}"
         self._logger.log(self._level, msg)
         return context
