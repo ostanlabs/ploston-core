@@ -75,8 +75,21 @@ class ErrorRegistry:
         detail = self._interpolate(template.detail_template, context)
         suggestion = self._interpolate(template.suggestion_template, context)
 
-        if unknown_code is not None:
+        # F-1: explicit context overrides win over the template render.
+        # Precedence: explicit context override > template interpolation. This
+        # lets call sites like create_error("PARAM_INVALID", message="...")
+        # surface their custom diagnostic instead of the generic template text.
+        # A key present with a None value is treated as "no override".
+        if context.get("message") is not None:
+            message = context["message"]
+        if context.get("detail") is not None:
+            detail = context["detail"]
+        if context.get("suggestion") is not None:
+            suggestion = context["suggestion"]
+
+        if unknown_code is not None and context.get("detail") is None:
             # Preserve the original (unregistered) code in the detail for debugging.
+            # An explicit detail override still wins (handled above).
             detail = f"Unknown error code: {unknown_code}"
 
         # Ensure message is not None
