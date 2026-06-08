@@ -1,8 +1,127 @@
 """Core network and HTTP request functions."""
 
 import asyncio
+import ipaddress
+import socket
 import time
 from typing import Any
+from urllib.parse import urlparse
+
+# SSRF protection (PL-C4) -----------------------------------------------------
+
+# Only these URL schemes are permitted for http_request.
+_ALLOWED_SCHEMES = {"http", "https"}
+
+# Maximum response size accepted (bytes). Responses larger than this are
+# rejected to bound memory usage. ~10 MB.
+DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
+
+# Bounds for caller-supplied timeout / retry values.
+_MAX_TIMEOUT = 120
+_MIN_TIMEOUT = 1
+_MAX_RETRIES = 5
+_MAX_RETRY_DELAY = 30
+
+
+def _resolve_host_ips(host: str) -> list[str]:
+    """Resolve a hostname to its IP addresses.
+
+    Isolated so tests can monkeypatch DNS resolution. Returns a list of IP
+    strings. Raises socket.gaierror if resolution fails.
+    """
+    infos = socket.getaddrinfo(host, None)
+    return list({info[4][0] for info in infos})
+
+
+def _ip_is_blocked(ip_str: str) -> bool:
+    """Return True if an IP is in a private/loopback/link-local/reserved range.
+
+    Blocks (PL-C4): loopback (127/8, ::1), private (10/8, 172.16/12,
+    192.168/16, fc00::/7), link-local incl. cloud metadata 169.254.169.254
+    (169.254/16, fe80::/10), unspecified, reserved, and multicast.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        # Not a parseable IP -> treat as blocked (fail closed).
+        return True
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _host_matches(host: str, patterns: list[str], *, allow_subdomains: bool = True) -> bool:
+    """Case-insensitive host match against a list of host patterns.
+
+    When ``allow_subdomains`` is True (used for the denylist), a pattern also
+    matches subdomains (pattern "example.com" matches "api.example.com"). When
+    False (used for the allowlist), only exact host matches are accepted so an
+    allowlist entry cannot be widened to arbitrary subdomains by an attacker.
+    """
+    host = (host or "").lower().strip(".")
+    for pattern in patterns:
+        p = (pattern or "").lower().strip(".")
+        if not p:
+            continue
+        if host == p:
+            return True
+        if allow_subdomains and host.endswith("." + p):
+            return True
+    return False
+
+
+def _validate_request_target(
+    url: str,
+    allowed_hosts: list[str] | None,
+    denied_hosts: list[str] | None,
+) -> str | None:
+    """Validate a request URL against SSRF policy.
+
+    Returns an error string if the request must be blocked, or None if allowed.
+    Must be called and must reject BEFORE any network send.
+    """
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        return f"Blocked URL scheme '{scheme}': only http/https are allowed"
+
+    host = parsed.hostname
+    if not host:
+        return "URL is missing a host"
+
+    # Denylist takes precedence and is checked first (subdomains included).
+    if denied_hosts and _host_matches(host, denied_hosts, allow_subdomains=True):
+        return f"Host '{host}' is in the denied_hosts list"
+
+    # Allowlist: if configured, host must be explicitly allowed (exact match).
+    host_allowlisted = bool(allowed_hosts) and _host_matches(
+        host, allowed_hosts, allow_subdomains=False
+    )
+    if allowed_hosts and not host_allowlisted:
+        return f"Host '{host}' is not in the allowed_hosts list"
+
+    # Resolve host and block private/loopback/link-local/reserved targets.
+    # An explicitly allowlisted host bypasses the IP-range block (operator opt-in).
+    if not host_allowlisted:
+        try:
+            ips = _resolve_host_ips(host)
+        except Exception as e:
+            return f"Failed to resolve host '{host}': {e}"
+        if not ips:
+            return f"Failed to resolve host '{host}'"
+        for ip in ips:
+            if _ip_is_blocked(ip):
+                return (
+                    f"Host '{host}' resolves to a blocked address {ip} "
+                    f"(private/loopback/link-local/reserved)"
+                )
+
+    return None
 
 
 async def make_http_request(
@@ -14,6 +133,9 @@ async def make_http_request(
     timeout: int = 30,
     max_retries: int = 3,
     retry_delay: int = 1,
+    allowed_hosts: list[str] | None = None,
+    denied_hosts: list[str] | None = None,
+    max_response_size: int = DEFAULT_MAX_RESPONSE_SIZE,
 ) -> dict[str, Any]:
     """Make HTTP requests with retry logic and comprehensive response processing.
 
@@ -50,6 +172,16 @@ async def make_http_request(
         if not url:
             return {"success": False, "error": "URL is required"}
 
+        # SSRF guard (PL-C4/C5): MUST run before any network send.
+        ssrf_error = _validate_request_target(url, allowed_hosts, denied_hosts)
+        if ssrf_error:
+            return {"success": False, "error": f"Blocked by SSRF policy: {ssrf_error}"}
+
+        # Clamp caller-supplied timeout / retry values to safe bounds (PL-C4).
+        timeout = max(_MIN_TIMEOUT, min(int(timeout), _MAX_TIMEOUT))
+        max_retries = max(1, min(int(max_retries), _MAX_RETRIES))
+        retry_delay = max(0, min(int(retry_delay), _MAX_RETRY_DELAY))
+
         method = method.upper()
         headers = headers or {}
         params = params or {}
@@ -70,6 +202,31 @@ async def make_http_request(
                     )
 
                 elapsed_time = time.time() - start_time
+
+                # Cap response size (PL-C4). Prefer the Content-Length header
+                # but always enforce against the actual body length.
+                content_length_header = response.headers.get("content-length")
+                if content_length_header is not None:
+                    try:
+                        if int(content_length_header) > max_response_size:
+                            return {
+                                "success": False,
+                                "error": (
+                                    f"Response too large: Content-Length "
+                                    f"{content_length_header} exceeds "
+                                    f"{max_response_size} bytes"
+                                ),
+                            }
+                    except ValueError:
+                        pass
+                if len(response.content) > max_response_size:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Response too large: {len(response.content)} bytes "
+                            f"exceeds {max_response_size} bytes"
+                        ),
+                    }
 
                 # Try to parse JSON, fallback to text
                 try:
