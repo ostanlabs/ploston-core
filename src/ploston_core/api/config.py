@@ -35,6 +35,14 @@ class RESTConfig:
     require_auth: bool = False
     api_keys: list[APIKeyConfig] = field(default_factory=list)
 
+    # Runner live channel TLS mode (CR-2). The CP itself never terminates TLS;
+    # TLS/mTLS is terminated UPSTREAM by an ingress (k8s) or a bundled
+    # reverse-proxy (compose).
+    #   "none"  - DEFAULT: plaintext /runner/ws, localhost dev (DEC-118).
+    #   "proxy" - TLS/mTLS terminated upstream; the trusted proxy verifies the
+    #             runner client cert and forwards the CN in X-Runner-Client-CN.
+    runner_tls_mode: str = "none"
+
     # Rate limiting
     rate_limiting_enabled: bool = False
     requests_per_minute: int = 100
@@ -46,3 +54,11 @@ class RESTConfig:
     # CORS
     cors_enabled: bool = True
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
+
+    def __post_init__(self) -> None:
+        valid_tls_modes = {"none", "proxy"}
+        if self.runner_tls_mode not in valid_tls_modes:
+            raise ValueError(
+                f"Invalid runner_tls_mode {self.runner_tls_mode!r}; "
+                f"must be one of {sorted(valid_tls_modes)}"
+            )

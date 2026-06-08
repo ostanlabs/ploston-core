@@ -157,3 +157,27 @@ class TestRESTConfig:
         config = RESTConfig()
         assert not hasattr(config, "execution_store_max_records")
         assert not hasattr(config, "execution_store_sqlite_path")
+
+
+class TestRunnerTLSMode:
+    """Tests for runner_tls_mode config (CR-2 proxy mode)."""
+
+    def test_default_is_none(self) -> None:
+        """Default runner_tls_mode is 'none' (plaintext, DEC-118)."""
+        config = RESTConfig()
+        assert config.runner_tls_mode == "none"
+
+    def test_accepts_proxy(self) -> None:
+        """runner_tls_mode='proxy' is accepted."""
+        config = RESTConfig(runner_tls_mode="proxy")
+        assert config.runner_tls_mode == "proxy"
+
+    def test_accepts_none_explicit(self) -> None:
+        """runner_tls_mode='none' is accepted explicitly."""
+        config = RESTConfig(runner_tls_mode="none")
+        assert config.runner_tls_mode == "none"
+
+    def test_rejects_invalid_value(self) -> None:
+        """An invalid runner_tls_mode raises ValueError."""
+        with pytest.raises(ValueError):
+            RESTConfig(runner_tls_mode="mtls")

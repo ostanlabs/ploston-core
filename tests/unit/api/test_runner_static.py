@@ -158,6 +158,154 @@ class TestWebSocket:
             mock_registry.set_connected.assert_called_once()
 
 
+class TestRunnerWSProxyMode:
+    """Tests for CR-2 proxy-mode enforcement on /runner/ws.
+
+    In proxy mode TLS/mTLS is terminated upstream by an ingress (k8s) or a
+    bundled reverse-proxy (compose), which forwards the verified runner client
+    cert CN in the X-Runner-Client-CN header. The CP must require and verify it.
+    In none mode (default) behavior is unchanged (plaintext, header not required).
+    """
+
+    @staticmethod
+    def _make_app_with_runner(tls_mode: str) -> FastAPI:
+        from datetime import UTC, datetime
+        from unittest.mock import MagicMock
+
+        from ploston_core.api.config import RESTConfig
+        from ploston_core.runner_management.registry import Runner, RunnerStatus
+
+        app = FastAPI()
+        app.include_router(runner_static_router)
+
+        mock_runner = Runner(
+            id="runner_test123",
+            name="test-runner",
+            created_at=datetime.now(UTC),
+            status=RunnerStatus.DISCONNECTED,
+            available_tools=[],
+            mcps={},
+        )
+        mock_registry = MagicMock()
+        mock_registry.get_by_token.return_value = mock_runner
+        mock_registry.get.return_value = mock_runner
+
+        app.state.runner_registry = mock_registry
+        app.state.config = RESTConfig(runner_tls_mode=tls_mode)
+        return app, mock_registry
+
+    def test_proxy_mode_missing_header_rejected(self) -> None:
+        """proxy mode + no X-Runner-Client-CN -> connection rejected, NOT registered."""
+        from starlette.websockets import WebSocketDisconnect
+
+        app, mock_registry = self._make_app_with_runner("proxy")
+        client = TestClient(app)
+
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/runner/ws") as ws:
+                ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "runner/register",
+                        "params": {
+                            "token": "ploston_runner_testtoken123",
+                            "name": "test-runner",
+                        },
+                    }
+                )
+                # A clear policy error is delivered, then the socket is closed.
+                err = ws.receive_json()
+                assert "error" in err
+                assert "X-Runner-Client-CN" in err["error"]["message"]
+                # Next receive observes the close -> WebSocketDisconnect.
+                ws.receive_json()
+
+        # Runner must NOT be registered when proxy header is absent.
+        mock_registry.set_connected.assert_not_called()
+
+    def test_proxy_mode_cn_mismatch_rejected(self) -> None:
+        """proxy mode + header CN != registering runner -> rejected, NOT registered."""
+        from starlette.websockets import WebSocketDisconnect
+
+        app, mock_registry = self._make_app_with_runner("proxy")
+        client = TestClient(app)
+
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                "/runner/ws",
+                headers={"X-Runner-Client-CN": "runner-someone-else"},
+            ) as ws:
+                ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "runner/register",
+                        "params": {
+                            "token": "ploston_runner_testtoken123",
+                            "name": "test-runner",
+                        },
+                    }
+                )
+                err = ws.receive_json()
+                assert "error" in err
+                assert "CN" in err["error"]["message"]
+                # Next receive observes the close -> WebSocketDisconnect.
+                ws.receive_json()
+
+        mock_registry.set_connected.assert_not_called()
+
+    def test_proxy_mode_cn_match_accepted(self) -> None:
+        """proxy mode + matching CN + valid token -> accepted/registered."""
+        app, mock_registry = self._make_app_with_runner("proxy")
+        mock_registry.set_connected.return_value = None
+        client = TestClient(app)
+
+        # EmbeddedCA issues runner certs with CN = f"runner-{runner_name}".
+        with client.websocket_connect(
+            "/runner/ws",
+            headers={"X-Runner-Client-CN": "runner-test-runner"},
+        ) as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "runner/register",
+                    "params": {
+                        "token": "ploston_runner_testtoken123",
+                        "name": "test-runner",
+                    },
+                }
+            )
+            data = ws.receive_json()
+            assert data.get("result", {}).get("status") == "ok"
+
+        mock_registry.set_connected.assert_called_once()
+
+    def test_none_mode_no_header_accepted(self) -> None:
+        """none mode (default) + no header -> accepted as today (no regression)."""
+        app, mock_registry = self._make_app_with_runner("none")
+        mock_registry.set_connected.return_value = None
+        client = TestClient(app)
+
+        with client.websocket_connect("/runner/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "runner/register",
+                    "params": {
+                        "token": "ploston_runner_testtoken123",
+                        "name": "test-runner",
+                    },
+                }
+            )
+            data = ws.receive_json()
+            assert data.get("result", {}).get("status") == "ok"
+
+        mock_registry.set_connected.assert_called_once()
+
+
 class TestRunnerConfigModels:
     """Tests for runner config models (UT-120)."""
 

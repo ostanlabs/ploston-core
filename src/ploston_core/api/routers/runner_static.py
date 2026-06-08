@@ -24,6 +24,38 @@ runner_static_router = APIRouter(prefix="/runner", tags=["runner-static"])
 logger = logging.getLogger(__name__)
 
 
+# CR-2: in "proxy" runner_tls_mode, TLS/mTLS is terminated UPSTREAM by an
+# ingress (k8s) or a bundled reverse-proxy (compose). The trusted proxy verifies
+# the runner's client cert (issued by the EmbeddedCA) and forwards the verified
+# Common Name to the CP in this header. Its absence in proxy mode means the
+# request bypassed the trusted proxy and MUST be rejected.
+RUNNER_CLIENT_CN_HEADER = "X-Runner-Client-CN"
+
+# WebSocket close code used when a connection violates the proxy-mode policy
+# (missing or mismatched forwarded client identity). 1008 = policy violation.
+_WS_POLICY_VIOLATION_CODE = 1008
+
+
+def _cn_matches_runner(cn: str, runner_name: str, runner_id: str) -> bool:
+    """Return True if a forwarded client-cert CN identifies this runner.
+
+    The EmbeddedCA (CR-2) issues runner client certs with
+    ``CN = f"runner-{runner_name}"`` (see embedded_ca.generate_runner_cert).
+    The contract describes the CN as the "runner name/id", so we accept the
+    raw name or id as well as the ``runner-`` prefixed forms to remain robust
+    to how the upstream proxy chooses to forward the verified identity.
+    """
+    if not cn:
+        return False
+    accepted = {
+        runner_name,
+        runner_id,
+        f"runner-{runner_name}",
+        f"runner-{runner_id}",
+    }
+    return cn in accepted
+
+
 INSTALL_SCRIPT = """#!/bin/bash
 set -e
 
@@ -374,6 +406,18 @@ async def runner_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=1013, reason="Runner registry not configured")
         return
 
+    # CR-2: determine the runner TLS mode. In "proxy" mode TLS/mTLS is
+    # terminated upstream and the trusted proxy forwards the verified runner
+    # client-cert CN in RUNNER_CLIENT_CN_HEADER. In "none" mode (DEFAULT)
+    # behavior is unchanged (plaintext, header not required).
+    rest_config = getattr(websocket.app.state, "config", None)
+    runner_tls_mode = getattr(rest_config, "runner_tls_mode", "none")
+
+    # WebSocket request headers come from the ASGI connection scope; Starlette's
+    # WebSocket.headers is a case-insensitive Headers view over that scope, so
+    # the lookup works regardless of how the proxy cases the header name.
+    forwarded_cn = websocket.headers.get(RUNNER_CLIENT_CN_HEADER)
+
     # Accept the connection
     await websocket.accept()
 
@@ -408,6 +452,51 @@ async def runner_websocket(websocket: WebSocket) -> None:
                 if runner.name != name:
                     await _send_error(websocket, msg_id, -32001, "Token/name mismatch")
                     continue
+
+                # CR-2 proxy-mode enforcement: the forwarded client-cert CN must
+                # be present AND match the registering runner's identity, in
+                # ADDITION to the bearer-token check above. Reject (close) on
+                # violation BEFORE registering the connection. In "none" mode
+                # this block is skipped entirely (unchanged behavior).
+                if runner_tls_mode == "proxy":
+                    if not forwarded_cn:
+                        logger.warning(
+                            "Rejecting runner '%s': proxy mode requires %s header "
+                            "(request bypassed the trusted proxy)",
+                            name,
+                            RUNNER_CLIENT_CN_HEADER,
+                        )
+                        await _send_error(
+                            websocket,
+                            msg_id,
+                            -32001,
+                            f"Missing {RUNNER_CLIENT_CN_HEADER} header (proxy mode)",
+                        )
+                        await websocket.close(
+                            code=_WS_POLICY_VIOLATION_CODE,
+                            reason=f"Missing {RUNNER_CLIENT_CN_HEADER} (proxy mode)",
+                        )
+                        return
+                    if not _cn_matches_runner(forwarded_cn, runner.name, runner.id):
+                        logger.warning(
+                            "Rejecting runner '%s': forwarded CN %r does not match "
+                            "runner identity (name=%s id=%s)",
+                            name,
+                            forwarded_cn,
+                            runner.name,
+                            runner.id,
+                        )
+                        await _send_error(
+                            websocket,
+                            msg_id,
+                            -32001,
+                            "Client cert CN does not match runner identity",
+                        )
+                        await websocket.close(
+                            code=_WS_POLICY_VIOLATION_CODE,
+                            reason="Client cert CN mismatch (proxy mode)",
+                        )
+                        return
 
                 # Register connection (H-7: keep our own session handle)
                 runner_id = runner.id
