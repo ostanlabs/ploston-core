@@ -195,7 +195,9 @@ class SQLiteExecutionStore(ExecutionStore):
                     json.dumps(execution.inputs),
                     json.dumps(execution.outputs),
                     json.dumps(execution.error.model_dump()) if execution.error else None,
-                    json.dumps([s.model_dump() for s in execution.steps]),
+                    # mode="json" so step timing datetimes serialize (F-5: real
+                    # executions carry started_at/completed_at on steps).
+                    json.dumps([s.model_dump(mode="json") for s in execution.steps]),
                 ),
             )
 
