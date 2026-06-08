@@ -18,7 +18,7 @@ testcontainers_clickhouse = pytest.importorskip("testcontainers.clickhouse")
 
 from ploston_core.telemetry.store.clickhouse.migrate import run_migrations  # noqa: E402
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+pytestmark = [pytest.mark.integration, pytest.mark.docker, pytest.mark.asyncio]
 
 
 @pytest.fixture(scope="module")

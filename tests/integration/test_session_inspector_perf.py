@@ -32,7 +32,7 @@ from ploston_core.telemetry.store.types import (
 testcontainers = pytest.importorskip("testcontainers.clickhouse")
 ClickHouseContainer = testcontainers.ClickHouseContainer
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.docker]
 
 # Matches dashboard Panel 3 with `$session_id` and time bounds substituted in.
 # Uses clickhouse-connect's pyformat parameter style to match the store's

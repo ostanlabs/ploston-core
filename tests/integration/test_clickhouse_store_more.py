@@ -25,7 +25,7 @@ from ploston_core.telemetry.store.types import (
 testcontainers = pytest.importorskip("testcontainers.clickhouse")
 ClickHouseContainer = testcontainers.ClickHouseContainer
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
 
 @pytest_asyncio.fixture(scope="module")

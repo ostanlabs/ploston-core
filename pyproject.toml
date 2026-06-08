@@ -105,8 +105,17 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+timeout = 60
 markers = [
     "integration: tests that require external services (Docker, ClickHouse, etc.)",
+    "docs: tests validating documentation accuracy/consistency",
+    "fuzz: fuzz / schema-based tests (schemathesis)",
+    "mcp_notifications: tests exercising MCP notification flows",
+    "property: property-based tests (hypothesis)",
+    "security: security-focused tests",
+    "slow: tests that take a long time to run",
+    "snapshot: snapshot / golden-file tests (syrupy)",
 ]
 
 [tool.ruff]
