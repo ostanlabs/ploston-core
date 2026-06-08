@@ -57,30 +57,39 @@ class TestImportPatternGeneration:
 class TestCodePatternGeneration:
     """Generate and test code patterns."""
 
-    @pytest.mark.xfail(
-        reason="Area D (REMEDIATION_PLAN.md): __import__ is an intentional "
-        "whitelist-aware wrapper, so __import__('json') (a safe, allowlisted "
-        "module) succeeds — the import allowlist, not this builtin, is the gate. "
-        "Test over-asserts vs the documented threat model; reconcile in Area D "
-        "(narrow to eval/exec/compile/open + assert __import__('os') is blocked "
-        "while __import__('json') is allowed).",
-        strict=False,
-    )
     @given(
-        builtin=st.sampled_from(["eval", "exec", "compile", "open", "__import__"]),
+        builtin=st.sampled_from(["eval", "exec", "compile", "open"]),
         string_value=st.text(max_size=30).filter(
             lambda x: '"' not in x and "'" not in x and "\n" not in x
         ),
     )
-    @settings(max_examples=50)
+    @settings(max_examples=50, deadline=None)
     @pytest.mark.asyncio
-    async def test_builtin_call_blocked(self, builtin, string_value):
-        """Calls to dangerous builtins should be blocked regardless of args."""
+    async def test_dangerous_builtin_call_blocked(self, builtin, string_value):
+        """eval/exec/compile/open are absent from the fail-closed allowlist (H-2),
+        so referencing them raises NameError regardless of args."""
         sandbox = PythonExecSandbox(timeout=5)
         code = f'result = {builtin}("{string_value}")'
 
         result = await sandbox.execute(code, {})
         assert not result.success, f"Builtin {builtin} should be blocked"
+
+    @pytest.mark.asyncio
+    async def test_import_builtin_blocks_dangerous_module(self):
+        """__import__ is the controlled, allowlist-aware wrapper: importing a
+        non-allowlisted module (os) is rejected (H-2 threat model)."""
+        sandbox = PythonExecSandbox(timeout=5)
+        result = await sandbox.execute('result = __import__("os")', {})
+        assert not result.success, "__import__('os') must be blocked"
+
+    @pytest.mark.asyncio
+    async def test_import_builtin_allows_safe_module(self):
+        """__import__ of an ALLOWLISTED module (json) succeeds — the import
+        allowlist, not the builtin itself, is the gate (DEC: Area D)."""
+        sandbox = PythonExecSandbox(timeout=5)
+        result = await sandbox.execute('mod = __import__("json")\nresult = mod.dumps({"k": 1})', {})
+        assert result.success, f"__import__('json') should be allowed: {result.error}"
+        assert result.result == '{"k": 1}'
 
 
 @pytest.mark.security

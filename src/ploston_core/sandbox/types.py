@@ -553,24 +553,9 @@ class ToolCallInterface:
             return result
 
 
-# ─────────────────────────────────────────────────────────────────
-# Security Constants
-# ─────────────────────────────────────────────────────────────────
-
-DISALLOWED_BUILTINS = [
-    "eval",
-    "exec",
-    "compile",
-    "open",
-    "input",
-    "__import__",
-    "globals",
-    "locals",
-    "getattr",
-    "setattr",
-    "delattr",
-    "breakpoint",
-]
-
+# H-2: the dead/duplicate DISALLOWED_BUILTINS denylist was removed here. Builtin
+# enforcement is now a fail-closed ALLOWLIST (SAFE_BUILTINS in sandbox.py); the
+# remaining documentation/lint denylist is DANGEROUS_BUILTINS in sandbox.py.
+#
 # COMMON_IMPORTS and STANDARD_IMPORTS were removed in S-225 —
 # superseded by SandboxConfig.allowed_imports defaults and SAFE_IMPORTS in sandbox.py.

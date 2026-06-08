@@ -2,7 +2,6 @@
 
 from .sandbox import PythonExecSandbox, SandboxResult, SecurityError
 from .types import (
-    DISALLOWED_BUILTINS,
     CodeExecutionResult,
     RunnerContext,
     SandboxConfig,
@@ -21,5 +20,4 @@ __all__ = [
     "SandboxContext",
     "ToolCallInterface",
     "ToolCallerProtocol",
-    "DISALLOWED_BUILTINS",
 ]
