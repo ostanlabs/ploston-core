@@ -132,11 +132,11 @@ def parse_workflow_yaml(
                 output = OutputDefinition(name=output_name, value=output_data)
             outputs.append(output)
     else:
-        # List format: [{name: ..., from_path: ...}]
+        # List format: [{name: ..., from: ...}] or [{name: ..., from_path: ...}]
         for output_data in raw_outputs:
             output = OutputDefinition(
                 name=output_data["name"],
-                from_path=output_data.get("from_path"),
+                from_path=output_data.get("from") or output_data.get("from_path"),
                 value=output_data.get("value"),
                 description=output_data.get("description"),
             )
@@ -179,8 +179,26 @@ def normalize_inputs(raw_inputs: Any) -> list[InputDefinition]:
         if isinstance(item, str):
             # Simple string: required input
             inputs.append(InputDefinition(name=item, required=True))
+        elif isinstance(item, dict) and "name" in item and not isinstance(item["name"], dict):
+            # Record form: {name: "url", type: ..., required: ..., ...}
+            # Exactly one InputDefinition, named by item["name"].
+            inputs.append(
+                InputDefinition(
+                    name=item["name"],
+                    type=item.get("type", "string"),
+                    required=item.get("required", "default" not in item),
+                    default=item.get("default"),
+                    description=item.get("description"),
+                    enum=item.get("enum"),
+                    pattern=item.get("pattern"),
+                    minimum=item.get("minimum"),
+                    maximum=item.get("maximum"),
+                )
+            )
         elif isinstance(item, dict):
-            # Dict with single key-value
+            # Map form: {name: {type: ..., ...}} or {name: scalar_default}.
+            # One InputDefinition per key (escape hatch: {name: {...}} -> input
+            # literally named "name").
             for name, value in item.items():
                 if isinstance(value, dict):
                     # Full definition
