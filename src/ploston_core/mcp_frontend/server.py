@@ -138,6 +138,12 @@ class MCPFrontend:
         # Telemetry collector for execution lifecycle (Tier 3 — DEC-152)
         self._telemetry_collector = telemetry_collector
 
+        # Strong references to fire-and-forget background tasks.  asyncio only
+        # keeps a weak reference to tasks created via ``create_task``; without a
+        # strong reference the task can be garbage-collected mid-run and
+        # silently cancelled.  A done-callback discards each task when complete.
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+
         # Register for mode change notifications
         self._mode_manager.on_mode_change(self._on_mode_change)
 
@@ -212,7 +218,11 @@ class MCPFrontend:
         Args:
             new_mode: The new mode
         """
-        asyncio.create_task(self._send_tools_changed_notification())
+        task = asyncio.create_task(self._send_tools_changed_notification())
+        # Retain a strong reference so the task is not GC'd mid-flight, and
+        # discard it once finished to avoid unbounded growth.
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _send_tools_changed_notification(self) -> None:
         """Send MCP notification that tools list has changed."""

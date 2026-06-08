@@ -24,7 +24,10 @@ class SecretDetector:
     Uses pattern matching on values and key names to identify potential secrets.
     """
 
-    # Patterns that indicate a literal secret value
+    # Patterns that indicate a literal secret value on their own.
+    # These have distinctive, vendor-specific prefixes/shapes that virtually
+    # never occur in non-secret config values, so a value match alone is a
+    # reliable secret signal regardless of the key name.
     # Format: (regex_pattern, suggested_env_var_name)
     VALUE_PATTERNS: list[tuple[str, str]] = [
         (r"^ghp_[a-zA-Z0-9]{36,}$", "GITHUB_TOKEN"),
@@ -37,9 +40,18 @@ class SecretDetector:
         (r"^xoxp-[0-9]+-[0-9]+-[0-9]+-[a-f0-9]+$", "SLACK_USER_TOKEN"),
         (r"^xoxa-[0-9]+-[a-zA-Z0-9]+$", "SLACK_APP_TOKEN"),
         (r"^AKIA[A-Z0-9]{16}$", "AWS_ACCESS_KEY_ID"),
-        (r"^[a-zA-Z0-9/+]{40}$", "AWS_SECRET_ACCESS_KEY"),  # AWS secret key pattern
         (r"^AIza[a-zA-Z0-9\-_]{35}$", "GOOGLE_API_KEY"),
         (r"^ya29\.[a-zA-Z0-9\-_]+$", "GOOGLE_OAUTH_TOKEN"),
+    ]
+
+    # Over-broad value shapes that match huge classes of *non*-secret values
+    # (md5/sha hex digests, UUIDs-without-dashes, content hashes, etags, base64
+    # blobs).  These are only treated as secrets when the KEY name independently
+    # corroborates that the value is a secret (see KEY_PATTERNS).  Matching one
+    # of these alone must NOT trigger auto-conversion.
+    # Format: (regex_pattern, suggested_env_var_name)
+    CORROBORATED_VALUE_PATTERNS: list[tuple[str, str]] = [
+        (r"^[a-zA-Z0-9/+]{40}$", "AWS_SECRET_ACCESS_KEY"),  # AWS secret key shape
         (r"^[a-f0-9]{32}$", "API_KEY"),  # Generic 32-char hex (many APIs)
         (r"^[a-f0-9]{64}$", "API_SECRET"),  # Generic 64-char hex
     ]
@@ -84,22 +96,36 @@ class SecretDetector:
         suggested_env_var: str | None = None
         key_matched = False
 
-        # Check value against known secret patterns
+        # Check if key name suggests it's a secret (do this first so we know
+        # whether over-broad value shapes may be corroborated).
+        key_lower = key.lower()
+        for key_pattern in self.KEY_PATTERNS:
+            if key_pattern in key_lower:
+                key_matched = True
+                break
+
+        # Check value against distinctive, vendor-specific secret patterns.
+        # These are reliable on their own (value match => secret).
         for pattern, env_var in self.VALUE_PATTERNS:
             if re.match(pattern, value):
                 pattern_matched = pattern
                 suggested_env_var = env_var
                 break
 
-        # Check if key name suggests it's a secret
-        key_lower = key.lower()
-        for key_pattern in self.KEY_PATTERNS:
-            if key_pattern in key_lower:
-                key_matched = True
-                # If no pattern matched, derive env var from key
-                if not suggested_env_var:
-                    suggested_env_var = self._derive_env_var_name(key)
-                break
+        # Over-broad value shapes (hex digests, base64 blobs) are only honored
+        # when the key name independently corroborates a secret.  Without key
+        # corroboration these match far too many non-secret values.
+        if pattern_matched is None and key_matched:
+            for pattern, env_var in self.CORROBORATED_VALUE_PATTERNS:
+                if re.match(pattern, value):
+                    pattern_matched = pattern
+                    suggested_env_var = env_var
+                    break
+
+        # If the key corroborated a secret but no value pattern produced a
+        # suggestion, derive the env var name from the key.
+        if key_matched and not suggested_env_var:
+            suggested_env_var = self._derive_env_var_name(key)
 
         # Only return detection if we found something
         if pattern_matched or key_matched:

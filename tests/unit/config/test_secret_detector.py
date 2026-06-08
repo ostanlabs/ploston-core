@@ -106,3 +106,37 @@ class TestSecretDetector:
         refs = detector.extract_env_var_refs("plain string")
 
         assert refs == []
+
+    def test_plain_hex_id_under_nonsecret_key_not_secret(self, detector):
+        """A plain 32-char hex id under a non-secret key is NOT a secret.
+
+        The generic ^[a-f0-9]{32}$ pattern matches huge classes of non-secret
+        values (UUIDs without dashes, content hashes, request ids). Without key
+        corroboration these must not trigger auto-conversion.
+        """
+        # 32 hex chars — looks like an md5/uuid, but key name is innocuous.
+        result = detector.detect("request_id", "d41d8cd98f00b204e9800998ecf8427e")
+        assert result is None
+
+    def test_plain_64_hex_under_nonsecret_key_not_secret(self, detector):
+        """A plain 64-char hex digest under a non-secret key is NOT a secret."""
+        sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        result = detector.detect("content_hash", sha256)
+        assert result is None
+
+    def test_generic_b64_under_nonsecret_key_not_secret(self, detector):
+        """A 40-char base64-ish value under a non-secret key is NOT a secret."""
+        result = detector.detect("cache_etag", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123")
+        assert result is None
+
+    def test_hex_secret_under_secret_key_is_detected(self, detector):
+        """A 32-hex value under a secret-named key IS still flagged."""
+        result = detector.detect("api_secret", "d41d8cd98f00b204e9800998ecf8427e")
+        assert result is not None
+        assert result.key_matched is True
+
+    def test_real_api_key_under_secret_key_still_detected(self, detector):
+        """A real, well-formed API key under a secret-named key is detected."""
+        result = detector.detect("ANTHROPIC_API_KEY", "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+        assert result is not None
+        assert result.suggested_env_var == "ANTHROPIC_API_KEY"

@@ -13,6 +13,17 @@ from ploston_core.types import ValidationIssue, ValidationResult
 
 from .models import AELConfig
 
+# Valid POSIX-style environment variable name: ``[A-Za-z_][A-Za-z0-9_]*``.
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Substitution grammar.  ``$$`` is matched first so it can be collapsed to a
+# literal ``$`` before any ``${...}`` form is considered (this also escapes a
+# following brace expression, e.g. ``$${VAR}`` -> literal ``${VAR}``).
+# The ``${...}`` branch captures the raw inner body and an optional
+# operator/operand; the name is trimmed and validated inside the replacer so
+# ``${ FOO }`` resolves and malformed names pass through untouched.
+_ENV_VAR_PATTERN = re.compile(r"\$\$|\$\{([^}:]*)(?::([?+-])([^}]*))?\}")
+
 
 def resolve_env_vars(value: str) -> str:
     """Resolve environment variable references in string.
@@ -20,7 +31,13 @@ def resolve_env_vars(value: str) -> str:
     Supports:
     - ${VAR} - Required, error if not set
     - ${VAR:-default} - With default value
+    - ${VAR:+alt} - Alternate value when VAR is set and non-empty, else ""
     - ${VAR:?error message} - Required with custom error
+    - $$ - Literal ``$`` escape (``$${VAR}`` -> literal ``${VAR}``)
+
+    Variable names are trimmed of surrounding whitespace and validated against
+    ``[A-Za-z_][A-Za-z0-9_]*``.  References whose name does not match (e.g.
+    ``${1BAD}``) are left untouched in the output.
 
     Args:
         value: String with potential env var references
@@ -31,15 +48,28 @@ def resolve_env_vars(value: str) -> str:
     Raises:
         AELError: If required var not set
     """
-    # Pattern: ${VAR}, ${VAR:-default}, ${VAR:?error}
-    pattern = r"\$\{([^}:]+)(?::([?-])([^}]*))?\}"
 
     def replacer(match: re.Match[str]) -> str:
-        var_name = match.group(1)
-        operator = match.group(2)  # '-' or '?' or None
-        operand = match.group(3)  # default value or error message
+        # ``$$`` escape -> literal ``$``.
+        if match.group(0) == "$$":
+            return "$"
+
+        raw_name = match.group(1)
+        operator = match.group(2)  # '-', '+', '?' or None
+        operand = match.group(3)  # default / alternate / error message
+
+        var_name = raw_name.strip()
+
+        # Names that don't match the grammar are left as-is (literal output).
+        if not _ENV_VAR_NAME_RE.match(var_name):
+            return match.group(0)
 
         env_value = os.environ.get(var_name)
+        is_set_nonempty = bool(env_value)
+
+        if operator == "+":
+            # Alternate value when set & non-empty, else empty string.
+            return (operand or "") if is_set_nonempty else ""
 
         if env_value is not None:
             return env_value
@@ -59,7 +89,7 @@ def resolve_env_vars(value: str) -> str:
                 detail=f"Required environment variable {var_name} not set",
             )
 
-    return re.sub(pattern, replacer, value)
+    return _ENV_VAR_PATTERN.sub(replacer, value)
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

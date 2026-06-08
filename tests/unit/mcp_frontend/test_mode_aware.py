@@ -621,3 +621,49 @@ class TestRunnerToolRouting:
 
             assert result["isError"] is True
             assert "boom from runner" in result["content"][0]["text"]
+
+
+class TestModeChangeTaskRetention:
+    """Tests for fire-and-forget task retention on mode change (robustness)."""
+
+    @pytest.fixture
+    def frontend(self):
+        """Minimal frontend with a running-mode manager."""
+        return MCPFrontend(
+            workflow_engine=MagicMock(),
+            tool_registry=MagicMock(),
+            workflow_registry=MagicMock(),
+            tool_invoker=MagicMock(),
+            mode_manager=ModeManager(initial_mode=Mode.RUNNING),
+        )
+
+    async def test_on_mode_change_retains_task(self, frontend):
+        """_on_mode_change must keep a strong reference to the created task.
+
+        asyncio.create_task returns a task that can be garbage-collected mid-run
+        if no reference is held. The frontend must retain it (e.g. in a set with
+        a done callback) so it is not silently dropped.
+        """
+        import asyncio
+
+        # Make notification send block until we release it, so the task is
+        # in-flight while we inspect retention.
+        gate = asyncio.Event()
+
+        async def _blocking_notify():
+            await gate.wait()
+
+        frontend._send_tools_changed_notification = _blocking_notify  # type: ignore[assignment]
+
+        frontend._on_mode_change(Mode.CONFIGURATION)
+
+        # The frontend must expose a retained set of background tasks.
+        assert hasattr(frontend, "_background_tasks")
+        assert len(frontend._background_tasks) == 1
+
+        # Releasing the gate lets the task complete and the done callback
+        # should discard it from the set.
+        gate.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(frontend._background_tasks) == 0

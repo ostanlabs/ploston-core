@@ -166,10 +166,13 @@ class HTTPTransport:
                 status_code=400,
             )
 
-        # Get or create session ID from header
-        session_id = request.headers.get("X-MCP-Session-ID")
-        if session_id and session_id not in self._sessions:
-            self._sessions[session_id] = asyncio.Queue()
+        # NOTE: We intentionally do NOT create a session queue here.  A queue is
+        # a notification fan-out target and is only meaningful once an SSE
+        # stream exists for that session (see ``_handle_sse``).  Creating one on
+        # every POST let an attacker grow ``_sessions`` unboundedly with random
+        # X-MCP-Session-ID values and amplify ``send_notification`` fan-out.
+        # The session id is still read (from the header directly) where needed
+        # for bridge-context computation below.
 
         # Extract bridge context headers (DEC-142)
         _bridge_id = request.headers.get("X-Bridge-ID")
@@ -317,8 +320,13 @@ class HTTPTransport:
             )
 
     async def send_notification(self, notification: dict[str, Any]) -> None:
-        """Send notification to all connected SSE clients."""
-        for queue in self._sessions.values():
+        """Send notification to all connected SSE clients.
+
+        Iterates over a snapshot of the session queues so that a session being
+        added/removed concurrently (e.g. an SSE stream disconnecting) does not
+        raise ``RuntimeError: dictionary changed size during iteration``.
+        """
+        for queue in list(self._sessions.values()):
             await queue.put(notification)
 
     @property

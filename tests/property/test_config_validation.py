@@ -109,6 +109,52 @@ class TestEnvVarResolution:
         assert result == text
 
 
+@pytest.mark.property
+class TestEnvVarGrammar:
+    """Example-based tests for env var substitution grammar robustness."""
+
+    def test_braces_with_spaces_resolve(self):
+        """``${ FOO }`` with surrounding spaces should resolve FOO when set."""
+        with patch.dict(os.environ, {"FOO": "barval"}):
+            assert resolve_env_vars("${ FOO }") == "barval"
+
+    def test_braces_with_spaces_and_default(self):
+        """Spaces around the name should not break the :- default operator."""
+        env = {k: v for k, v in os.environ.items() if k != "MISSINGVAR"}
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_env_vars("${ MISSINGVAR :- fallback}") == " fallback"
+
+    def test_alternate_operator_when_set(self):
+        """``${VAR:+alt}`` yields alt when VAR is set & non-empty."""
+        with patch.dict(os.environ, {"VAR": "something"}):
+            assert resolve_env_vars("${VAR:+alt}") == "alt"
+
+    def test_alternate_operator_when_unset(self):
+        """``${VAR:+alt}`` yields empty string when VAR is unset."""
+        env = {k: v for k, v in os.environ.items() if k != "VAR"}
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_env_vars("${VAR:+alt}") == ""
+
+    def test_alternate_operator_when_empty(self):
+        """``${VAR:+alt}`` yields empty string when VAR is set but empty."""
+        with patch.dict(os.environ, {"VAR": ""}):
+            assert resolve_env_vars("${VAR:+alt}") == ""
+
+    def test_dollar_escape_yields_literal(self):
+        """``$${VAR}`` should produce a literal ``${VAR}`` (no resolution)."""
+        with patch.dict(os.environ, {"VAR": "shouldnotappear"}):
+            assert resolve_env_vars("$${VAR}") == "${VAR}"
+
+    def test_dollar_escape_standalone(self):
+        """A bare ``$$`` should collapse to a single literal ``$``."""
+        assert resolve_env_vars("price: $$5") == "price: $5"
+
+    def test_invalid_name_passed_through(self):
+        """An invalid var name (not matching grammar) should pass through literally."""
+        result = resolve_env_vars("${1BAD}")
+        assert result == "${1BAD}"
+
+
 # =============================================================================
 # Property Tests for Recursive Env Var Resolution
 # =============================================================================

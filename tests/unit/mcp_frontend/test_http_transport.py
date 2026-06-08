@@ -203,6 +203,52 @@ class TestHTTPTransportNotifications:
         assert not queue1.empty()
         assert not queue2.empty()
 
+    def test_random_post_session_ids_do_not_grow_sessions(self, transport):
+        """POSTing many distinct X-MCP-Session-IDs must not grow _sessions.
+
+        Previously every distinct session id on POST created a Queue that was
+        never cleaned up (only the SSE path evicts), allowing an attacker to
+        grow _sessions unboundedly and amplify send_notification fan-out.
+        """
+        transport.start()
+        client = TestClient(transport.app)
+
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        for i in range(50):
+            resp = client.post(
+                "/mcp",
+                json=request,
+                headers={"X-MCP-Session-ID": f"random-attacker-{i}"},
+            )
+            assert resp.status_code in (200, 204)
+
+        # No SSE stream was ever opened, so no session queues should exist.
+        assert transport.session_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_notification_concurrent_session_removal(self, transport):
+        """send_notification must not raise if sessions change during iteration.
+
+        Iterating self._sessions directly while another coroutine pops a
+        session raises 'dict changed size during iteration'. A snapshot must
+        be used.
+        """
+        transport.start()
+        for i in range(20):
+            transport._sessions[f"s-{i}"] = asyncio.Queue()
+
+        async def remover():
+            for i in range(20):
+                transport._sessions.pop(f"s-{i}", None)
+                await asyncio.sleep(0)
+
+        notification = {"jsonrpc": "2.0", "method": "test"}
+        # Run send_notification concurrently with removals; must not raise.
+        await asyncio.gather(
+            transport.send_notification(notification),
+            remover(),
+        )
+
 
 class TestHTTPTransportConfiguration:
     """Tests for HTTP transport configuration."""
