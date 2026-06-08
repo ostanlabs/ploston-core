@@ -746,7 +746,7 @@ class PythonExecSandbox:
         proc.start()
         child_conn.close()  # parent keeps only its end
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + self.timeout
 
         outcome: _worker.ExecOutcome | None = None

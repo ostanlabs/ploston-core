@@ -137,7 +137,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     async def save_execution(self, record: ExecutionRecord) -> None:
         """Save execution record with steps and tool calls."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, self._save_sync, record)
 
     def _save_sync(self, record: ExecutionRecord) -> None:
@@ -242,7 +242,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     async def get_execution(self, execution_id: str) -> ExecutionRecord | None:
         """Get execution by ID."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._get_sync, execution_id)
 
     def _get_sync(self, execution_id: str) -> ExecutionRecord | None:
@@ -294,7 +294,7 @@ class SQLiteTelemetryStore(TelemetryStore):
         page_size: int = 20,
     ) -> tuple[list[ExecutionRecord], int]:
         """List executions with filtering."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             self._list_sync,
@@ -377,7 +377,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     async def delete_execution(self, execution_id: str) -> bool:
         """Delete an execution."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._delete_sync, execution_id)
 
     def _delete_sync(self, execution_id: str) -> bool:
@@ -391,7 +391,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     async def delete_before(self, cutoff: datetime) -> int:
         """Delete executions before cutoff."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._delete_before_sync, cutoff)
 
     def _delete_before_sync(self, cutoff: datetime) -> int:
@@ -409,7 +409,7 @@ class SQLiteTelemetryStore(TelemetryStore):
         until: datetime | None = None,
     ) -> dict[str, dict[str, int]]:
         """Get tool call statistics."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._stats_sync, since, until)
 
     def _stats_sync(

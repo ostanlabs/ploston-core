@@ -330,7 +330,7 @@ class HealthManager:
                 admin_config["sasl_plain_password"] = config.kafka_sasl_password
 
             # Run in executor to avoid blocking
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             admin_client = await loop.run_in_executor(
                 None, lambda: KafkaAdminClient(**admin_config)
             )

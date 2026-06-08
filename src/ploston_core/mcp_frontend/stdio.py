@@ -12,7 +12,7 @@ async def read_message() -> dict[str, Any] | None:
     Returns:
         Parsed JSON message or None if EOF
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         # Read line from stdin asynchronously
@@ -45,7 +45,7 @@ async def write_message(message: dict[str, Any]) -> None:
     Args:
         message: JSON-RPC message to write
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         # Serialize to JSON

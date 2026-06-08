@@ -89,12 +89,17 @@ class ModeManager:
             # Persist to Redis if available (fire and forget)
             if self._redis_store and self._redis_store.connected:
                 try:
-                    # Use asyncio to run the coroutine
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
+                    # Use asyncio to run the coroutine. If we're already inside
+                    # a running event loop, schedule it fire-and-forget;
+                    # otherwise run it to completion on a fresh loop.
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop is not None:
                         asyncio.create_task(self._persist_mode_to_redis(mode))
                     else:
-                        loop.run_until_complete(self._persist_mode_to_redis(mode))
+                        asyncio.run(self._persist_mode_to_redis(mode))
                 except Exception as e:
                     logger.warning(f"Failed to persist mode to Redis: {e}")
 

@@ -1,5 +1,9 @@
 """Unit tests for ModeManager."""
 
+import asyncio
+
+import pytest
+
 from ploston_core.config.mode_manager import Mode, ModeManager
 
 
@@ -171,3 +175,57 @@ class TestModeManager:
         """Test can start workflow in running mode."""
         manager = ModeManager(initial_mode=Mode.RUNNING)
         assert manager.can_start_workflow()
+
+
+class _FakeRedisStore:
+    """Minimal stand-in for RedisConfigStore used to exercise persistence."""
+
+    def __init__(self, connected: bool = True):
+        self.connected = connected
+        self.set_mode_calls: list[str] = []
+
+    async def set_mode(self, value: str) -> None:
+        self.set_mode_calls.append(value)
+
+
+class TestModeManagerRedisPersistence:
+    """Tests for the Redis persistence path in set_mode.
+
+    These cover the asyncio.get_event_loop() -> get_running_loop()/asyncio.run()
+    migration: behavior must be preserved for both the "no running loop"
+    (sync caller) and "running loop" (async caller) cases.
+    """
+
+    def test_set_mode_persists_when_no_running_loop(self):
+        """Sync caller with no running loop persists synchronously via asyncio.run."""
+        store = _FakeRedisStore(connected=True)
+        manager = ModeManager(redis_store=store)
+
+        manager.set_mode(Mode.RUNNING)
+
+        assert manager.mode == Mode.RUNNING
+        # asyncio.run path runs the coroutine to completion before returning.
+        assert store.set_mode_calls == ["RUNNING"]
+
+    def test_set_mode_skips_persist_when_not_connected(self):
+        """No persistence attempted when the store is not connected."""
+        store = _FakeRedisStore(connected=False)
+        manager = ModeManager(redis_store=store)
+
+        manager.set_mode(Mode.RUNNING)
+
+        assert manager.mode == Mode.RUNNING
+        assert store.set_mode_calls == []
+
+    @pytest.mark.asyncio
+    async def test_set_mode_persists_when_running_loop(self):
+        """Async caller (running loop) schedules persistence fire-and-forget."""
+        store = _FakeRedisStore(connected=True)
+        manager = ModeManager(redis_store=store)
+
+        manager.set_mode(Mode.RUNNING)
+
+        assert manager.mode == Mode.RUNNING
+        # create_task schedules but does not await; yield control so it runs.
+        await asyncio.sleep(0)
+        assert store.set_mode_calls == ["RUNNING"]
