@@ -652,7 +652,7 @@ class WorkflowEngine:
             template_context = context.get_template_context()
             when_expr = "{{ " + step.when + " }}"
             when_result = self._template_engine.render_string(when_expr, template_context)
-            if not when_result:
+            if not _coerce_when_truthy(when_result):
                 completed_at = datetime.now()
                 duration_ms = int((time.time() - start_time) * 1000)
                 return StepResult(
@@ -1262,8 +1262,12 @@ class WorkflowEngine:
                 # Extract from step output using path
                 # e.g., "steps.fetch.output.items"
                 value = self._extract_from_path(output_def.from_path, context)
-            elif output_def.value:
-                # Render template expression
+            elif output_def.value is not None:
+                # Render template expression.
+                # H-3: use ``is not None`` (not truthiness) so a literal
+                # empty-string output template ("") — or any falsy rendered
+                # value — is preserved instead of being silently dropped to
+                # None via the ``else`` branch.
                 template_context = context.get_template_context()
                 render_result = self._template_engine.render(output_def.value, template_context)
                 # Extract value from RenderResult
@@ -1513,6 +1517,33 @@ class WorkflowEngine:
                     f"telemetry end_step failed: {e}",
                     {"execution_id": execution_id, "step_id": step_id},
                 )
+
+
+# H-1b: string-boolean coercion for `when` conditions.
+# The restricted template engine (DEC-002) renders `when` to whatever the
+# referenced value is. When that value is a *string* — e.g. an input typed
+# "false" or a rendered "0" — Python truthiness treats every non-empty
+# string as True, so the step would wrongly run. Coerce common
+# string-boolean spellings explicitly; fall back to bool() for non-strings.
+_WHEN_FALSE_STRINGS = frozenset({"false", "0", "no", ""})
+_WHEN_TRUE_STRINGS = frozenset({"true", "1", "yes"})
+
+
+def _coerce_when_truthy(when_result: Any) -> bool:
+    """Interpret a rendered ``when`` result as a boolean.
+
+    - str: "false"/"0"/"no"/"" (case-insensitive, stripped) → False;
+      "true"/"1"/"yes" → True; any other non-empty string → True.
+    - non-str: normal ``bool()`` (preserves real booleans, numbers, lists).
+    """
+    if isinstance(when_result, str):
+        normalized = when_result.strip().lower()
+        if normalized in _WHEN_FALSE_STRINGS:
+            return False
+        if normalized in _WHEN_TRUE_STRINGS:
+            return True
+        return True  # other non-empty strings remain truthy
+    return bool(when_result)
 
 
 def _map_status(status: ExecutionStatus) -> TelemetryExecutionStatus:

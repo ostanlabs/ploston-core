@@ -357,6 +357,25 @@ class WorkflowValidator:
                             severity="error",
                         )
                     )
+                # H-1a: fail-fast on operators the restricted template engine
+                # (DEC-002, NOT Jinja2) cannot evaluate. These would otherwise
+                # pass validation and raise TEMPLATE_ERROR at runtime.
+                bad_op = _unsupported_when_operator(step.when)
+                if bad_op is not None:
+                    errors.append(
+                        ValidationIssue(
+                            path=f"steps.{step.id}.when",
+                            message=(
+                                f"Unsupported operator '{bad_op}' in `when` expression. "
+                                "Comparisons (==, !=, <, >, <=, >=), boolean ops "
+                                "(and, or, not, in, is) and arithmetic (+, -, *, /, %) "
+                                "are not supported in `when`. Precompute a boolean in a "
+                                "code step and reference it (e.g. when: "
+                                '"{{ steps.check.output.ok }}").'
+                            ),
+                            severity="error",
+                        )
+                    )
 
         # Check for circular dependencies
         try:
@@ -482,6 +501,47 @@ class WorkflowValidator:
             servers = sorted({t.server_name for t in all_tools if t.server_name})
             hint = f" No MCP server named '{step.mcp}' found. Known servers: {servers}"
         return False, (f"Tool '{step.tool}' not found on MCP server '{step.mcp}'.{hint}")
+
+
+# ── `when` operator guard (H-1a) ────────────────────────────────────
+#
+# The restricted template engine (DEC-002, NOT Jinja2) supports only
+# variable access + a small filter set — no comparison / boolean /
+# arithmetic operators. We reject those at validation time so the failure
+# is loud and actionable instead of a runtime TEMPLATE_ERROR.
+
+# Word-boundary operators (matched as whole tokens, case-sensitive — these
+# are lowercase keywords in expressions).
+_WHEN_WORD_OPERATORS = ("and", "or", "not", "in", "is")
+# Symbolic operators. Multi-char first so e.g. ``==`` isn't reported as ``=``.
+_WHEN_SYMBOL_OPERATORS = ("==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%")
+
+
+def _unsupported_when_operator(when_expr: str) -> str | None:
+    """Return the first unsupported operator found in a ``when`` expression.
+
+    Filter arguments (e.g. ``default(0)``) and the filter pipe ``|`` are not
+    treated as operators: only the variable-path head before the first ``|``
+    is inspected for arithmetic/comparison symbols, and word operators are
+    matched on whole tokens across the whole expression.
+
+    Returns ``None`` when the expression uses only supported constructs
+    (variable paths + filters).
+    """
+    # Word operators: tokenize on non-identifier chars and look for keywords.
+    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", when_expr)
+    for op in _WHEN_WORD_OPERATORS:
+        if op in tokens:
+            return op
+
+    # Symbolic operators: inspect only the path head (before any filter pipe)
+    # so filter args like ``default(0)`` or ``round(2)`` don't false-positive.
+    head = when_expr.split("|", 1)[0]
+    for op in _WHEN_SYMBOL_OPERATORS:
+        if op in head:
+            return op
+
+    return None
 
 
 # ── Suggested-fix enrichment (S-291 P3) ─────────────────────────────
