@@ -137,9 +137,10 @@ class WorkflowRegistry:
         """Schedule the on_tools_changed callback on the running event loop."""
         if self._on_tools_changed:
             try:
-                self._schedule_background(self._on_tools_changed())
+                asyncio.get_running_loop()
             except RuntimeError:
-                pass  # No running event loop — skip notification
+                return  # No running event loop — skip notification
+            self._schedule_background(self._on_tools_changed())
 
     def set_metrics(self, metrics: "AELMetrics") -> None:
         """Set the metrics instance for telemetry.
@@ -370,9 +371,11 @@ class WorkflowRegistry:
 
         if persist and not source_path:
             try:
-                self._schedule_background(self._persist(workflow.name, yaml_content))
+                asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(self._persist(workflow.name, yaml_content))
+            else:
+                self._schedule_background(self._persist(workflow.name, yaml_content))
 
         return result
 
@@ -446,9 +449,11 @@ class WorkflowRegistry:
 
         if persist:
             try:
-                self._schedule_background(self._persist(workflow.name, yaml_content))
+                asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(self._persist(workflow.name, yaml_content))
+            else:
+                self._schedule_background(self._persist(workflow.name, yaml_content))
 
         self._update_metrics()
         self._fire_tools_changed()
@@ -473,9 +478,11 @@ class WorkflowRegistry:
                     {"name": name},
                 )
             try:
-                self._schedule_background(self._delete_persisted(name, entry.source))
+                asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(self._delete_persisted(name, entry.source))
+            else:
+                self._schedule_background(self._delete_persisted(name, entry.source))
             self._update_metrics()
             self._fire_tools_changed()
             return True
