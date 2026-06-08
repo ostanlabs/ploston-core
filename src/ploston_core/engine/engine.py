@@ -307,9 +307,11 @@ class WorkflowEngine:
 
         # Instrument workflow execution with telemetry
         async with instrument_workflow(workflow.name) as telemetry_result:
-            # Validate inputs
+            # Validate inputs. validate_inputs returns a copy with defaults
+            # applied; rebind so downstream context/result use the effective
+            # inputs without mutating the caller's original dict.
             try:
-                self.validate_inputs(workflow, current_inputs)
+                current_inputs = self.validate_inputs(workflow, current_inputs)
             except Exception as e:
                 record_tool_result(telemetry_result, success=False, error_code="INPUT_INVALID")
                 # S-304 / G1 — close persistent row on early validation failure.
@@ -440,31 +442,42 @@ class WorkflowEngine:
         self,
         workflow: WorkflowDefinition,
         inputs: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         """
         Validate inputs against workflow schema.
 
+        Operates on a copy so the caller-supplied ``inputs`` dict is never
+        mutated — applying defaults in place leaked them back to the caller and
+        into telemetry snapshots that captured the original dict. The effective
+        inputs (with defaults applied) are returned for downstream use.
+
         Args:
             workflow: Workflow definition
-            inputs: Input values
+            inputs: Input values (not mutated)
+
+        Returns:
+            A new dict containing the provided inputs plus any applied defaults.
 
         Raises:
             AELError(INPUT_INVALID) if validation fails
         """
+        effective = dict(inputs)
         errors = []
 
         for input_def in workflow.inputs:
-            if input_def.name not in inputs:
+            if input_def.name not in effective:
                 # Input not provided - check if we have a default or if it's required
                 if input_def.default is not None:
-                    # Apply default value
-                    inputs[input_def.name] = input_def.default
+                    # Apply default value to the copy, never the caller's dict.
+                    effective[input_def.name] = input_def.default
                 elif input_def.required:
                     # Required input missing with no default
                     errors.append(f"Missing required input: {input_def.name}")
 
         if errors:
             raise create_error("INPUT_INVALID", detail="; ".join(errors))
+
+        return effective
 
     async def _execute_steps(
         self,

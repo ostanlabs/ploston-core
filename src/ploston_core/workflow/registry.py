@@ -82,6 +82,11 @@ class WorkflowRegistry:
         self._watch_task: asyncio.Task[None] | None = None
         self._metrics: AELMetrics | None = None
         self._on_tools_changed = on_tools_changed
+        # Strong references to fire-and-forget tasks (persist/delete/tools-changed).
+        # Without this, asyncio only keeps a weak reference and the task can be
+        # garbage-collected mid-flight, dropping the work and swallowing any
+        # exception. The done-callback discards the task and logs failures.
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         # S-291 P3: in-memory draft store for failed-validation workflows.
         # TTL is sourced from ``WorkflowsConfig.draft_ttl_seconds`` (default
         # 1800s). The attribute lookup uses ``getattr`` so callers passing
@@ -97,12 +102,42 @@ class WorkflowRegistry:
         """Expose the draft store (used by ``WorkflowToolsProvider``)."""
         return self._draft_store
 
+    def _schedule_background(self, coro: Awaitable[None]) -> "asyncio.Task[Any]":
+        """Schedule a fire-and-forget coroutine, retaining a strong reference.
+
+        asyncio only holds a weak reference to tasks created via
+        ``loop.create_task``; without an external strong reference the task can
+        be garbage-collected before it finishes, dropping the work and
+        swallowing any exception. We stash the task in ``_background_tasks`` and
+        attach a done-callback that discards it and logs failures.
+
+        Must be called from within a running event loop.
+        """
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+        return task
+
+    def _on_background_task_done(self, task: "asyncio.Task[Any]") -> None:
+        """Discard a completed background task and log any exception."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None and self._logger:
+            self._logger._log(
+                LogLevel.ERROR,
+                "workflow",
+                "Background task failed",
+                {"error": str(exc)},
+            )
+
     def _fire_tools_changed(self) -> None:
         """Schedule the on_tools_changed callback on the running event loop."""
         if self._on_tools_changed:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._on_tools_changed())
+                self._schedule_background(self._on_tools_changed())
             except RuntimeError:
                 pass  # No running event loop — skip notification
 
@@ -335,8 +370,7 @@ class WorkflowRegistry:
 
         if persist and not source_path:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._persist(workflow.name, yaml_content))
+                self._schedule_background(self._persist(workflow.name, yaml_content))
             except RuntimeError:
                 asyncio.run(self._persist(workflow.name, yaml_content))
 
@@ -412,8 +446,7 @@ class WorkflowRegistry:
 
         if persist:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._persist(workflow.name, yaml_content))
+                self._schedule_background(self._persist(workflow.name, yaml_content))
             except RuntimeError:
                 asyncio.run(self._persist(workflow.name, yaml_content))
 
@@ -440,8 +473,7 @@ class WorkflowRegistry:
                     {"name": name},
                 )
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._delete_persisted(name, entry.source))
+                self._schedule_background(self._delete_persisted(name, entry.source))
             except RuntimeError:
                 asyncio.run(self._delete_persisted(name, entry.source))
             self._update_metrics()
@@ -475,7 +507,10 @@ class WorkflowRegistry:
         """
         workflow = self.get(name)
         if not workflow:
-            raise create_error("WORKFLOW_NOT_FOUND", workflow_name=name)
+            # The WORKFLOW_NOT_FOUND template interpolates {workflow_id}, so the
+            # name must be passed under that kwarg — passing workflow_name leaves
+            # the rendered message as "Workflow '' not found".
+            raise create_error("WORKFLOW_NOT_FOUND", workflow_id=name)
         return workflow
 
     def list_workflows(self) -> list[WorkflowDefinition]:

@@ -1,6 +1,7 @@
 """Types for workflow engine."""
 
 import asyncio
+import random
 import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
@@ -257,12 +258,38 @@ async def with_timeout[T](coro: Awaitable[T], timeout_seconds: int) -> T:
         ) from err
 
 
+# Upper bound for exponential backoff. RetryConfig has no max_delay field, so
+# the cap is a module constant; if config.max_delay is ever added it takes
+# precedence (see calculate_retry_delay). Without this, delay grows as
+# delay_seconds * 2**(attempt-1) and can reach minutes for large attempt counts.
+MAX_RETRY_DELAY_SECONDS: float = 60.0
+
+# Fraction of the computed delay added as random jitter to avoid retry stampedes
+# (thundering herd) when many steps retry in lockstep.
+_RETRY_JITTER_FRACTION: float = 0.1
+
+
 def calculate_retry_delay(attempt: int, config: RetryConfig) -> float:
-    """Calculate delay before next retry attempt."""
+    """Calculate delay before next retry attempt.
+
+    FIXED backoff returns ``delay_seconds`` exactly (no cap, no jitter).
+    EXPONENTIAL backoff grows as ``delay_seconds * 2**(attempt-1)``, clamped to
+    ``config.max_delay`` (if present) or ``MAX_RETRY_DELAY_SECONDS``, with a
+    small additive jitter to spread out concurrent retries.
+    """
     if config.backoff == BackoffType.FIXED:
         return config.delay_seconds
 
     # Exponential backoff: delay = initial * (2 ^ (attempt - 1))
     delay: float = config.delay_seconds * (2 ** (attempt - 1))
+
+    # Clamp to a maximum so backoff can't run away to minutes-long sleeps.
+    max_delay = getattr(config, "max_delay", None)
+    if not isinstance(max_delay, int | float) or max_delay <= 0:
+        max_delay = MAX_RETRY_DELAY_SECONDS
+    delay = min(delay, float(max_delay))
+
+    # Add small jitter (0 .. fraction * delay) to de-synchronize retries.
+    delay += random.uniform(0, _RETRY_JITTER_FRACTION * delay)
 
     return delay
