@@ -39,6 +39,7 @@ from ploston_core.types import (
     LogLevel,
     OnError,
     OnMissingTool,
+    StepOutput,
     StepStatus,
     StepType,
 )
@@ -846,6 +847,11 @@ class WorkflowEngine:
                 if source_line is not None:
                     meta["source_line"] = source_line
                 meta["code_context"] = build_code_context(code, line)
+            # L-10: carry the context.log() trail captured before the failure
+            # so the debug output is available exactly when it is most useful.
+            debug_log = getattr(exc, "_ael_debug_log", None)
+            if debug_log:
+                meta["debug_log"] = list(debug_log)
         else:
             tool_name = getattr(step, "tool", None)
             meta["tool"] = tool_name
@@ -1245,12 +1251,17 @@ class WorkflowEngine:
             timeout_seconds=step_config.timeout_seconds,
         )
 
-        # Capture debug_log from sandbox context (only available on success path)
+        # Capture debug_log from sandbox context. L-10: this must be carried on
+        # BOTH paths — on failure the context.log() trail is the most useful
+        # diagnostic, so attach it to the raised exception for the caller to
+        # surface in error_metadata (instead of discarding it).
         debug_log = list(sandbox_context._debug_log)
 
         if not result.success:
             # Use CODE_RUNTIME — CODE_EXECUTION_FAILED is not in ErrorRegistry
-            raise (result.error if result.error else create_error("CODE_RUNTIME", step_id=step.id))
+            exc = result.error if result.error else create_error("CODE_RUNTIME", step_id=step.id)
+            exc._ael_debug_log = debug_log  # type: ignore[attr-defined]
+            raise exc
 
         return result.output, debug_log
 
@@ -1292,15 +1303,30 @@ class WorkflowEngine:
 
         return outputs
 
+    # L-9: whitelisted fields an output ``from_path`` may read off a
+    # ``StepOutput`` object. Author-supplied paths must not be able to pull
+    # arbitrary attributes (e.g. ``__class__``, methods, private state) off
+    # objects via ``getattr``; only these declared fields and plain dict-key
+    # access are permitted.
+    _STEP_OUTPUT_FIELDS = frozenset(
+        {"output", "success", "duration_ms", "step_id", "status", "error", "debug_log"}
+    )
+
     def _extract_from_path(self, path: str, context: ExecutionContext) -> Any:
         """Extract value from context using dot-notation path.
+
+        Traversal is restricted to dict-key access plus the whitelisted
+        ``StepOutput`` fields (see ``_STEP_OUTPUT_FIELDS``). Arbitrary
+        attribute access via ``getattr`` is intentionally disallowed so an
+        author-supplied path cannot read object internals (L-9).
 
         Args:
             path: Dot-notation path (e.g., "steps.fetch.output.items")
             context: Execution context
 
         Returns:
-            Extracted value
+            Extracted value, or ``None`` when the path does not resolve
+            through permitted dict-key / whitelisted-field access.
         """
         parts = path.split(".")
         value: Any = None
@@ -1311,10 +1337,16 @@ class WorkflowEngine:
                 value = context.step_outputs[step_id]
                 # Navigate remaining path
                 for part in parts[2:]:
-                    if hasattr(value, part):
+                    if isinstance(value, dict):
+                        if part in value:
+                            value = value[part]
+                        else:
+                            value = None
+                            break
+                    elif isinstance(value, StepOutput) and part in self._STEP_OUTPUT_FIELDS:
+                        # Only declared StepOutput fields are reachable; no
+                        # arbitrary getattr on objects.
                         value = getattr(value, part)
-                    elif isinstance(value, dict) and part in value:
-                        value = value[part]
                     else:
                         value = None
                         break
