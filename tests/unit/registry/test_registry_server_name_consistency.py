@@ -168,3 +168,34 @@ async def test_tool_stays_available_after_server_move():
 
     assert reg.get("X").status == ToolStatus.AVAILABLE
     assert "X" not in result.removed
+
+
+# ---------------------------------------------------------------------------
+# R-4 sibling: refresh_server (single-server path) had the same half-update.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_updates_server_name_when_tool_moves():
+    """refresh_server must update server_name alongside source when a same-named
+    tool is re-homed to the refreshed server (T-1113; mirrors the refresh() fix).
+
+    RED before the fix: refresh_server set ``existing.source`` but left
+    ``server_name`` at the first-seen value.
+    """
+    reg = _make_registry(refresh_all_return={"github": [_schema("shared")]})
+    await reg.refresh()
+    assert reg.get("shared").server_name == "github"
+
+    # Now the same bare name is served by native_tools; refresh just that server.
+    conn = MagicMock()
+    conn.refresh_tools = AsyncMock(return_value=[_schema("shared")])
+    reg._mcp_manager.get_connection = MagicMock(return_value=conn)
+
+    await reg.refresh_server("native_tools")
+
+    tool = reg.get("shared")
+    assert tool.source == ToolSource.NATIVE
+    assert tool.server_name == "native_tools"
+    # Routing record is internally consistent.
+    assert reg.get_router("shared").source == ToolSource.NATIVE
