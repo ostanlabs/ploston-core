@@ -251,11 +251,13 @@ async def test_refresh_does_not_unavailable_system_tools():
 @pytest.mark.asyncio
 async def test_same_tool_name_from_second_server_updates_source_and_server():
     """Tools are keyed by bare name; a same-named tool from another server
-    updates the existing record (source may change, server stays as first add).
+    updates the existing record — BOTH source and server_name follow the
+    latest-seen server (D3 fix, DEC-195).
 
-    This pins the *actual documented* behavior: the existing entry's source is
-    overwritten ("Update source in case it changed"), but server_name is set
-    only at creation and is NOT rewritten on update.
+    Previously server_name was set only at creation and left stale on update,
+    so a re-refresh that re-homed a tool to another server left the registry
+    reporting the wrong origin. The record must reflect where the tool now
+    actually lives.
     """
     reg = _make_registry(refresh_all_return={"github": [_schema("shared")]})
     await reg.refresh()
@@ -266,8 +268,8 @@ async def test_same_tool_name_from_second_server_updates_source_and_server():
     tool = reg.get("shared")
     # Source is updated to reflect the latest-seen server's source...
     assert tool.source == ToolSource.NATIVE
-    # ...but server_name remains the original (only set on creation).
-    assert tool.server_name == "github"
+    # ...and server_name is updated in lockstep (no longer stale).
+    assert tool.server_name == "native_tools"
     assert reg.get_router("shared").source == ToolSource.NATIVE
 
 

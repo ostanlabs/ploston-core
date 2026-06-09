@@ -201,7 +201,12 @@ class ToolRegistry:
                     existing.description = tool_schema.description
                     existing.input_schema = tool_schema.input_schema
                     existing.output_schema = tool_schema.output_schema
-                    existing.source = tool_source  # Update source in case it changed
+                    # R-4 (D3): a bare-name tool can reappear from a different
+                    # MCP server. Update source AND server_name together so the
+                    # routing record stays consistent (get_router must not point
+                    # source and server_name at two different servers).
+                    existing.source = tool_source
+                    existing.server_name = server_name
                     existing.status = ToolStatus.AVAILABLE
                     existing.last_seen = datetime.now(UTC)
                     existing.error = None
