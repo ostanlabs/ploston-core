@@ -155,20 +155,36 @@ class WorkflowRegistry:
         if self._metrics:
             self._metrics.update_registered_workflows(len(self._workflows))
 
+    def _persist_to_disk(self, name: str, yaml_content: str) -> None:
+        """Write the durable on-disk copy of a workflow (synchronous).
+
+        This is the durable copy that survives container restarts and Redis
+        data wipes; it needs no event loop, so it is always safe to run from
+        either an async or a plain sync context.
+        """
+        workflows_dir = Path(self._config.directory)
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        target = workflows_dir / f"{name}.yaml"
+        target.write_text(yaml_content, encoding="utf-8")
+
+    def _delete_from_disk(self, name: str, source: str) -> None:
+        """Remove the on-disk copy of an API-registered workflow (synchronous)."""
+        if source != "api":
+            return
+        target = Path(self._config.directory) / f"{name}.yaml"
+        if target.exists():
+            target.unlink()
+
     async def _persist(self, name: str, yaml_content: str) -> None:
         """Persist API-registered workflow YAML.
 
         Always writes to disk so workflows survive container teardown.
         When Redis is available, also writes there for runtime consistency.
         """
-        # Always write to disk — this is the durable copy that survives
-        # container restarts and Redis data wipes during bootstrap teardown.
-        workflows_dir = Path(self._config.directory)
-        workflows_dir.mkdir(parents=True, exist_ok=True)
-        target = workflows_dir / f"{name}.yaml"
-        target.write_text(yaml_content, encoding="utf-8")
+        self._persist_to_disk(name, yaml_content)
 
-        # Also write to Redis when available for runtime consistency.
+        # Also write to Redis when available for runtime consistency. The async
+        # client is bound to its creating loop, so this must run on that loop.
         if self._redis_store and self._redis_store.connected:
             await self._redis_store.set_value(f"workflows:{name}", yaml_content)
 
@@ -180,13 +196,41 @@ class WorkflowRegistry:
         """
         if source != "api":
             return
-        # Remove from disk
-        target = Path(self._config.directory) / f"{name}.yaml"
-        if target.exists():
-            target.unlink()
+        self._delete_from_disk(name, source)
         # Remove from Redis
         if self._redis_store and self._redis_store.connected:
             await self._redis_store.delete_value(f"workflows:{name}")
+
+    def _persist_loop_aware(self, name: str, yaml_content: str) -> None:
+        """Persist a workflow, adapting to whether an event loop is running.
+
+        Running loop: schedule the full disk+Redis persist as a background task.
+        No running loop (plain sync caller): write the durable disk copy
+        synchronously and skip the best-effort Redis mirror. The Redis client is
+        bound to its creating loop, so ``asyncio.run(self._persist(...))`` here
+        would await it on a fresh loop and crash ("attached to a different
+        loop"), failing the registration after the disk write (L-4 / DEC-229).
+        Disk is the durable copy; Redis is a best-effort runtime cache.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._persist_to_disk(name, yaml_content)
+        else:
+            self._schedule_background(self._persist(name, yaml_content))
+
+    def _delete_persisted_loop_aware(self, name: str, source: str) -> None:
+        """Delete persisted workflow storage, adapting to the loop context.
+
+        See :meth:`_persist_loop_aware`: no running loop -> remove the durable
+        disk copy synchronously and skip the loop-bound Redis delete.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._delete_from_disk(name, source)
+        else:
+            self._schedule_background(self._delete_persisted(name, source))
 
     async def initialize(self) -> int:
         """Initialize registry by loading workflows from directory.
@@ -370,12 +414,7 @@ class WorkflowRegistry:
             self._workflows[workflow.name].source = "file" if source_path else "api"
 
         if persist and not source_path:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.run(self._persist(workflow.name, yaml_content))
-            else:
-                self._schedule_background(self._persist(workflow.name, yaml_content))
+            self._persist_loop_aware(workflow.name, yaml_content)
 
         return result
 
@@ -448,12 +487,7 @@ class WorkflowRegistry:
             )
 
         if persist:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.run(self._persist(workflow.name, yaml_content))
-            else:
-                self._schedule_background(self._persist(workflow.name, yaml_content))
+            self._persist_loop_aware(workflow.name, yaml_content)
 
         self._update_metrics()
         self._fire_tools_changed()
@@ -477,12 +511,7 @@ class WorkflowRegistry:
                     "Workflow unregistered",
                     {"name": name},
                 )
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.run(self._delete_persisted(name, entry.source))
-            else:
-                self._schedule_background(self._delete_persisted(name, entry.source))
+            self._delete_persisted_loop_aware(name, entry.source)
             self._update_metrics()
             self._fire_tools_changed()
             return True
