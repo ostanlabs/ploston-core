@@ -50,11 +50,12 @@ class TestResolveEnvVars:
         monkeypatch.setenv("MAYBE", "real")
         assert resolve_env_vars("${MAYBE:-fallback}") == "real"
 
-    def test_default_empty_when_var_empty(self, monkeypatch) -> None:
-        # ${VAR:-default}: env_value is "" (set) -> env_value returned, not default.
-        # Per code, ``env_value is not None`` short-circuits and returns "".
+    def test_default_used_when_var_empty(self, monkeypatch) -> None:
+        # POSIX (D2): ``${VAR:-default}`` treats empty == unset, so the default
+        # is used when VAR is set but empty (colon-variant semantics). This is
+        # consistent with ``${VAR:+alt}`` which uses an is-set-AND-nonempty check.
         monkeypatch.setenv("EMPTY", "")
-        assert resolve_env_vars("${EMPTY:-fb}") == ""
+        assert resolve_env_vars("${EMPTY:-fb}") == "fb"
 
     def test_alternate_when_set_nonempty(self, monkeypatch) -> None:
         monkeypatch.setenv("FLAG", "1")
@@ -80,6 +81,20 @@ class TestResolveEnvVars:
         with pytest.raises(AELError) as ei:
             resolve_env_vars("${NEED:?}")
         assert "NEED" in (ei.value.detail or "")
+
+    def test_required_custom_error_raises_when_var_empty(self, monkeypatch) -> None:
+        # POSIX (D2): ``${VAR:?msg}`` treats empty == unset, so an empty VAR
+        # must raise the error rather than resolving to "".
+        monkeypatch.setenv("NEED", "")
+        with pytest.raises(AELError) as ei:
+            resolve_env_vars("${NEED:?must set NEED}")
+        assert ei.value.code == "CONFIG_INVALID"
+        assert "must set NEED" in (ei.value.detail or "")
+
+    def test_required_custom_error_passes_when_var_set_nonempty(self, monkeypatch) -> None:
+        # ``${VAR:?msg}`` with a non-empty value resolves to that value.
+        monkeypatch.setenv("NEED", "present")
+        assert resolve_env_vars("${NEED:?must set NEED}") == "present"
 
     def test_dollar_escape(self) -> None:
         assert resolve_env_vars("price is $$5") == "price is $5"

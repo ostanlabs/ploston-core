@@ -28,11 +28,14 @@ _ENV_VAR_PATTERN = re.compile(r"\$\$|\$\{([^}:]*)(?::([?+-])([^}]*))?\}")
 def resolve_env_vars(value: str) -> str:
     """Resolve environment variable references in string.
 
+    The ``:`` colon-variants follow POSIX semantics: an empty value is treated
+    the same as unset for all of ``:-``, ``:+`` and ``:?``.
+
     Supports:
-    - ${VAR} - Required, error if not set
-    - ${VAR:-default} - With default value
+    - ${VAR} - Required, error if not set (an empty-but-set var resolves to "")
+    - ${VAR:-default} - Default value when VAR is unset or empty
     - ${VAR:+alt} - Alternate value when VAR is set and non-empty, else ""
-    - ${VAR:?error message} - Required with custom error
+    - ${VAR:?error message} - Required; errors when VAR is unset or empty
     - $$ - Literal ``$`` escape (``$${VAR}`` -> literal ``${VAR}``)
 
     Variable names are trimmed of surrounding whitespace and validated against
@@ -67,27 +70,32 @@ def resolve_env_vars(value: str) -> str:
         env_value = os.environ.get(var_name)
         is_set_nonempty = bool(env_value)
 
+        # POSIX colon-variants (``:-``, ``:+``, ``:?``) treat an empty value the
+        # same as unset.  All three therefore branch on the same
+        # is-set-AND-nonempty predicate so empty == missing consistently.
         if operator == "+":
             # Alternate value when set & non-empty, else empty string.
             return (operand or "") if is_set_nonempty else ""
 
-        if env_value is not None:
-            return env_value
-
-        # Variable not set
         if operator == "-":
-            # Use default value
-            return operand or ""
-        elif operator == "?":
-            # Required with custom error
+            # Use the value when set & non-empty, else fall back to the default.
+            return env_value if is_set_nonempty else (operand or "")
+
+        if operator == "?":
+            # Required with custom error: empty or unset both trigger the error.
+            if is_set_nonempty:
+                return env_value  # type: ignore[return-value]
             error_msg = operand or f"Required environment variable {var_name} not set"
             raise create_error("CONFIG_INVALID", detail=error_msg)
-        else:
-            # Required without default
-            raise create_error(
-                "CONFIG_INVALID",
-                detail=f"Required environment variable {var_name} not set",
-            )
+
+        # Plain ``${VAR}`` (no colon operator): unset is a required error;
+        # behavior is unchanged (an empty-but-set var still resolves to "").
+        if env_value is not None:
+            return env_value
+        raise create_error(
+            "CONFIG_INVALID",
+            detail=f"Required environment variable {var_name} not set",
+        )
 
     return _ENV_VAR_PATTERN.sub(replacer, value)
 
