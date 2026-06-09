@@ -410,3 +410,24 @@ class TestSanitizeUrl:
         # No '@' -> returned as-is even though ':' present.
         url = "redis://host:6379"
         assert RedisConfigStore._sanitize_url(url) == url
+
+    def test_redacts_password_query_param(self) -> None:
+        # L-3: secret supplied as a query parameter must not leak.
+        out = RedisConfigStore._sanitize_url("redis://host:6379/0?password=SECRET")
+        assert "SECRET" not in out
+        assert "***" in out
+
+    def test_redacts_userinfo_and_query_param_together(self) -> None:
+        # L-3: both userinfo password and query-param secret must be redacted.
+        out = RedisConfigStore._sanitize_url("redis://user:p@host:6379/0?password=SECRET")
+        assert "p@host" not in out  # userinfo password gone
+        assert "SECRET" not in out  # query-param secret gone
+        assert "host:6379" in out  # host preserved
+
+    def test_redacts_other_credential_query_keys(self) -> None:
+        # L-3: common credential-bearing query keys are also redacted.
+        out = RedisConfigStore._sanitize_url(
+            "rediss://host:6380/0?ssl_keyfile=k&auth_token=TOKVAL&db=0"
+        )
+        assert "TOKVAL" not in out
+        assert "db=0" in out  # non-secret param preserved

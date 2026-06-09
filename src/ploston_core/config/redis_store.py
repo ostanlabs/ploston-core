@@ -382,10 +382,47 @@ class RedisConfigStore:
             logger.error(f"Failed to delete value for {key}: {e}")
             return False
 
-    @staticmethod
-    def _sanitize_url(url: str) -> str:
-        """Remove password from URL for logging."""
-        if "@" in url and ":" in url.split("@")[0]:
-            parts = url.split("@")
-            return f"{parts[0].rsplit(':', 1)[0]}:***@{parts[1]}"
-        return url
+    # Query-parameter keys that may carry credentials and must be redacted.
+    _SECRET_QUERY_KEYS = frozenset(
+        {
+            "password",
+            "passwd",
+            "pwd",
+            "auth_token",
+            "token",
+            "secret",
+            "ssl_keyfile",
+            "ssl_password",
+        }
+    )
+
+    @classmethod
+    def _sanitize_url(cls, url: str) -> str:
+        """Redact credentials from a redis URL for logging.
+
+        Masks both the ``user:pass@host`` userinfo password and any
+        credential-bearing query parameters (e.g. ``?password=...``).
+        """
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return url
+
+        netloc = parts.netloc
+        if "@" in netloc and parts.password is not None:
+            userinfo, host = netloc.rsplit("@", 1)
+            user = userinfo.split(":", 1)[0]
+            netloc = f"{user}:***@{host}" if user else f"***@{host}"
+
+        if parts.query:
+            redacted_pairs = [
+                (k, "***" if k.lower() in cls._SECRET_QUERY_KEYS else v)
+                for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            ]
+            query = urlencode(redacted_pairs, safe="*")
+        else:
+            query = parts.query
+
+        return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
