@@ -611,3 +611,80 @@ class TestExecuteWorkflow:
         body = resp.json()
         assert body["status"] == "failed"
         assert "kaboom" in body["steps"][0]["error"]
+
+    # -- BUG R-6 regression -------------------------------------------------
+    # StepStatus has values (`pending`, `skipped`) that the execute/get
+    # endpoint must surface faithfully. Previously the router did
+    # ``ExecutionStatus(step.status.value)`` and `skipped` is not a member of
+    # the API ExecutionStatus enum -> ValueError -> HTTP 500. The contract:
+    # a skipped/pending step round-trips with HTTP 200 and the correct status.
+
+    def test_execute_skipped_step_round_trips_with_200(
+        self, client: TestClient, registry: MagicMock, engine: MagicMock
+    ) -> None:
+        step = StepResult(
+            step_id="skipme",
+            status=StepStatus.SKIPPED,
+            skip_reason="condition false",
+        )
+        engine.execute.return_value = _execution_result(
+            status=CoreExecutionStatus.COMPLETED, steps=[step]
+        )
+        registry.get.return_value = _make_workflow(name="demo")
+
+        resp = client.post("/api/v1/workflows/demo/execute", json={"inputs": {}})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["steps"]) == 1
+        s = body["steps"][0]
+        assert s["id"] == "skipme"
+        # Skipped must be surfaced faithfully, not coerced/dropped.
+        assert s["status"] == "skipped"
+
+    def test_execute_pending_step_round_trips_with_200(
+        self, client: TestClient, registry: MagicMock, engine: MagicMock
+    ) -> None:
+        step = StepResult(step_id="waiting", status=StepStatus.PENDING)
+        engine.execute.return_value = _execution_result(
+            status=CoreExecutionStatus.RUNNING, steps=[step]
+        )
+        registry.get.return_value = _make_workflow(name="demo")
+
+        resp = client.post("/api/v1/workflows/demo/execute", json={"inputs": {}})
+
+        assert resp.status_code == 200
+        s = resp.json()["steps"][0]
+        assert s["id"] == "waiting"
+        assert s["status"] == "pending"
+
+    def test_execute_mixed_step_statuses_all_surface(
+        self, client: TestClient, registry: MagicMock, engine: MagicMock
+    ) -> None:
+        steps = [
+            StepResult(step_id="done", status=StepStatus.COMPLETED),
+            StepResult(step_id="skipped", status=StepStatus.SKIPPED),
+            StepResult(step_id="pending", status=StepStatus.PENDING),
+            StepResult(step_id="running", status=StepStatus.RUNNING),
+            StepResult(
+                step_id="failed",
+                status=StepStatus.FAILED,
+                error=AELError(code="TOOL_ERROR", category=ErrorCategory.TOOL, message="boom"),
+            ),
+        ]
+        engine.execute.return_value = _execution_result(
+            status=CoreExecutionStatus.FAILED, steps=steps
+        )
+        registry.get.return_value = _make_workflow(name="demo")
+
+        resp = client.post("/api/v1/workflows/demo/execute", json={"inputs": {}})
+
+        assert resp.status_code == 200
+        by_id = {s["id"]: s["status"] for s in resp.json()["steps"]}
+        assert by_id == {
+            "done": "completed",
+            "skipped": "skipped",
+            "pending": "pending",
+            "running": "running",
+            "failed": "failed",
+        }

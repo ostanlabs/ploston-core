@@ -10,13 +10,21 @@ from .common import ErrorDetail
 
 
 class ExecutionStatus(str, Enum):
-    """Execution status enum."""
+    """Execution status enum.
+
+    Serves both the workflow-level execution status and (via ``StepSummary``)
+    individual step statuses. ``SKIPPED`` is a step-only value (the core
+    ``StepStatus`` enum can mark a step skipped) and is included here so step
+    statuses round-trip through the REST API faithfully instead of raising a
+    ``ValueError`` at the response boundary (BUG R-6).
+    """
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    SKIPPED = "skipped"
 
 
 class ExecuteRequest(BaseModel):

@@ -24,6 +24,23 @@ from ploston_core.workflow import WorkflowDefinition, parse_workflow_yaml
 workflow_router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
 
+def _step_status_to_api(status_value: str) -> ExecutionStatus:
+    """Map a core ``StepStatus`` value onto the API ``ExecutionStatus``.
+
+    The core ``StepStatus`` enum (pending/running/completed/failed/skipped) is
+    a superset-ish of the API enum's overlap; ``skipped`` in particular was not
+    a member of ``ExecutionStatus``, so ``ExecutionStatus(status_value)`` raised
+    ``ValueError`` and surfaced as HTTP 500 for any execution containing a
+    skipped step (BUG R-6). ``ExecutionStatus`` now carries ``SKIPPED``; this
+    helper additionally guarantees that any *unknown* step status degrades to a
+    sensible default rather than crashing the response.
+    """
+    try:
+        return ExecutionStatus(status_value)
+    except ValueError:
+        return ExecutionStatus.PENDING
+
+
 def _workflow_to_summary(workflow: WorkflowDefinition) -> WorkflowSummary:
     """Convert WorkflowDefinition to WorkflowSummary."""
     now = datetime.now(UTC)
@@ -267,7 +284,7 @@ async def execute_workflow(
                     id=s.step_id,
                     tool=step_tools.get(s.step_id),
                     type="tool" if step_tools.get(s.step_id) else "code",
-                    status=ExecutionStatus(s.status.value),
+                    status=_step_status_to_api(s.status.value),
                     started_at=s.started_at,
                     completed_at=s.completed_at,
                     duration_ms=s.duration_ms,
