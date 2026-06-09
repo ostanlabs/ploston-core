@@ -148,24 +148,23 @@ class TestLoadBuiltin:
         assert reg.plugins[0].name == "logging"
 
     def test_fail_open_override_from_definition(self):
-        """If a definition carries a fail_open attribute, the registry must
-        apply it to the loaded plugin so operators can opt a plugin into
-        fail-closed behavior.
+        """A definition carrying fail_open must apply it to the loaded plugin
+        so operators can opt a plugin into fail-closed behavior.
 
-        NOTE: the production PluginDefinition dataclass currently has NO
-        fail_open field, so this override path is unreachable via real config.
-        We pass a definition-like object exposing fail_open to exercise the
-        documented override contract.
+        BUG R-2 / DECISION D1: PluginDefinition now carries a real fail_open
+        field (default True), so this is reachable via real config.
         """
-
-        class DefnWithFailOpen(PluginDefinition):
-            fail_open = False
-
         reg = PluginRegistry()
-        defn = DefnWithFailOpen(name="logging", type="builtin")
+        defn = PluginDefinition(name="logging", type="builtin", fail_open=False)
         result = reg.load_plugins([defn])
         assert result.success_count == 1
         assert reg.plugins[0].fail_open is False
+
+    def test_fail_open_defaults_true_from_definition(self):
+        """Default definition yields a fail-open plugin (historical behavior)."""
+        reg = PluginRegistry()
+        reg.load_plugins([PluginDefinition(name="logging", type="builtin")])
+        assert reg.plugins[0].fail_open is True
 
 
 # ---------------------------------------------------------------------------

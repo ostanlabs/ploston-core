@@ -206,6 +206,12 @@ class PluginDefinition:
     priority: int = 50
     enabled: bool = True
     config: dict[str, Any] = field(default_factory=dict)
+    # BUG R-2 / DECISION D1: fail-open/closed error-isolation policy for this
+    # plugin in the hook chain. Default True preserves historical behavior
+    # (errors isolated + chain continues). Set False to make a misbehaving
+    # plugin abort the chain (error propagates, later plugins skipped). The
+    # registry propagates this to the loaded plugin's ``fail_open`` attribute.
+    fail_open: bool = True
 
 
 @dataclass

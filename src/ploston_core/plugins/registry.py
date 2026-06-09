@@ -93,8 +93,11 @@ class PluginRegistry:
                     # Apply config overrides
                     plugin.name = defn.name
                     plugin.priority = defn.priority
-                    if hasattr(defn, "fail_open"):
-                        plugin.fail_open = getattr(defn, "fail_open", True)
+                    # BUG R-2 / DECISION D1: honor the config-driven fail-open
+                    # policy. PluginDefinition now always carries fail_open
+                    # (default True); fall back defensively for definition-like
+                    # objects that omit it.
+                    plugin.fail_open = getattr(defn, "fail_open", True)
                     result.loaded.append(plugin)
                     logger.info(f"Loaded plugin: {defn.name} (priority={defn.priority})")
             except Exception as e:
