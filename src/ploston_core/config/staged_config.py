@@ -363,11 +363,19 @@ class StagedConfig:
             data = json.dumps(self._changes)
 
             try:
-                asyncio.get_running_loop()
-                asyncio.create_task(self._async_persist_to_redis(data))
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No running loop - create one
-                asyncio.run(self._async_persist_to_redis(data))
+                # No running loop. Spinning a fresh loop via asyncio.run()
+                # breaks when the redis client is bound to another loop
+                # ("got Future attached to a different loop"). Mirror the
+                # canonical fire-and-forget pattern in
+                # runner_management.registry.ToolRegistry._fire_tools_changed:
+                # skip the best-effort persist instead. Callers needing
+                # durable persistence have restore_from_redis() and the async
+                # entry points (_async_persist_to_redis) available.
+                logger.debug("No running event loop; skipping staged-config Redis persist")
+                return
+            loop.create_task(self._async_persist_to_redis(data))
         except Exception as e:
             logger.warning(f"Failed to persist staged config to Redis: {e}")
 
@@ -385,11 +393,14 @@ class StagedConfig:
             import asyncio
 
             try:
-                asyncio.get_running_loop()
-                asyncio.create_task(self._async_clear_from_redis())
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No running loop - create one
-                asyncio.run(self._async_clear_from_redis())
+                # No running loop. See _persist_to_redis for why asyncio.run()
+                # is unsafe here (loop-bound redis clients). Skip the
+                # best-effort clear rather than spin a conflicting loop.
+                logger.debug("No running event loop; skipping staged-config Redis clear")
+                return
+            loop.create_task(self._async_clear_from_redis())
         except Exception as e:
             logger.warning(f"Failed to clear staged config from Redis: {e}")
 
