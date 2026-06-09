@@ -1697,13 +1697,11 @@ class MCPFrontend:
                         },
                     )
                 logger.exception(f"Error routing tool to runner: {e}")
-                raise AELError(
-                    code="TOOL_EXECUTION_FAILED",
-                    category=ErrorCategory.TOOL,
+                raise create_error(
+                    "TOOL_EXECUTION_FAILED",
                     message=f"Tool call to runner '{runner_name}' failed: {e}",
                     tool_name=f"{runner_name}:{tool_name}",
-                    http_status=500,
-                )
+                ) from e
             finally:
                 # End any dangling telemetry execution (DEC-152)
                 if self._telemetry_collector and execution_id:

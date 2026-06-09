@@ -199,6 +199,26 @@ class ErrorRegistry:
             default_http_status=404,
         )
 
+        self._templates["TOOL_EXECUTION_FAILED"] = ErrorTemplate(
+            code="TOOL_EXECUTION_FAILED",
+            category=ErrorCategory.TOOL,
+            message_template="{message}",
+            detail_template="The tool failed while routing/executing the call",
+            suggestion_template="Check the runner/tool logs for the underlying failure",
+            default_retryable=False,
+            default_http_status=500,
+        )
+
+        self._templates["TOOL_ERROR"] = ErrorTemplate(
+            code="TOOL_ERROR",
+            category=ErrorCategory.TOOL,
+            message_template="{message}",
+            detail_template="The tool reported an error result",
+            suggestion_template="Check the tool output for more details",
+            default_retryable=False,
+            default_http_status=500,
+        )
+
         # EXECUTION Errors
         self._templates["CODE_SYNTAX"] = ErrorTemplate(
             code="CODE_SYNTAX",
