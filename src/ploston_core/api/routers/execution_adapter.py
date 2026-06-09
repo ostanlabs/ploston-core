@@ -35,7 +35,7 @@ def to_execution_detail(record: ExecutionRecord) -> ExecutionDetail:
     return ExecutionDetail(
         execution_id=record.execution_id,
         workflow_id=record.workflow_id or record.tool_name or "direct",
-        status=ExecutionStatus(record.status.value),
+        status=ExecutionStatus.from_value_safe(record.status.value),
         started_at=record.started_at,
         completed_at=record.completed_at,
         duration_ms=record.duration_ms,
@@ -60,7 +60,7 @@ def to_execution_summary(record: ExecutionRecord) -> ExecutionSummary:
     return ExecutionSummary(
         execution_id=record.execution_id,
         workflow_id=record.workflow_id or record.tool_name or "direct",
-        status=ExecutionStatus(record.status.value),
+        status=ExecutionStatus.from_value_safe(record.status.value),
         started_at=record.started_at,
         completed_at=record.completed_at,
         duration_ms=record.duration_ms,
@@ -80,7 +80,7 @@ def _to_step_summary(step: StepRecord) -> StepSummary:
         id=step.step_id,
         tool=step.tool_name,
         type=step.step_type.value,
-        status=ExecutionStatus(step.status.value),
+        status=ExecutionStatus.from_value_safe(step.status.value),
         started_at=step.started_at,
         completed_at=step.completed_at,
         duration_ms=step.duration_ms,

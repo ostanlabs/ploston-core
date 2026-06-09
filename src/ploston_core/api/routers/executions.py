@@ -49,8 +49,23 @@ async def list_executions(
             has_prev=False,
         )
 
-    # Map API ExecutionStatus to TelemetryStore ExecutionStatus
-    telemetry_status = TelemetryExecutionStatus(status.value) if status else None
+    # Map API ExecutionStatus to TelemetryStore ExecutionStatus. The API enum
+    # carries step-only values (e.g. SKIPPED) that have no execution-level
+    # telemetry equivalent; a filter on such a status matches zero executions,
+    # so return an empty page rather than raising ValueError -> HTTP 500 (R-6).
+    telemetry_status: TelemetryExecutionStatus | None = None
+    if status is not None:
+        try:
+            telemetry_status = TelemetryExecutionStatus(status.value)
+        except ValueError:
+            return ExecutionListResponse(
+                executions=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                has_next=False,
+                has_prev=False,
+            )
 
     records, total = await store.list_executions(
         workflow_id=workflow_id,

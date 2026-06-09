@@ -26,6 +26,20 @@ class ExecutionStatus(str, Enum):
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
 
+    @classmethod
+    def from_value_safe(cls, value: str) -> "ExecutionStatus":
+        """Coerce a core/telemetry status string to an ``ExecutionStatus``.
+
+        Any unknown value degrades to ``PENDING`` instead of raising
+        ``ValueError`` at the response boundary (BUG R-6 and its siblings). Use
+        this at every TelemetryStore/core ``StepStatus``/``ExecutionStatus`` ->
+        API boundary so a newly-added core status can never 500 a response.
+        """
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.PENDING
+
 
 class ExecuteRequest(BaseModel):
     """Workflow execution request."""
