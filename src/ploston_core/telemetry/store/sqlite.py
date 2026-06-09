@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -45,12 +46,31 @@ class SQLiteTelemetryStore(TelemetryStore):
         self._redaction = redaction
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._conn: sqlite3.Connection | None = None
+        # Thread that created the connection. SQLite connections are
+        # thread-affine, so the connection must be created and used on the
+        # single executor worker thread (see _ensure_conn).
+        self._conn_thread_ident: int | None = None
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Initialize database
+        # Initialize the database schema on the executor thread so the
+        # connection is owned by the thread that will run all queries.
+        self._executor.submit(self._ensure_conn).result()
+
+    def _ensure_conn(self) -> sqlite3.Connection:
+        """Return the connection, creating it on first use (executor thread).
+
+        All connection access (creation + queries) happens on the single
+        executor worker thread, keeping the thread-affine sqlite3 connection
+        consistent regardless of the executor's worker count.
+        """
+        if self._conn is not None:
+            return self._conn
+        self._conn_thread_ident = threading.get_ident()
         self._init_db()
+        assert self._conn is not None
+        return self._conn
 
     def _init_db(self) -> None:
         """Initialize SQLite database schema."""
@@ -142,9 +162,8 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     def _save_sync(self, record: ExecutionRecord) -> None:
         """Synchronous save (runs in thread pool)."""
-        if not self._conn:
-            return
-        cursor = self._conn.cursor()
+        conn = self._ensure_conn()
+        cursor = conn.cursor()
 
         # Upsert execution
         cursor.execute(
@@ -238,7 +257,7 @@ class SQLiteTelemetryStore(TelemetryStore):
                     ),
                 )
 
-        self._conn.commit()
+        conn.commit()
 
     async def get_execution(self, execution_id: str) -> ExecutionRecord | None:
         """Get execution by ID."""
@@ -247,9 +266,7 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     def _get_sync(self, execution_id: str) -> ExecutionRecord | None:
         """Synchronous get."""
-        if not self._conn:
-            return None
-        cursor = self._conn.cursor()
+        cursor = self._ensure_conn().cursor()
 
         # Get execution
         row = cursor.execute(
@@ -324,9 +341,7 @@ class SQLiteTelemetryStore(TelemetryStore):
         page_size: int,
     ) -> tuple[list[ExecutionRecord], int]:
         """Synchronous list."""
-        if not self._conn:
-            return [], 0
-        cursor = self._conn.cursor()
+        cursor = self._ensure_conn().cursor()
 
         # Build query
         conditions = []
@@ -382,11 +397,10 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     def _delete_sync(self, execution_id: str) -> bool:
         """Synchronous delete."""
-        if not self._conn:
-            return False
-        cursor = self._conn.cursor()
+        conn = self._ensure_conn()
+        cursor = conn.cursor()
         cursor.execute("DELETE FROM executions WHERE execution_id = ?", (execution_id,))
-        self._conn.commit()
+        conn.commit()
         return cursor.rowcount > 0
 
     async def delete_before(self, cutoff: datetime) -> int:
@@ -396,11 +410,10 @@ class SQLiteTelemetryStore(TelemetryStore):
 
     def _delete_before_sync(self, cutoff: datetime) -> int:
         """Synchronous delete before."""
-        if not self._conn:
-            return 0
-        cursor = self._conn.cursor()
+        conn = self._ensure_conn()
+        cursor = conn.cursor()
         cursor.execute("DELETE FROM executions WHERE started_at < ?", (cutoff.isoformat(),))
-        self._conn.commit()
+        conn.commit()
         return cursor.rowcount
 
     async def get_tool_call_stats(
@@ -418,9 +431,7 @@ class SQLiteTelemetryStore(TelemetryStore):
         until: datetime | None,
     ) -> dict[str, dict[str, int]]:
         """Synchronous stats."""
-        if not self._conn:
-            return {}
-        cursor = self._conn.cursor()
+        cursor = self._ensure_conn().cursor()
 
         conditions = []
         params: list[Any] = []
@@ -459,9 +470,16 @@ class SQLiteTelemetryStore(TelemetryStore):
     async def close(self) -> None:
         """Close database connection."""
         if self._conn:
+            # Close on the executor thread that owns the connection.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._executor, self._close_sync)
+        self._executor.shutdown(wait=False)
+
+    def _close_sync(self) -> None:
+        """Close the connection on the executor thread."""
+        if self._conn:
             self._conn.close()
             self._conn = None
-        self._executor.shutdown(wait=False)
 
     # ─────────────────────────────────────────────────────────────────
     # Helper methods

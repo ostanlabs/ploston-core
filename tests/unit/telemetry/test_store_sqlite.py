@@ -1,5 +1,7 @@
 """Tests for SQLite telemetry store."""
 
+import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -195,3 +197,59 @@ class TestSQLiteTelemetryStore:
         """Test closing the store."""
         await store.close()
         # Should not raise
+
+
+class TestSQLiteThreadAffinity:
+    """L-7: the sqlite connection must be owned by the executor thread.
+
+    SQLite connection objects are thread-affine. All connection access
+    (creation + queries) should happen on the single executor worker thread,
+    not on the constructing/main thread.
+    """
+
+    @pytest.mark.asyncio
+    async def test_connection_created_on_executor_thread(self, db_path: str) -> None:
+        """The connection must be created on the executor worker thread.
+
+        Under the previous main-thread-creation pattern the connection was
+        created on the constructing thread, so its creating-thread ident would
+        differ from the executor worker thread ident -> this assertion fails.
+        """
+        store = SQLiteTelemetryStore(db_path=db_path)
+        try:
+            # Identify the single executor worker thread.
+            loop = asyncio.get_running_loop()
+            executor_ident = await loop.run_in_executor(store._executor, threading.get_ident)
+            # Force connection creation (lazy) and capture its creating thread.
+            await store.save_execution(
+                ExecutionRecord(
+                    execution_id="exec-thread",
+                    execution_type=ExecutionType.WORKFLOW,
+                    started_at=datetime.now(UTC),
+                )
+            )
+            assert store._conn is not None
+            assert store._conn_thread_ident == executor_ident
+            # Sanity: it was NOT created on the test/main thread.
+            assert store._conn_thread_ident != threading.get_ident()
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_operations_succeed_without_cross_thread_error(self, db_path: str) -> None:
+        """Happy-path round-trip must not raise SQLite cross-thread errors."""
+        store = SQLiteTelemetryStore(db_path=db_path)
+        try:
+            now = datetime.now(UTC)
+            await store.save_execution(
+                ExecutionRecord(
+                    execution_id="exec-rt",
+                    execution_type=ExecutionType.WORKFLOW,
+                    started_at=now,
+                )
+            )
+            result = await store.get_execution("exec-rt")
+            assert result is not None
+            assert result.execution_id == "exec-rt"
+        finally:
+            await store.close()
