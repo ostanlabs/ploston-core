@@ -69,12 +69,12 @@ async def extract_text_content(
 def _detect_source_type(source: str) -> str:
     """Auto-detect the source type."""
     source_stripped = source.strip()
-    if source_stripped.startswith("<"):
+    if source_stripped.startswith("<?xml"):
+        return "xml"
+    elif source_stripped.startswith("<"):
         return "html"
     elif source_stripped.startswith("{") or source_stripped.startswith("["):
         return "json"
-    elif source_stripped.startswith("<?xml"):
-        return "xml"
     elif "#" in source and ("*" in source or "_" in source):
         return "markdown"
     else:

@@ -204,6 +204,7 @@ class ResponsePatternExtractor:
     ) -> Any | None:
         extracted, new_type, new_prefix_len, start_char = self._brute_force(raw)
 
+        is_first = pattern is None
         if pattern is None:
             pattern = ExtractionPattern(
                 tool_key=tool_key,
@@ -224,13 +225,16 @@ class ResponsePatternExtractor:
             pattern.match_count += 1
             return None
 
-        if pattern.pattern_type != new_type or pattern.prefix_length != new_prefix_len:
+        if is_first or pattern.pattern_type != new_type or pattern.prefix_length != new_prefix_len:
             pattern.pattern_type = new_type
             pattern.prefix_length = new_prefix_len
             pattern.json_start_char = start_char
             pattern.prefix_sample = raw[:_SAMPLE_CHARS] if new_prefix_len else None
-            if new_type in (PatternType.SUFFIX_JSON, PatternType.WRAPPED_JSON):
-                pattern.suffix_sample = raw[-_SAMPLE_CHARS:]
+            pattern.suffix_sample = (
+                raw[-_SAMPLE_CHARS:]
+                if new_type in (PatternType.SUFFIX_JSON, PatternType.WRAPPED_JSON)
+                else None
+            )
         pattern.match_count += 1
         return extracted
 
