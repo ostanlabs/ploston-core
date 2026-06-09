@@ -118,6 +118,20 @@ markers = [
     "snapshot: snapshot / golden-file tests (syrupy)",
 ]
 
+[tool.coverage.run]
+source = ["ploston_core"]
+# Use the sys.monitoring (PEP 669) coverage backend instead of the default C
+# trace function. The C tracer installs trace hooks that race the import
+# machinery; combined with the beartype claw import hook that fastmcp ->
+# py-key-value-aio installs at import time, this triggers a circular import:
+#   ImportError: cannot import name 'claw_state' from partially initialized
+#   module 'beartype.claw._clawstate'
+# The sysmon backend avoids the C trace function entirely, so plain `--cov`
+# (and `make test-cov`) works with no COVERAGE_CORE/pre-import workaround.
+# Requires Python 3.12+ (this project pins py312); coverage falls back safely
+# on older runtimes.
+core = "sysmon"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
