@@ -1,5 +1,6 @@
 """YAML workflow parsing."""
 
+import enum
 import logging
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,53 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_enum[EnumT: enum.Enum](enum_cls: type[EnumT], value: Any, field: str) -> EnumT:
+    """Coerce a raw value into an enum member, raising INPUT_INVALID on failure.
+
+    Args:
+        enum_cls: Target enum class.
+        value: Raw value from the workflow YAML.
+        field: Field name (for the error message).
+
+    Returns:
+        The matching enum member.
+
+    Raises:
+        AELError(INPUT_INVALID) if the value is not a valid enum member.
+    """
+    try:
+        return enum_cls(value)
+    except ValueError as e:
+        allowed = ", ".join(repr(m.value) for m in enum_cls)
+        raise create_error(
+            "INPUT_INVALID",
+            detail=f"Invalid value {value!r} for {field}; allowed values are: {allowed}",
+        ) from e
+
+
+def _require_key(data: dict[str, Any], key: str, context: str) -> Any:
+    """Fetch a required key, raising INPUT_INVALID instead of KeyError.
+
+    Args:
+        data: Mapping to read from.
+        key: Required key name.
+        context: Description of what the mapping represents (for the message).
+
+    Returns:
+        The value at ``key``.
+
+    Raises:
+        AELError(INPUT_INVALID) if the key is missing.
+    """
+    try:
+        return data[key]
+    except KeyError as e:
+        raise create_error(
+            "INPUT_INVALID",
+            detail=f"Missing required key {key!r} in {context}",
+        ) from e
 
 
 def parse_workflow_yaml(
@@ -89,13 +137,15 @@ def parse_workflow_yaml(
             retry_data = def_data["retry"]
             retry = RetryConfig(
                 max_attempts=retry_data.get("max_attempts", 3),
-                backoff=BackoffType(retry_data.get("backoff", "fixed")),
+                backoff=_coerce_enum(
+                    BackoffType, retry_data.get("backoff", "fixed"), "defaults.retry.backoff"
+                ),
                 delay_seconds=retry_data.get("delay_seconds", 1.0),
             )
 
         defaults = WorkflowDefaults(
             timeout=def_data.get("timeout", 30),
-            on_error=OnError(def_data.get("on_error", "fail")),
+            on_error=_coerce_enum(OnError, def_data.get("on_error", "fail"), "defaults.on_error"),
             retry=retry,
             runner=def_data.get("runner"),
         )
@@ -111,21 +161,31 @@ def parse_workflow_yaml(
             retry_data = step_data["retry"]
             retry = RetryConfig(
                 max_attempts=retry_data.get("max_attempts", 3),
-                backoff=BackoffType(retry_data.get("backoff", "fixed")),
+                backoff=_coerce_enum(
+                    BackoffType, retry_data.get("backoff", "fixed"), "step.retry.backoff"
+                ),
                 delay_seconds=retry_data.get("delay_seconds", 1.0),
             )
 
         on_missing_tool_raw = step_data.get("on_missing_tool")
-        on_missing_tool = OnMissingTool(on_missing_tool_raw) if on_missing_tool_raw else None
+        on_missing_tool = (
+            _coerce_enum(OnMissingTool, on_missing_tool_raw, "step.on_missing_tool")
+            if on_missing_tool_raw
+            else None
+        )
 
         step = StepDefinition(
-            id=step_data["id"],
+            id=_require_key(step_data, "id", "step"),
             tool=step_data.get("tool"),
             code=step_data.get("code"),
             mcp=step_data.get("mcp"),
             params=step_data.get("params", {}),
             depends_on=step_data.get("depends_on"),
-            on_error=OnError(step_data["on_error"]) if "on_error" in step_data else None,
+            on_error=(
+                _coerce_enum(OnError, step_data["on_error"], "step.on_error")
+                if "on_error" in step_data
+                else None
+            ),
             timeout=step_data.get("timeout"),
             retry=retry,
             on_missing_tool=on_missing_tool,
@@ -154,7 +214,7 @@ def parse_workflow_yaml(
         # List format: [{name: ..., from: ...}] or [{name: ..., from_path: ...}]
         for output_data in raw_outputs:
             output = OutputDefinition(
-                name=output_data["name"],
+                name=_require_key(output_data, "name", "output"),
                 from_path=output_data.get("from") or output_data.get("from_path"),
                 value=output_data.get("value"),
                 description=output_data.get("description"),
