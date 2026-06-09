@@ -51,7 +51,7 @@ def _collect_used_codes() -> dict[str, list[str]]:
     for py in SRC_ROOT.rglob("*.py"):
         tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not node.args:
+            if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = (
@@ -63,11 +63,19 @@ def _collect_used_codes() -> dict[str, list[str]]:
             )
             if name not in _CODE_CALLERS:
                 continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                if _CODE_RE.match(first.value):
-                    loc = f"{py.relative_to(SRC_ROOT)}:{first.lineno}"
-                    used.setdefault(first.value, []).append(loc)
+            # The code may be the first positional arg OR a keyword `code=...`.
+            # Scanning only positional args is a blind spot (caught L-1, where an
+            # unregistered code slipped through as a keyword argument).
+            candidate = node.args[0] if node.args else None
+            if candidate is None:
+                for kw in node.keywords:
+                    if kw.arg == "code":
+                        candidate = kw.value
+                        break
+            if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+                if _CODE_RE.match(candidate.value):
+                    loc = f"{py.relative_to(SRC_ROOT)}:{candidate.lineno}"
+                    used.setdefault(candidate.value, []).append(loc)
     return used
 
 
