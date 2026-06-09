@@ -11,6 +11,7 @@ These endpoints are used by runners to connect to the control plane.
 import asyncio
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -36,17 +37,46 @@ RUNNER_CLIENT_CN_HEADER = "X-Runner-Client-CN"
 _WS_POLICY_VIOLATION_CODE = 1008
 
 
+def _extract_cn(value: str) -> str:
+    """Extract the Common Name from a forwarded client-cert identity.
+
+    Trusted proxies forward the verified identity in one of two shapes,
+    depending on the proxy:
+
+      * a **bare CN** — nginx-ingress' ``$ssl_client_s_dn_cn``, e.g.
+        ``runner-foo``;
+      * a **full RFC 4514 subject DN** — Caddy's resolvable
+        ``{http.request.tls.client.subject}`` placeholder, e.g.
+        ``CN=runner-foo,OU=...,O=Ploston,C=US``.
+
+    (Caddy has no built-in CN-only placeholder, so the bundled compose proxy
+    forwards the whole subject DN; V-1 verified this against a live Caddy.)
+
+    Return the CN component for a DN, or the value unchanged when it is not a
+    DN. RFC 4514 escaped commas (``\\,``) inside a value are preserved.
+    """
+    if "=" not in value:
+        return value
+    for part in re.split(r"(?<!\\),", value):
+        key, sep, val = part.partition("=")
+        if sep and key.strip().upper() == "CN":
+            return val.strip().replace("\\,", ",")
+    return value
+
+
 def _cn_matches_runner(cn: str, runner_name: str, runner_id: str) -> bool:
-    """Return True if a forwarded client-cert CN identifies this runner.
+    """Return True if a forwarded client-cert identity identifies this runner.
 
     The EmbeddedCA (CR-2) issues runner client certs with
     ``CN = f"runner-{runner_name}"`` (see embedded_ca.generate_runner_cert).
-    The contract describes the CN as the "runner name/id", so we accept the
-    raw name or id as well as the ``runner-`` prefixed forms to remain robust
-    to how the upstream proxy chooses to forward the verified identity.
+    The forwarded value may be a bare CN or a full subject DN (see
+    :func:`_extract_cn`); we normalise to the CN, then accept the raw name or
+    id as well as the ``runner-`` prefixed forms to remain robust to how the
+    upstream proxy chooses to forward the verified identity.
     """
     if not cn:
         return False
+    cn = _extract_cn(cn)
     accepted = {
         runner_name,
         runner_id,
